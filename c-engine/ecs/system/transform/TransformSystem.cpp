@@ -237,7 +237,7 @@ void transformActivateAndSaveLastSubtree(Scene* scene, u32 entity) {
 }
 
 void transformGetDirection(Scene* scene, u32 entity, vec3 out) {
-    static vec3 FORWARD = {0.0f, 1.0f, 0.0f};
+    static vec3 FORWARD = {0.0f, 0.0f, -1.0f};  // GLM_FORWARD
     WorldTransform* worldTransform = transformGetWorld(scene, entity);
     glm_quat_rotatev(worldTransform->rot, FORWARD, out);
     glm_vec3_normalize(out);

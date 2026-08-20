@@ -12,7 +12,7 @@
 
 namespace engine {
 static vec3 Y_UP     = {0.0f, 1.0f, 0.0f};
-static vec3 FORWARD  = {0.0f, 0.0f, 1.0f};
+static vec3 FORWARD  = {0.0f, 0.0f, -1.0f};  // GLM_FORWARD
 static void perspective(u32 cameraEntity);
 
 static Entity* cameraEntityObj;
