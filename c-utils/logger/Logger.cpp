@@ -19,7 +19,7 @@
 static struct {
     LogLevel min_level;
     FILE* file;
-} logger = {.min_level = LOGGER_INFO, .file = NULL};
+} logger = {.min_level = LOGGER_INFO, .file = nullptr};
 
 static const char* level_to_string(LogLevel level) {
     switch (level) {
@@ -63,7 +63,7 @@ static const char* get_reset_color(void) {
 }
 
 static void get_current_time(char* buffer, size_t len) {
-    time_t now   = time(NULL);
+    time_t now   = time(nullptr);
     struct tm* t = localtime(&now);
     strftime(buffer, len, "%Y-%m-%d %H:%M:%S", t);
 }
@@ -83,9 +83,9 @@ static void logger_log(LogLevel level, const char* format, va_list args) {
     const char* color     = get_level_color(level);
     const char* reset     = get_reset_color();
 
-    char lua        = strStartsWith(message, "LUA:") ? 4 : 0;
-    int offset      = lua ? 4 : 0;
-    const char* tag = lua ? "LUA  " : level_str;
+    bool isLua      = strStartsWith(message, "LUA:");
+    int offset      = isLua ? 4 : 0;
+    const char* tag = isLua ? "LUA  " : level_str;
 
     char final_msg[MAX_LOG_LINE + 128];
     snprintf(final_msg, sizeof(final_msg), "[%s]%s [%s] %s%s", time_str, color, tag, message + offset, reset);
@@ -116,7 +116,7 @@ void loggerInit(void) {
 void loggerDestroy(void) {
     if (logger.file) {
         fclose(logger.file);
-        logger.file = NULL;
+        logger.file = nullptr;
     }
 }
 

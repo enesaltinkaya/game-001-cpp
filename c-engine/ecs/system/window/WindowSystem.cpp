@@ -4,7 +4,7 @@
 Window window;
 struct Input input = {.focused = 1};
 
-typedef struct WindowBackendApi {
+struct WindowBackendApi {
     const char* name;
     void (*added)(void);
     void (*removed)(void);
@@ -30,7 +30,7 @@ typedef struct WindowBackendApi {
     char const* const* (*getRequiredVulkanExtensions)(u32* extensionCount);
     bool (*createVulkanSurface)(VkInstance instance, VkSurfaceKHR* surface);
     SetCursorFn (*getSetCursorFn)(void);
-} WindowBackendApi;
+};
 
 extern WindowBackendApi glfwWindowBackendApi;
 extern WindowBackendApi sdlWindowBackendApi;
@@ -168,7 +168,7 @@ bool windowSystemCreateVulkanSurface(VkInstance instance, VkSurfaceKHR* surface)
 
 SetCursorFn windowSystemGetSetCursorFn(void) {
     if (activeBackend->getSetCursorFn) return activeBackend->getSetCursorFn();
-    return NULL;
+    return nullptr;
 }
 
 void inputReset(void) {

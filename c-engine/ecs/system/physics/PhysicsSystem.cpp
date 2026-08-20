@@ -90,7 +90,7 @@ void update(void) {
     u32 count = joltGetActiveTransforms(activeTransforms, MAX_ACTIVE_TRANSFORMS);
     for (u32 i = 0; i < count; i++) {
         JoltActiveTransform* at = &activeTransforms[i];
-        u32 entity              = (u32)at->userData;
+        u32 entity              = static_cast<u32>(at->userData);
 
         Scene* scene = mapGet(dynamicBodyScenes, entity);
         if (!scene) continue;
@@ -125,7 +125,7 @@ void physicsCreateMesh(Scene* scene,
     physics->isDynamic = false;
     // indexType 1 = 32-bit indices (we already unpacked to u32 in the parser)
     physics->joltMesh =
-        joltCreateMeshShapeNoCache(positions, positionCount, indices, indexCount, pos, rot, 1, (uint64_t)entity);
+        joltCreateMeshShapeNoCache(positions, positionCount, indices, indexCount, pos, rot, 1, static_cast<uint64_t>(entity));
     info("physics: created mesh body for entity %u (verts=%u, indices=%u)",
          entity,
          positionCount / 3,
@@ -177,7 +177,7 @@ void physicsCreateFromBlob(Scene* scene,
     physics->isDynamic = motionTag == 1; // 0=STATIC, 1=DYNAMIC
 
     int motionType    = physics->isDynamic ? JOLT_MOTION_DYNAMIC : JOLT_MOTION_STATIC;
-    uint64_t userData = (uint64_t)entity;
+    uint64_t userData = static_cast<uint64_t>(entity);
 
     if (physics->isDynamic) {
         mapPut(dynamicBodyScenes, entity, scene);
@@ -192,24 +192,24 @@ void physicsCreateFromBlob(Scene* scene,
                                 shapeTag == PHYSICS_BLOB_TAG_MESH)) {
         void* result = joltCreateBodyFromShapeBlob(blob, blobSize, motionType,
                                                    mass, friction, restitution,
-                                                   hasScale ? scale : NULL,
+                                                   hasScale ? scale : nullptr,
                                                    pos, rot, userData);
         if (!result) {
             warn("physics: failed to restore pre-baked shape for entity %u", entity);
             return;
         }
         physics->shapeType = PHYSICS_SHAPE_MESH;
-        physics->joltMesh  = (JoltMesh*)result;
+        physics->joltMesh  = reinterpret_cast<JoltMesh*>(result);
     } else {
         void* result = joltCreateBodyFromShapeBlob(blob, blobSize, motionType,
                                                    mass, friction, restitution,
-                                                   hasScale ? scale : NULL,
+                                                   hasScale ? scale : nullptr,
                                                    pos, rot, userData);
         if (!result) {
             warn("physics: failed to restore pre-baked shape for entity %u", entity);
             return;
         }
-        physics->joltBody = (JoltBody*)result;
+        physics->joltBody = reinterpret_cast<JoltBody*>(result);
 
         // Map shape tag to component enum for debug vis / serialization.
         switch (shapeTag) {
@@ -248,7 +248,7 @@ void physicsCreateRigidBody(Scene* scene,
     physics->isDynamic = isDynamic;
 
     int motionType    = isDynamic ? JOLT_MOTION_DYNAMIC : JOLT_MOTION_STATIC;
-    uint64_t userData = (uint64_t)entity;
+    uint64_t userData = static_cast<uint64_t>(entity);
 
     // Track dynamic bodies for transform sync
     if (isDynamic) {

@@ -1,6 +1,6 @@
 #pragma once
 
-typedef struct Image {
+struct Image {
     void* data;  // can be u8, u16 or float
     u64 size;    // width * height * channels * depth
     int width;
@@ -10,14 +10,14 @@ typedef struct Image {
     int vkFormat;
     int mips;
     u64* mipSizes;  // stb array
-    char isKtx;
-    char isRaw;
-} Image;
+    bool isKtx;
+    bool isRaw;
+};
 
-typedef enum KtxFormat {
+enum KtxFormat {
     KTX_FORMAT_BC7_RGBA = 6,
     KTX_FORMAT_RGBA32   = 13,
-}KtxFormat;
+};
 
 Image imageLoad(const char* path);
 Image imageLoadKtx(const char* path, KtxFormat format);

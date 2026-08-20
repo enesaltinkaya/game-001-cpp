@@ -55,7 +55,7 @@ void ecsInit(struct System* gameSystem) {
     systemAddNow(9000, &meshSystem);
     systemAddNow(10000, &renderSystem);
 
-    signalEmit("ecsInitialized", NULL);
+    signalEmit("ecsInitialized", nullptr);
 }
 
 void ecsDestroy(void) {

@@ -1,6 +1,6 @@
 #pragma once
 
-typedef struct Timer {
+struct Timer {
     double fps;
     double ups;
     double fpsLimit;
@@ -19,15 +19,15 @@ typedef struct Timer {
     double alpha;
     double accumulator;
 
-    char busyLoop;
-    char fpsLimitChecked;
+    bool busyLoop;
+    bool fpsLimitChecked;
     u64 frameCounter;
-} Timer;
+};
 
 extern Timer timer;
 typedef void (*FnVoid)(void);
 
-void timerInit(double fpsLimit, char fpsLimitChecked,char busyLoop);
+void timerInit(double fpsLimit, bool fpsLimitChecked, bool busyLoop);
 void timerBegin(void);
 void timerUpdate(FnVoid update);
 void timerEnd(void);

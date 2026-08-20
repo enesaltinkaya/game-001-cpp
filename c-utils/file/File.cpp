@@ -11,7 +11,7 @@ char* R_relativePath(const char* path, char* in) {
     return in;
 }
 
-char fileExists(const char* path) {
+bool fileExists(const char* path) {
     struct stat buffer = {};
     return stat(path, &buffer) == 0;
 }

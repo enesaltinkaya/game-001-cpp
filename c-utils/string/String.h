@@ -1,12 +1,12 @@
 #pragma once
 #include "../container/Array.h"
 
-typedef struct String {
+struct String {
     char* data;
     u32 allocated;
     u32 size;
-    char onHeap;
-} String;
+    bool onHeap;
+};
 
 String* stringNew(const char* format, ...);
 void stringDestroy(String* string);
@@ -19,15 +19,15 @@ char* strReplace(const char* source, const char* find, const char* replace);
 
 String* stringDuplicate(String* string);
 void stringTrim(String* string);
-char stringStartsWith(String* string, const char* check);
-char strStartsWith(const char* string, const char* check);
-char stringEndsWith(String* string, const char* check);
-char strEndsWithC(const char* string, const char* check);
+bool stringStartsWith(String* string, const char* check);
+bool strStartsWith(const char* string, const char* check);
+bool stringEndsWith(String* string, const char* check);
+bool strEndsWithC(const char* string, const char* check);
 void stringClear(String* string);
 void stringPrintf(String* string, const char* format, ...);
-char stringEquals(String* string, const char* str);
-char strequals(const char* str1, const char* str2);
-char strContains(const char* haystack, const char* needle);
+bool stringEquals(String* string, const char* str);
+bool strequals(const char* str1, const char* str2);
+bool strContains(const char* haystack, const char* needle);
 
 void stringAppendBinary(String* string, void* data, u32 size);
 

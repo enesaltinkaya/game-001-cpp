@@ -84,12 +84,12 @@ static u32 sceneLoadSplatTiles(const char* splatBaseDir, const char* groupKey,
     return loadedTiles;
 }
 
-typedef struct SceneLoadRequest {
+struct SceneLoadRequest {
     const char* path;
     Scene* scene;
     SceneLoadCallback callback;
     void* userData;
-} SceneLoadRequest;
+};
 
 static void sceneLoadOffThread(void* pRequest);
 
@@ -171,7 +171,7 @@ static void cgltfNodeWorldTransform(const cgltf_node* node,
 }
 
 /* ── Pre-baked Jolt shapes (loaded from .jolt.dat sidecar) ─────────────── */
-typedef struct {
+struct PrecomputedJoltShape {
     const void* blob;
     u32 blobSize;
     u8 shapeTag;      // PHYSICS_BLOB_TAG_*
@@ -179,7 +179,7 @@ typedef struct {
     float mass;
     float friction;
     float restitution;
-} PrecomputedJoltShape;
+};
 
 static thread_local StrMap(PrecomputedJoltShape) precomputedJoltShapes;
 static thread_local void* precomputedJoltData; /* raw sidecar buffer */
@@ -190,19 +190,19 @@ static void freePrecomputedJoltShapes(void);
 static thread_local cgltf_data* currentCgltfData;
 
 Scene* sceneLoad(const char* path) {
-    return sceneLoadCb(path, NULL, NULL);
+    return sceneLoadCb(path, nullptr, nullptr);
 }
 
 Scene* sceneLoadCb(const char* path, SceneLoadCallback callback, void* userData) {
     Scene* scene = static_cast<Scene*>(memoryAlloc(sizeof(Scene)));
-    *scene                = (Scene){};
-    scene->asyncLoadPending = 1;  // freed/handled by sceneLoadMainThread (or sceneDestroy's deferral)
+    *scene                = Scene{};
+    scene->asyncLoadPending = true;  // freed/handled by sceneLoadMainThread (or sceneDestroy's deferral)
     SceneLoadRequest* req = static_cast<SceneLoadRequest*>(memoryAlloc(sizeof(SceneLoadRequest)));
     req->path             = path;
     req->scene            = scene;
     req->callback         = callback;
     req->userData         = userData;
-    threadPoolAddWork(NULL, sceneLoadOffThread, req);
+    threadPoolAddWork(nullptr, sceneLoadOffThread, req);
     return scene;
 }
 
@@ -260,7 +260,7 @@ void sceneLoadOffThread(void* pRequest) {
 
     for (i32 i = 0, si = cgltfData->scene->nodes_count; i < si; i++) {
         cgltf_node* node = cgltfData->scene->nodes[i];
-        parseNode(scene, node, NULL);
+        parseNode(scene, node, nullptr);
     }
 
     // now that we have nodeCache, we can parse skin component
@@ -291,12 +291,12 @@ void sceneLoadOffThread(void* pRequest) {
         json_decref(nodeSplatInfoMap[i].value);
     }
     strmapFree(nodeSplatInfoMap);
-    nodeSplatInfoMap = NULL;
-    currentModelPath = NULL;
+    nodeSplatInfoMap = nullptr;
+    currentModelPath = nullptr;
 
     memoryFree(glbData);
     stringDestroy(&fileData);
-    currentCgltfData = NULL;
+    currentCgltfData = nullptr;
     cgltf_free(cgltfData);
 }
 
@@ -456,7 +456,7 @@ cgltf_data* parseGltfData(void* glbData, u32 glbSize, const char* _) {
         .memory.free_func  = cgltfFree,
     };
 
-    cgltf_data* cData   = NULL;
+    cgltf_data* cData   = nullptr;
     cgltf_result result = cgltf_parse(&options, glbData, glbSize, &cData);
     if (result != 0) {
         terminate("sceneParser: cgltf_parse failed: %d", result);
@@ -558,14 +558,14 @@ cgltf_result decompressMeshopt(cgltf_data* data) {
 /* ── Pre-baked Jolt shapes sidecar loading ──────────────────────────────── */
 
 void loadPrecomputedJoltShapes(const char* scenePath) {
-    precomputedJoltShapes = NULL;
-    precomputedJoltData   = NULL;
+    precomputedJoltShapes = nullptr;
+    precomputedJoltData   = nullptr;
 
     /* Derive sidecar path: "models/foo.dat" → "models/foo.jolt.dat" */
     String sidecarPath = {};
     size_t pathLen     = strlen(scenePath);
     if (pathLen > 4 && strequals(scenePath + pathLen - 4, ".dat")) {
-        stringAppendBinary(&sidecarPath, (void*)scenePath, pathLen - 4);
+        stringAppendBinary(&sidecarPath, const_cast<char*>(scenePath), pathLen - 4);
     } else {
         stringAppend(&sidecarPath, scenePath);
     }
@@ -688,10 +688,10 @@ void loadPrecomputedJoltShapes(const char* scenePath) {
 
 void freePrecomputedJoltShapes(void) {
     strmapFree(precomputedJoltShapes);
-    precomputedJoltShapes = NULL;
+    precomputedJoltShapes = nullptr;
     if (precomputedJoltData) {
         memoryFree(precomputedJoltData);
-        precomputedJoltData = NULL;
+        precomputedJoltData = nullptr;
     }
 }
 
@@ -839,7 +839,7 @@ void parsePhysicsMesh(Scene* scene, cgltf_node* node, Entity* entity) {
     u32* indices = static_cast<u32*>(memoryAlloc(indexCount * sizeof(u32)));
     cgltf_accessor_unpack_indices(indicesAccessor, indices, sizeof(u32), indexCount);
 
-    float* positions = NULL;
+    float* positions = nullptr;
     u32 vertexCount  = 0;
 
     for (u64 j = 0; j < gltfPrimitive->attributes_count; j++) {
@@ -919,9 +919,9 @@ void parseRigidBody(Scene* scene, cgltf_node* node, Entity* entity) {
     // dimensions from the mesh AABB.  For CONVEX_HULL and MESH we need
     // actual vertex/index data from the mesh.
     float aabb[6]     = {};
-    float* positions  = NULL;
+    float* positions  = nullptr;
     u32 positionCount = 0;
-    u32* indices      = NULL;
+    u32* indices      = nullptr;
     u32 indexCount    = 0;
 
     // Try getting AABB from the Mesh component first (fastest path).
@@ -1400,7 +1400,7 @@ u32 parseMaterial(cgltf_primitive* cgltfPrimitive) {
     // Weight textures are UDIM tiles loaded into TerrainData (SceneBuffer).
     // Detail textures (albedo/normal per channel) stay per-material.
     {
-        Json* fullSplatInfo = NULL;
+        Json* fullSplatInfo = nullptr;
         if (strmapSize(nodeSplatInfoMap) > 0) {
             // Try matching the material name against splatInfo keys first
             fullSplatInfo = strmapGet(nodeSplatInfoMap, nameCheck);
@@ -1424,7 +1424,7 @@ u32 parseMaterial(cgltf_primitive* cgltfPrimitive) {
                 stem[stemLen] = '\0';
                 if (lastSlash) {
                     u32 dirLen = (u32)(lastSlash - currentModelPath + 1);
-                    stringAppendBinary(&splatBaseDir, (void*)currentModelPath, dirLen);
+                    stringAppendBinary(&splatBaseDir, const_cast<char*>(currentModelPath), dirLen);
                 }
                 stringAppend(&splatBaseDir, stem);
                 stringAppend(&splatBaseDir, "/");
@@ -1609,7 +1609,7 @@ void parseAnimation(cgltf_animation* cgltfAnim) {
         }
 
         // Find or create animation channel for this bone name
-        AnimationChannel* animChannel = NULL;
+        AnimationChannel* animChannel = nullptr;
         for (size_t j = 0; j < arraySize(clip->channels); j++) {
             if (strequals(clip->channels[j].jointName.data, boneName)) {
                 animChannel = &clip->channels[j];
@@ -1627,8 +1627,8 @@ void parseAnimation(cgltf_animation* cgltfAnim) {
         // Determine keyframe count and component count based on target path
         size_t keyCount                     = inputAccessor->count;
         size_t componentCount               = 0;
-        Array(Keyframe)* targetArray        = NULL;
-        InterpolationType* interpolationPtr = NULL;
+        Array(Keyframe)* targetArray        = nullptr;
+        InterpolationType* interpolationPtr = nullptr;
 
         switch (cgChannel->target_path) {
             case cgltf_animation_path_type_translation:

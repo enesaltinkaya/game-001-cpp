@@ -8,14 +8,14 @@ static void calculateFps(void);
 static double engineStartTime;
 Timer timer;
 
-void timerInit(double fpsLimit, char fpsLimitChecked, char busyLoop) {
+void timerInit(double fpsLimit, bool fpsLimitChecked, bool busyLoop) {
     timer.fpsLimit        = fpsLimit;
     timer.fpsLimitChecked = fpsLimitChecked;
     timer.busyLoop        = busyLoop;
 
-    static char first;
+    static bool first = false;
     if (!first) {
-        first = 1;
+        first = true;
         info("timer: initializing");
     }
     debug("timer: fpsLimit %.0lf", timer.fpsLimitChecked ? timer.fpsLimit : 0);

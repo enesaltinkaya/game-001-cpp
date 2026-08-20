@@ -33,6 +33,6 @@ u32 randomU32(void);
 float randomFloat(void);
 double nanos(void);
 double millies(void);
-char isDebug(void);
+bool isDebug(void);
 u32 colorHexToUInt(const char* hex);
 void* customMemmem(const void* haystack, int haystack_len, const void* needle, int needle_len);

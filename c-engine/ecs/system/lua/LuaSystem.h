@@ -2,7 +2,7 @@
 
 extern struct System luaSystem;
 
-typedef int (*LuaFunction)(void* luaState);
+using LuaFunction = int (*)(void*);
 
 void* luaGetState(void);
 void luaRegisterFunction(const char* name, LuaFunction luaFunction);

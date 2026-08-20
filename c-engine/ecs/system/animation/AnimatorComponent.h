@@ -9,55 +9,55 @@
 #define MAX_EVENT_NAME_LENGTH 64
 
 // Forward declarations
-typedef struct AnimationClip AnimationClip;
-typedef struct AnimationChannel AnimationChannel;
-typedef struct AnimationInstance AnimationInstance;
-typedef struct Animator Animator;
-typedef struct JointMapping JointMapping;
+struct AnimationClip;
+struct AnimationChannel;
+struct AnimationInstance;
+struct Animator;
+struct JointMapping;
 
 /*
  * Interpolation type for animation keyframes
  */
-typedef enum {
+enum InterpolationType {
     INTERPOLATION_LINEAR,
     INTERPOLATION_STEP,
     INTERPOLATION_CUBIC_SPLINE
-} InterpolationType;
+};
 
 /*
  * Keyframe for position, rotation, or scale
  * Supports linear, step, and cubic spline interpolation
  */
-typedef struct Keyframe {
+struct Keyframe {
     float time;
     vec4 value;       // Keyframe value
     vec4 inTangent;   // For cubic spline interpolation
     vec4 outTangent;  // For cubic spline interpolation
-} Keyframe;
+};
 
 /*
  * Event definition in an animation clip
  */
-typedef struct AnimationEventDef {
+struct AnimationEventDef {
     String name;
     float time;  // Time in seconds when event triggers
-} AnimationEventDef;
+};
 
 /*
  * Animation event callback data
  */
-typedef struct EventCallback {
+struct EventCallback {
     String eventName;
     void (*callback)(void* userData);
     void* userData;
     float lastFiredTime;  // Track last fire time to avoid duplicates
-} EventCallback;
+};
 
 /*
  * Single animation channel for one joint
  * Each channel can have different interpolation types per property
  */
-typedef struct AnimationChannel {
+struct AnimationChannel {
     String jointName;  // Bone/node name (resolved to entity ID at playback time)
     InterpolationType positionInterpolation;
     InterpolationType rotationInterpolation;
@@ -69,22 +69,22 @@ typedef struct AnimationChannel {
     i32 lastPosKeyIndex;
     i32 lastRotKeyIndex;
     i32 lastScaleKeyIndex;
-} AnimationChannel;
+};
 
 /*
  * Complete animation clip loaded from glTF
  */
-typedef struct AnimationClip {
+struct AnimationClip {
     String name;
     float duration;
     Array(AnimationChannel) channels;
     Array(AnimationEventDef) events;
-} AnimationClip;
+};
 
 /*
  * Animation instance (per-entity playback state)
  */
-typedef struct AnimationInstance {
+struct AnimationInstance {
     AnimationClip* clip;
     float currentTime;
     float speed;
@@ -96,23 +96,23 @@ typedef struct AnimationInstance {
     float blendElapsed;       // Time elapsed since blend started
     Array(EventCallback) eventCallbacks;
     bool markedForRemoval;
-} AnimationInstance;
+};
 
 /*
  * Joint mapping for animation remapping
  * Maps joint names from source skeleton to target entity IDs
  */
-typedef struct JointMapping {
+struct JointMapping {
     u32 sourceJointCount;
     u32 targetJointCount;
     u32 jointMap[MAX_JOINTS];       // sourceJointIndex -> targetJointIndex
     vec3 scaleFactors[MAX_JOINTS];  // Scale adjustment per joint
-} JointMapping;
+};
 
 /*
  * Animator component (attached to animated entities)
  */
-typedef struct Animator {
+struct Animator {
     Entity* entity;  // Owning entity
     Array(AnimationInstance*) activeInstances;
     JointMapping* mapping;  // NULL if no remapping needed
@@ -127,16 +127,16 @@ typedef struct Animator {
     // and all joint entities).  Computed once, used every tick to activate
     // and save LastTransform for the entire skeleton subtree.
     Entity* skeletonRoot;
-} Animator;
+};
 
 REGISTER_COMPONENT(Animator);
 
 /*
  * Animation Library - Global storage for all loaded animations
  */
-typedef struct AnimationLibrary {
+struct AnimationLibrary {
     Array(AnimationClip*) clips;
-} AnimationLibrary;
+};
 
 extern AnimationLibrary animationLibrary;
 

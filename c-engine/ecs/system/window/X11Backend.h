@@ -5,7 +5,7 @@
 #include <stdint.h>
 
 // Opaque X11 state — all X11 headers stay in X11Backend.c
-typedef struct X11Backend X11Backend;
+struct X11Backend;
 
 // Key/button event data passed back to the engine wrapper
 enum X11EventType {
@@ -24,7 +24,7 @@ enum X11EventType {
     X11_EVENT_RAW_MOTION,
 };
 
-typedef struct X11Event {
+struct X11Event {
     X11EventType type;
     union {
         struct { uint32_t keysym; bool repeat; } key;
@@ -35,7 +35,7 @@ typedef struct X11Event {
         struct { int width, height; }             resize;
         struct { double dx, dy; }                 rawMotion;
     };
-} X11Event;
+};
 
 X11Backend* x11BackendCreate(const char* title, int width, int height, bool fullscreen);
 void        x11BackendDestroy(X11Backend* b);

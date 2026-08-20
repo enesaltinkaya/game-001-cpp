@@ -5,7 +5,7 @@
 #define relative(path) R_relativePath((path), (char[1024]){0})
 char* R_relativePath(const char* path, char* in);
 
-char fileExists(const char* path);
+bool fileExists(const char* path);
 
 void fileWrite(const char* path, const char* data);
 void fileWriteBinary(const char* path, void* data, u32 size);

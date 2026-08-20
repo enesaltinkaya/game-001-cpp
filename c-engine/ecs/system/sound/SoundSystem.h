@@ -6,7 +6,7 @@ struct Sound;
 struct Sound* soundLoad(const char* path);
 void soundDestroy(struct Sound* sound);
 
-void soundPlay(struct Sound* sound, float volume, char loop);
+void soundPlay(struct Sound* sound, float volume, bool loop);
 void soundStop(struct Sound* sound);
 
 void soundPlayHover(void);

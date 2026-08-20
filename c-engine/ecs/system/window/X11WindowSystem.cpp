@@ -66,7 +66,7 @@
 #define XK_Delete 0xffff
 
 // ── WindowBackendApi ────────────────────────────────────────────────────────
-typedef struct WindowBackendApi {
+struct WindowBackendApi {
     const char* name;
     void (*added)(void);
     void (*removed)(void);
@@ -92,7 +92,7 @@ typedef struct WindowBackendApi {
     char const* const* (*getRequiredVulkanExtensions)(u32* extensionCount);
     bool (*createVulkanSurface)(VkInstance instance, VkSurfaceKHR* surface);
     SetCursorFn (*getSetCursorFn)(void);
-} WindowBackendApi;
+};
 
 // ── State ───────────────────────────────────────────────────────────────────
 
@@ -337,15 +337,15 @@ static void x11Added(void) {
     }
     window.width  = width;
     window.height = height;
-    window.ratio  = (float)width / (float)height;
+    window.ratio  = static_cast<float>(width) / static_cast<float>(height);
 
     backend = x11BackendCreate("Mini", width, height, fullScreen);
     elapsed = elapsedEnd(elapsed);
 
     window.xscale           = 1.0f;
     window.yscale           = 1.0f;
-    window.sdlWindowHandle  = NULL;
-    window.glfwWindowHandle = NULL;
+    window.sdlWindowHandle  = nullptr;
+    window.glfwWindowHandle = nullptr;
 
     if (settingsGetDouble("uiScale") == 0) {
         settingsSetDouble("uiScale", 1.0);
@@ -371,12 +371,12 @@ static void x11RemovedDelayed(void* _) {
     arrayFree(gamepads);
     arrayFree(input.events);
     x11BackendDestroy(backend);
-    backend = NULL;
+    backend = nullptr;
     SDL_Quit();
 }
 
 static void x11Removed(void) {
-    futureTaskAdd(0, x11RemovedDelayed, NULL);
+    futureTaskAdd(0, x11RemovedDelayed, nullptr);
 }
 
 static void x11Hide(void) {
@@ -420,27 +420,27 @@ static void x11LoadCursors(void) {
     if (scale <= 0) scale = 1.0;
 
     Image arrowImg     = imageLoadKtx("images/cursorArrow.png.ktx2", KTX_FORMAT_RGBA32);
-    u64 aw             = (u64)(arrowImg.width / 2.5 * scale);
-    u64 ah             = (u64)(arrowImg.height / 2.5 * scale);
-    u64 ahx            = (u64)(8 / 2.5 * scale);
-    u64 ahy            = (u64)(8 / 2.5 * scale);
+    u64 aw             = static_cast<u64>(arrowImg.width / 2.5 * scale);
+    u64 ah             = static_cast<u64>(arrowImg.height / 2.5 * scale);
+    u64 ahx            = static_cast<u64>(8 / 2.5 * scale);
+    u64 ahy            = static_cast<u64>(8 / 2.5 * scale);
     Image arrowResized = imageResize(&arrowImg, aw, ah);
     x11BackendSetCustomCursorArrow(backend,
                                    reinterpret_cast<const unsigned char*>(arrowResized.data),
-                                   (int)aw,
-                                   (int)ah,
-                                   (int)ahx,
-                                   (int)ahy);
+                                   static_cast<int>(aw),
+                                   static_cast<int>(ah),
+                                   static_cast<int>(ahx),
+                                   static_cast<int>(ahy));
     imageDestory(&arrowImg);
     imageDestory(&arrowResized);
 
     Image handImg     = imageLoadKtx("images/cursorHand.png.ktx2", KTX_FORMAT_RGBA32);
-    u64 hw            = (u64)(handImg.width / 2.5 * scale);
-    u64 hh            = (u64)(handImg.height / 2.5 * scale);
-    u64 hhx           = (u64)(25 / 2.5 * scale);
-    u64 hhy           = (u64)(4 / 2.5 * scale);
+    u64 hw            = static_cast<u64>(handImg.width / 2.5 * scale);
+    u64 hh            = static_cast<u64>(handImg.height / 2.5 * scale);
+    u64 hhx           = static_cast<u64>(25 / 2.5 * scale);
+    u64 hhy           = static_cast<u64>(4 / 2.5 * scale);
     Image handResized = imageResize(&handImg, hw, hh);
-    x11BackendSetCustomCursorHand(backend, reinterpret_cast<const unsigned char*>(handResized.data), (int)hw, (int)hh, (int)hhx, (int)hhy);
+    x11BackendSetCustomCursorHand(backend, reinterpret_cast<const unsigned char*>(handResized.data), static_cast<int>(hw), static_cast<int>(hh), static_cast<int>(hhx), static_cast<int>(hhy));
     imageDestory(&handImg);
     imageDestory(&handResized);
 }
@@ -450,15 +450,15 @@ static void x11ReloadCursors(void) {
 }
 
 static void* x11GetPointerCursor(void) {
-    return NULL;
+    return nullptr;
 }  // cursors managed internally
 
 static void* x11GetArrowCursor(void) {
-    return NULL;
+    return nullptr;
 }
 
 static void* x11GetTextCursor(void) {
-    return NULL;
+    return nullptr;
 }
 
 static void x11UpdateDimensions(void) {
@@ -470,14 +470,14 @@ static void x11WarpCenter(void) {
 }
 
 static void x11Warp(float x, float y) {
-    x11BackendWarp(backend, (int)x, (int)y);
+    x11BackendWarp(backend, static_cast<int>(x), static_cast<int>(y));
 }
 
 static void x11HideCursor(void) {
     int wx, wy;
     x11BackendQueryPointer(backend, &wx, &wy);
-    cursorSaveX   = (float)wx;
-    cursorSaveY   = (float)wy;
+    cursorSaveX   = static_cast<float>(wx);
+    cursorSaveY   = static_cast<float>(wy);
     cursorVisible = false;
     x11BackendSetCursorVisible(backend, false);
     x11BackendWarp(backend, window.width / 2, window.height / 2);
@@ -489,8 +489,8 @@ static void showCursorDelayed(void*) {
 
 static void x11ShowCursor(void) {
     cursorVisible = true;
-    x11BackendWarp(backend, (int)cursorSaveX, (int)cursorSaveY);
-    futureTaskAdd(10, showCursorDelayed, NULL);
+    x11BackendWarp(backend, static_cast<int>(cursorSaveX), static_cast<int>(cursorSaveY));
+    futureTaskAdd(10, showCursorDelayed, nullptr);
     // x11BackendSetCursorVisible(backend, true);
 }
 
@@ -527,7 +527,7 @@ static char const* const* x11GetRequiredVulkanExtensions(u32* extensionCount) {
 }
 
 static bool x11CreateVulkanSurface(VkInstance instance, VkSurfaceKHR* surface) {
-    return x11BackendCreateVulkanSurface(backend, (void*)instance, (void*)surface);
+    return x11BackendCreateVulkanSurface(backend, reinterpret_cast<void*>(instance), reinterpret_cast<void*>(surface));
 }
 
 static SetCursorFn x11GetSetCursorFn(void) {
@@ -620,10 +620,10 @@ static void x11PreUpdate(void) {
 
             case X11_EVENT_RAW_MOTION: {
                 if (!cursorVisible) {
-                    input.deltaX += (float)e->rawMotion.dx;
-                    input.deltaY += (float)e->rawMotion.dy;
-                    pendingRelDx += (float)e->rawMotion.dx;
-                    pendingRelDy += (float)e->rawMotion.dy;
+                    input.deltaX += static_cast<float>(e->rawMotion.dx);
+                    input.deltaY += static_cast<float>(e->rawMotion.dy);
+                    pendingRelDx += static_cast<float>(e->rawMotion.dx);
+                    pendingRelDy += static_cast<float>(e->rawMotion.dy);
                 }
             } break;
 
@@ -658,8 +658,8 @@ static void x11PreUpdate(void) {
                 if (e->resize.width != window.width || e->resize.height != window.height) {
                     window.width  = e->resize.width;
                     window.height = e->resize.height;
-                    window.ratio  = (float)window.width / (float)window.height;
-                    signalEmit("windowResized", NULL);
+                    window.ratio  = static_cast<float>(window.width) / static_cast<float>(window.height);
+                    signalEmit("windowResized", nullptr);
                     pushResizeEvent(window.width, window.height);
                 }
             } break;

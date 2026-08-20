@@ -37,13 +37,13 @@
 #define HEIGHTMAP_TEX           512
 #define HEIGHTMAP_PHYSICS_PSN   256
 
-typedef enum HeightmapTileState {
+enum HeightmapTileState {
     HEIGHTMAP_TILE_EMPTY = 0,  // allocated, no data (phase-0 terminal state)
     HEIGHTMAP_TILE_GENERATING, // background thread filling grids (phase 1)
     HEIGHTMAP_TILE_READY,      // CPU + GPU + physics data valid (phases 1-3)
-} HeightmapTileState;
+};
 
-typedef struct HeightmapTile {
+struct HeightmapTile {
     i32  tileX, tileZ;          // world tile coordinates
     float originX, originZ;     // world position of the tile's min corner
     float sizeMeters;           // tile edge (== HeightmapTerrain tile size)
@@ -67,9 +67,9 @@ typedef struct HeightmapTile {
     void* physicsData;
 
     u64 lruStamp;
-} HeightmapTile;
+};
 
-typedef struct HeightmapTerrain {
+struct HeightmapTerrain {
     HeightmapSource source;        // vtable + userData (copied at init)
     float tileSizeMeters;
     u32   windowSize;              // tiles per side (forced odd)
@@ -82,7 +82,7 @@ typedef struct HeightmapTerrain {
     u64  generatedTiles;           // lifetime counter (this instance)
     bool initialized;
     i32  lastLoggedCx, lastLoggedCz; // window log throttling
-} HeightmapTerrain;
+};
 
 REGISTER_COMPONENT(HeightmapTerrain);
 
@@ -135,13 +135,13 @@ bool heightmapTerrainHasBodyAt(const HeightmapTerrain* ht, float wx, float wz);
 // in the renderer (which must not touch the tile table while the builder
 // thread is publishing). The grid pointers stay valid until the owning tile
 // is evicted on the main thread.
-typedef struct HeightmapTileView {
+struct HeightmapTileView {
     i32 tileX, tileZ;
     u64 readyStamp;   // cache key (bumped on each READY publish)
     float originX, originZ;
     float sizeMeters;
     const float* heights; // [HEIGHTMAP_TEX]^2, metres
-} HeightmapTileView;
+};
 
 // Copy the READY tiles into outViews (up to cap entries). Safe from any
 // thread. Returns the number of views written.

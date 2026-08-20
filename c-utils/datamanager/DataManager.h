@@ -7,18 +7,18 @@ void dataManagerDestroy(void);
 
 u32 dataManagerGetSize(const char* path);
 u32 dataManagerGetCRC(const char* path);
-char dataManagerFileExists(const char* path);
+bool dataManagerFileExists(const char* path);
 
 String dataManagerRead(const char* path);
 
 // Reads a specific chunk of a file without loading the whole thing
 void dataManagerReadChunk(const char* path, void* buffer, u32 offset, u32 size);
 
-typedef struct ZipFile {
+struct ZipFile {
     struct zip_file* zipfile;
     u32 pos;
     u32 size;
-} ZipFile;
+};
 
 // Returns an array of Strings with all file paths in paks matching the given
 // extension (e.g. ".ktx2").  Caller must destroy each String and arrayFree the

@@ -4,7 +4,7 @@
 #ifdef _WIN32
 #include <windows.h>
 
-MappedFile* map_file(const char* path, u64 size, char create_and_resize) {
+MappedFile* map_file(const char* path, u64 size, bool create_and_resize) {
     MappedFile* out_map = static_cast<MappedFile*>(memoryAlloc(sizeof *out_map));
 
     // --- WINDOWS IMPLEMENTATION ---
@@ -21,13 +21,13 @@ MappedFile* map_file(const char* path, u64 size, char create_and_resize) {
         map_access = FILE_MAP_WRITE;
     }
 
-    HANDLE hFile = CreateFileA(path, access, share, NULL, creation, FILE_ATTRIBUTE_NORMAL, NULL);
+    HANDLE hFile = CreateFileA(path, access, share, nullptr, creation, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (hFile == INVALID_HANDLE_VALUE) return 0;
 
     // On Windows, specifying the size in CreateFileMapping automatically resizes the file
     // if we are in Read/Write mode.
-    DWORD size_high = (DWORD)((size >> 32) & 0xFFFFFFFF);
-    DWORD size_low  = (DWORD)(size & 0xFFFFFFFF);
+    DWORD size_high = static_cast<DWORD>((size >> 32) & 0xFFFFFFFF);
+    DWORD size_low  = static_cast<DWORD>(size & 0xFFFFFFFF);
 
     if (!create_and_resize) {
         // If reading, get actual file size
@@ -36,20 +36,20 @@ MappedFile* map_file(const char* path, u64 size, char create_and_resize) {
             CloseHandle(hFile);
             return 0;
         }
-        size = (size_t)fileSize.QuadPart;
+        size = static_cast<size_t>(fileSize.QuadPart);
         // Set these to 0 for CreateFileMapping to map the whole existing file
         size_high = 0;
         size_low  = 0;
     }
 
-    HANDLE hMap = CreateFileMappingA(hFile, NULL, protect, size_high, size_low, NULL);
-    if (hMap == NULL) {
+    HANDLE hMap = CreateFileMappingA(hFile, nullptr, protect, size_high, size_low, nullptr);
+    if (hMap == nullptr) {
         CloseHandle(hFile);
         return 0;
     }
 
     void* ptr = MapViewOfFile(hMap, map_access, 0, 0, size);
-    if (ptr == NULL) {
+    if (ptr == nullptr) {
         CloseHandle(hMap);
         CloseHandle(hFile);
         return 0;
@@ -67,10 +67,10 @@ void unmap_file(MappedFile* map) {
     if (!map || !map->data) return;
 
     UnmapViewOfFile(map->data);
-    CloseHandle((HANDLE)map->internal_handle_2);  // Map handle
-    CloseHandle((HANDLE)map->internal_handle_1);  // File handle
+    CloseHandle(static_cast<HANDLE>(map->internal_handle_2));  // Map handle
+    CloseHandle(static_cast<HANDLE>(map->internal_handle_1));  // File handle
 
-    map->data = NULL;
+    map->data = nullptr;
     map->size = 0;
     memoryFree(map);
 }

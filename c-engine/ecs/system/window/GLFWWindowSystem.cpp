@@ -4,7 +4,7 @@
 #include "Utils.h"
 #include "image/Image.h"
 
-typedef struct WindowBackendApi {
+struct WindowBackendApi {
     const char* name;
     void (*added)(void);
     void (*removed)(void);
@@ -30,7 +30,7 @@ typedef struct WindowBackendApi {
     char const* const* (*getRequiredVulkanExtensions)(u32* extensionCount);
     bool (*createVulkanSurface)(VkInstance instance, VkSurfaceKHR* surface);
     SetCursorFn (*getSetCursorFn)(void);
-} WindowBackendApi;
+};
 
 static void initGLFW(void);
 static void setDimensions(void);
@@ -106,14 +106,14 @@ static void glfwWindowSizeCallback(GLFWwindow* glfwWindow, int width, int height
     (void)glfwWindow;
     window.width  = width;
     window.height = height;
-    window.ratio  = (float)width / (float)height;
+    window.ratio  = static_cast<float>(width) / static_cast<float>(height);
 
     InputEvent event         = {};
     event.type               = INPUT_EVENT_WINDOW_RESIZED;
     event.data.resize.width  = width;
     event.data.resize.height = height;
     windowSystemPushInputEvent(event);
-    signalEmit("windowResized", NULL);
+    signalEmit("windowResized", nullptr);
 }
 
 static void glfwKeyCallback(GLFWwindow* glfwWindow, int key, int scancode, int action, int mods) {
@@ -157,7 +157,7 @@ static void glfwCharCallback(GLFWwindow* glfwWindow, unsigned int codepoint) {
     InputEvent event = {};
     event.type       = INPUT_EVENT_TEXT_INPUT;
     if (codepoint < 0x80) {
-        event.data.text.text[0] = (char)codepoint;
+        event.data.text.text[0] = static_cast<char>(codepoint);
         event.data.text.text[1] = '\0';
     }
     windowSystemPushInputEvent(event);
@@ -167,8 +167,8 @@ static void glfwCursorPosCallback(GLFWwindow* glfwWindow, double xpos, double yp
     (void)glfwWindow;
     input.lastX  = input.xpos;
     input.lastY  = input.ypos;
-    input.xpos   = (float)xpos;
-    input.ypos   = (float)ypos;
+    input.xpos   = static_cast<float>(xpos);
+    input.ypos   = static_cast<float>(ypos);
     input.deltaX = input.xpos - input.lastX;
     input.deltaY = input.ypos - input.lastY;
     pendingRelativeMouseDx += input.deltaX;
@@ -207,8 +207,8 @@ static void glfwMouseButtonCallback(GLFWwindow* glfwWindow, int button, int acti
 
 static void glfwScrollCallback(GLFWwindow* glfwWindow, double xoffset, double yoffset) {
     (void)glfwWindow;
-    input.scrollX = (float)xoffset;
-    input.scrollY = (float)yoffset;
+    input.scrollX = static_cast<float>(xoffset);
+    input.scrollY = static_cast<float>(yoffset);
 
     InputEvent event   = {};
     event.type         = INPUT_EVENT_MOUSE_WHEEL;
@@ -252,7 +252,7 @@ static void windowRemovedDelayed(void* _) {
 }
 
 void glfwWindowSystemRemoved(void) {
-    futureTaskAdd(0, windowRemovedDelayed, NULL);
+    futureTaskAdd(0, windowRemovedDelayed, nullptr);
 }
 
 void initGLFW(void) {
@@ -278,13 +278,13 @@ void setDimensions(void) {
         window.height = window.width / 1.77F;
     }
 
-    window.ratio = (float)window.width / (float)window.height;
+    window.ratio = static_cast<float>(window.width) / static_cast<float>(window.height);
 }
 
 void createWindow(void) {
     double elapsed          = elapsedBegin();
-    GLFWmonitor* monitor    = settingsGetBool("fullScreen") ? glfwGetPrimaryMonitor() : NULL;
-    window.glfwWindowHandle = glfwCreateWindow(window.width, window.height, title, monitor, NULL);
+    GLFWmonitor* monitor    = settingsGetBool("fullScreen") ? glfwGetPrimaryMonitor() : nullptr;
+    window.glfwWindowHandle = glfwCreateWindow(window.width, window.height, title, monitor, nullptr);
     elapsed                 = elapsedEnd(elapsed);
     if (!window.glfwWindowHandle) {
         terminate("windowSystem: failed to create GLFW window");
@@ -333,18 +333,18 @@ void centerWindow(void) {
 GLFWcursor* loadCursor(const char* path, float xHot, float yHot) {
     Image image = imageLoadKtx(path, KTX_FORMAT_RGBA32);
 
-    u64 resizedWidth  = (int)(image.width / 2.5F * settingsGetDouble("cursorScale"));
-    u64 resizedHeight = (int)(image.height / 2.5F * settingsGetDouble("cursorScale"));
-    u64 resizedHotX   = (int)(xHot / 2.5F * settingsGetDouble("cursorScale"));
-    u64 resizedHotY   = (int)(yHot / 2.5F * settingsGetDouble("cursorScale"));
+    u64 resizedWidth  = static_cast<int>(image.width / 2.5F * settingsGetDouble("cursorScale"));
+    u64 resizedHeight = static_cast<int>(image.height / 2.5F * settingsGetDouble("cursorScale"));
+    u64 resizedHotX   = static_cast<int>(xHot / 2.5F * settingsGetDouble("cursorScale"));
+    u64 resizedHotY   = static_cast<int>(yHot / 2.5F * settingsGetDouble("cursorScale"));
 
     Image resizedImage  = imageResize(&image, resizedWidth, resizedHeight);
     GLFWimage glfwImage = {
-        .width  = (int)resizedWidth,
-        .height = (int)resizedHeight,
+        .width  = static_cast<int>(resizedWidth),
+        .height = static_cast<int>(resizedHeight),
         .pixels = reinterpret_cast<unsigned char*>(resizedImage.data),
     };
-    GLFWcursor* cursor = glfwCreateCursor(&glfwImage, (int)resizedHotX, (int)resizedHotY);
+    GLFWcursor* cursor = glfwCreateCursor(&glfwImage, static_cast<int>(resizedHotX), static_cast<int>(resizedHotY));
 
     imageDestory(&image);
     imageDestory(&resizedImage);
@@ -400,8 +400,8 @@ void glfwWindowSystemToggleFullscreen(char fullScreen) {
                              mode->height,
                              mode->refreshRate);
     } else {
-        int width  = windowedWidth > 0 ? windowedWidth : (int)(mode->width * 0.75F);
-        int height = windowedHeight > 0 ? windowedHeight : (int)(width / 1.77F);
+        int width  = windowedWidth > 0 ? windowedWidth : static_cast<int>(mode->width * 0.75F);
+        int height = windowedHeight > 0 ? windowedHeight : static_cast<int>(width / 1.77F);
         int x      = windowedX;
         int y      = windowedY;
         if (width <= 0 || height <= 0) {
@@ -415,7 +415,7 @@ void glfwWindowSystemToggleFullscreen(char fullScreen) {
             x = monitorX + (mode->width - width) / 2;
             y = monitorY + (mode->height - height) / 2;
         }
-        glfwSetWindowMonitor(window.glfwWindowHandle, NULL, x, y, width, height, 0);
+        glfwSetWindowMonitor(window.glfwWindowHandle, nullptr, x, y, width, height, 0);
     }
 }
 
@@ -458,7 +458,7 @@ void glfwWindowSystemShowCursor(void) {
     input.deltaX           = 0.0f;
     input.deltaY           = 0.0f;
     glfwSetCursorPos(window.glfwWindowHandle, cursorSaveX, cursorSaveY);
-    // futureTaskAdd(1000, showCursorDelayed, NULL);
+    // futureTaskAdd(1000, showCursorDelayed, nullptr);
 }
 
 bool glfwWindowSystemIsCursorVisible(void) {
@@ -591,7 +591,7 @@ char const* const* glfwWindowSystemGetRequiredVulkanExtensions(u32* extensionCou
 }
 
 bool glfwWindowSystemCreateVulkanSurface(VkInstance instance, VkSurfaceKHR* surface) {
-    return glfwCreateWindowSurface(instance, window.glfwWindowHandle, NULL, surface) == VK_SUCCESS;
+    return glfwCreateWindowSurface(instance, window.glfwWindowHandle, nullptr, surface) == VK_SUCCESS;
 }
 
 void glfwWindowSystemPreUpdate(void) {

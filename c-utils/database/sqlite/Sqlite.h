@@ -17,7 +17,7 @@ int sqliteGetInt(void* statement, int index);
 const char* sqliteGetString(void* statement, int index);
 void* sqliteGetBlob(void* statement, int index);
 
-char sqliteTableExists(const char* tableName);
-char sqliteStep(void* statement);
+bool sqliteTableExists(const char* tableName);
+bool sqliteStep(void* statement);
 
 int sqliteCount(const char* query);

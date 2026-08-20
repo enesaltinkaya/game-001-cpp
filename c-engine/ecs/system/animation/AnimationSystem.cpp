@@ -121,7 +121,7 @@ static void findKeyframes(Array(Keyframe) keys,
             if (wrapRange > 0.0001f) {
                 // time is in the [0 .. keys[0].time] portion of the wrap
                 float elapsed = (clipDuration - lastKeyTime) + time;
-                *outPrev = (i32)keyCount - 1;
+                *outPrev = static_cast<i32>(keyCount) - 1;
                 *outNext = 0;
                 *outT    = elapsed / wrapRange;
                 if (hint) *hint = 0;
@@ -143,34 +143,34 @@ static void findKeyframes(Array(Keyframe) keys,
             float wrapRange   = (clipDuration - lastKeyTime) + keys[0].time;
             if (wrapRange > 0.0001f) {
                 float elapsed = time - lastKeyTime;
-                *outPrev = (i32)keyCount - 1;
+                *outPrev = static_cast<i32>(keyCount) - 1;
                 *outNext = 0;
                 *outT    = elapsed / wrapRange;
-                if (hint) *hint = (i32)keyCount - 1;
+                if (hint) *hint = static_cast<i32>(keyCount) - 1;
                 return;
             }
         }
-        *outPrev = (i32)keyCount - 2;
-        *outNext = (i32)keyCount - 1;
+        *outPrev = static_cast<i32>(keyCount) - 2;
+        *outNext = static_cast<i32>(keyCount) - 1;
         *outT    = 1.0f;
         if (hint) *hint = *outPrev;
         return;
     }
 
     // Try hint first (O(1) for sequential playback)
-    i32 h = (hint && *hint >= 0 && *hint < (i32)keyCount - 1) ? *hint : 0;
+    i32 h = (hint && *hint >= 0 && *hint < static_cast<i32>(keyCount) - 1) ? *hint : 0;
     if (keys[h].time <= time && keys[h + 1].time > time) {
         // Hint is exact
         *outPrev = h;
         *outNext = h + 1;
-    } else if (h + 1 < (i32)keyCount - 1 && keys[h + 1].time <= time && keys[h + 2].time > time) {
+    } else if (h + 1 < static_cast<i32>(keyCount) - 1 && keys[h + 1].time <= time && keys[h + 2].time > time) {
         // Next interval (most common case: time advanced one interval)
         *outPrev = h + 1;
         *outNext = h + 2;
     } else {
         // Fallback: binary search
         i32 low  = 0;
-        i32 high = (i32)keyCount - 1;
+        i32 high = static_cast<i32>(keyCount) - 1;
         while (low < high - 1) {
             i32 mid = low + (high - low) / 2;
             if (keys[mid].time <= time) {
@@ -557,7 +557,7 @@ static void update(void) {
                 // Applying clips sequentially on top of already-modified local transforms
                 // makes the result depend on update order and causes visible shakiness during
                 // crossfades / partial blends.
-                typedef struct ChannelAccum {
+                struct ChannelAccum {
                     u32 entityId;
                     Transform baseTransform;
                     Transform accumPosition;
@@ -567,7 +567,7 @@ static void update(void) {
                     float rotationWeight;
                     float scaleWeight;
                     bool initialized;
-                } ChannelAccum;
+                };
 
                 Array(ChannelAccum) accumulators = {};
 
@@ -601,7 +601,7 @@ static void update(void) {
                             continue;
                         }
 
-                        ChannelAccum* accum = NULL;
+                        ChannelAccum* accum = nullptr;
                         for (size_t a = 0; a < arraySize(accumulators); a++) {
                             if (accumulators[a].entityId == targetJointEntity) {
                                 accum = &accumulators[a];
@@ -773,12 +773,12 @@ AnimationClip* animationGet(const char* name) {
             return animationLibrary.clips[i];
         }
     }
-    return NULL;
+    return nullptr;
 }
 
 AnimationClip* animationGetFirst(void) {
     if (arraySize(animationLibrary.clips) == 0) {
-        return NULL;
+        return nullptr;
     }
     return animationLibrary.clips[0];
 }
@@ -791,7 +791,7 @@ void animationPlay(Entity* entity, const char* clipName, float speed, bool loop)
     if (!animator) {
         animator          = createComponent(scene, Animator, entity->id);
         animator->entity  = entity;
-        animator->mapping = NULL;
+        animator->mapping = nullptr;
     }
 
     // Get animation clip
@@ -832,7 +832,7 @@ void animationPlayBlended(Entity* entity,
     if (!animator) {
         animator          = createComponent(scene, Animator, entity->id);
         animator->entity  = entity;
-        animator->mapping = NULL;
+        animator->mapping = nullptr;
     }
 
     AnimationClip* clip = animationGet(clipName);
@@ -891,7 +891,7 @@ void animationCrossFade(Entity* entity, const char* fromClip, const char* toClip
     }
 
     // Find or create "to" animation
-    AnimationInstance* toInstance = NULL;
+    AnimationInstance* toInstance = nullptr;
     for (size_t i = 0; i < arraySize(animator->activeInstances); i++) {
         AnimationInstance* instance = animator->activeInstances[i];
         if (instance && strequals(instance->clip->name.data, toClip)) {
@@ -991,7 +991,7 @@ bool animationIsFinished(Entity* entity, const char* clipName) {
     // Search backwards — the most recently added instance is last in the array.
     // Skip instances that are fading out (blendWeightTarget == 0) since those
     // are leftovers from a previous play call.
-    for (i32 i = (i32)arraySize(animator->activeInstances) - 1; i >= 0; i--) {
+    for (i32 i = static_cast<i32>(arraySize(animator->activeInstances)) - 1; i >= 0; i--) {
         AnimationInstance* instance = animator->activeInstances[i];
         if (instance && !instance->markedForRemoval && instance->blendWeightTarget > 0.0f &&
             strequals(instance->clip->name.data, clipName)) {
@@ -1005,7 +1005,7 @@ void animationRestart(Entity* entity, const char* clipName, float speed) {
     Animator* animator = getComponent(entity->scene, Animator, entity->id);
     if (!animator) return;
 
-    for (i32 i = (i32)arraySize(animator->activeInstances) - 1; i >= 0; i--) {
+    for (i32 i = static_cast<i32>(arraySize(animator->activeInstances)) - 1; i >= 0; i--) {
         AnimationInstance* instance = animator->activeInstances[i];
         if (instance && !instance->markedForRemoval &&
             strequals(instance->clip->name.data, clipName)) {
@@ -1026,7 +1026,7 @@ bool animationIsNearEnd(Entity* entity, const char* clipName, float thresholdSec
     Animator* animator = getComponent(entity->scene, Animator, entity->id);
     if (!animator) return false;
 
-    for (i32 i = (i32)arraySize(animator->activeInstances) - 1; i >= 0; i--) {
+    for (i32 i = static_cast<i32>(arraySize(animator->activeInstances)) - 1; i >= 0; i--) {
         AnimationInstance* instance = animator->activeInstances[i];
         if (instance && !instance->markedForRemoval && instance->blendWeightTarget > 0.0f &&
             strequals(instance->clip->name.data, clipName)) {
@@ -1038,9 +1038,9 @@ bool animationIsNearEnd(Entity* entity, const char* clipName, float thresholdSec
 }
 
 Entity* animationGetBoneEntity(Entity* entity, const char* boneName) {
-    if (!entity || !boneName) return NULL;
+    if (!entity || !boneName) return nullptr;
     Animator* animator = getComponent(entity->scene, Animator, entity->id);
-    if (!animator || !animator->boneMap) return NULL;
+    if (!animator || !animator->boneMap) return nullptr;
     return strmapGet(animator->boneMap, boneName);
 }
 
@@ -1075,7 +1075,7 @@ void animationSetRemapping(Entity* entity, const JointMapping* mapping) {
         animator->entity = entity;
     }
 
-    animator->mapping = (JointMapping*)mapping;
+    animator->mapping = const_cast<JointMapping*>(mapping);
 }
 
 JointMapping* animationCreateJointMapping(const char* sourceSkeleton, const char* targetSkeleton) {
@@ -1084,7 +1084,7 @@ JointMapping* animationCreateJointMapping(const char* sourceSkeleton, const char
     // TODO: Implement joint name-based mapping
     // This would need access to skeleton joint names
     warn("animationCreateJointMapping: not yet implemented");
-    return NULL;
+    return nullptr;
 }
 
 void animationFreeJointMapping(JointMapping* mapping) {

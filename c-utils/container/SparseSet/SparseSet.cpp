@@ -1,60 +1,47 @@
 #include "SparseSet.h"
-#include <stddef.h>
+#include <cassert>
+#include <cstring>
 #include "Utils.h"
-#include "memorymanager/MemoryManager.h"
-#include "string/String.h"  // IWYU pragma: keep
-#include <assert.h>
 
 SparseSet* ssNew(u32 elementSize) {
-    SparseSet* ss = static_cast<SparseSet*>(memoryAlloc(sizeof *ss));
+    SparseSet* ss = new SparseSet();
     ss->elementSize = elementSize;
     return ss;
 }
 
 void ssDestroy(void* pss) {
-    SparseSet* ss = static_cast<SparseSet*>(pss);
-    arrayFree(ss->sparse);
-    arrayFree(ss->dense);
-    memoryFree(ss->data);
-    memoryFree(ss);
+    delete static_cast<SparseSet*>(pss);
 }
 
 void ssReserve(SparseSet* ss, u32 capacity) {
     if (capacity <= ss->capacity) return;
-    char* temp = static_cast<char*>(memoryRealloc(ss->data, (u64)capacity * ss->elementSize));
-    if (!temp) terminate("sparseset realloc failed");
-    ss->data = temp;
 
-    arraySetSize(ss->dense, capacity);
-    arraySetSize(ss->sparse, capacity);
-
-    u64 from = (u64)ss->capacity * sizeof(u32);
-    u64 size = (u64)(capacity - ss->capacity) * sizeof(u32);
-    memset((char*)ss->dense + from, 0, size);
-    memset((char*)ss->sparse + from, 0, size);
+    ss->data.resize(static_cast<size_t>(capacity) * ss->elementSize);
+    ss->dense.resize(capacity, 0);
+    ss->sparse.resize(capacity, 0);
 
     ss->capacity = capacity;
 }
 
-char ssContainsValue(SparseSet* ss, u32 value) {
-    if (value >= ss->capacity) return 0;
+bool ssContainsValue(SparseSet* ss, u32 value) {
+    if (value >= ss->capacity) return false;
     u32 sparseValue = ss->sparse[value];
-    if (sparseValue >= ss->size) return 0;
+    if (sparseValue >= ss->size) return false;
     u32 denseValue = ss->dense[sparseValue];
     return denseValue == value;
 }
 
 void* ssGetDataByValue(SparseSet* ss, u32 value) {
-    if (!ssContainsValue(ss, value)) return NULL;
+    if (!ssContainsValue(ss, value)) return nullptr;
 
     u32 sparseValue = ss->sparse[value];
     u32 address     = ss->elementSize * sparseValue;
-    return ss->data + address;
+    return ss->data.data() + address;
 }
 
-void* ssGetDataByIndex(const SparseSet* ss, u32 index) {
+void* ssGetDataByIndex(SparseSet* ss, u32 index) {
     assert(index < ss->size);
-    return ss->data + ((size_t)(ss->elementSize * index));
+    return ss->data.data() + (static_cast<size_t>(ss->elementSize) * index);
 }
 
 u32 ssGetValueByIndex(SparseSet* ss, u32 index) {
@@ -62,20 +49,20 @@ u32 ssGetValueByIndex(SparseSet* ss, u32 index) {
     return ss->dense[index];
 }
 
-char ssRemoveByValue(SparseSet* ss, u32 value) {
+bool ssRemoveByValue(SparseSet* ss, u32 value) {
     if (!ssContainsValue(ss, value)) {
-        return 0;
+        return false;
     }
 
     u32 sparseValue        = ss->sparse[value];
     u32 lastDense          = ss->dense[ss->size - 1];
     ss->dense[sparseValue] = lastDense;
     ss->sparse[lastDense]  = sparseValue;
-    u64 dstOffset          = (u64)sparseValue * ss->elementSize;
-    u64 srcOffset          = (((u64)ss->size - 1) * ss->elementSize);
-    memcpy(ss->data + dstOffset, ss->data + srcOffset, ss->elementSize);
+    std::memcpy(ss->data.data() + static_cast<size_t>(sparseValue) * ss->elementSize,
+                ss->data.data() + static_cast<size_t>(ss->size - 1) * ss->elementSize,
+                ss->elementSize);
     ss->size--;
-    return 1;
+    return true;
 }
 
 void* ssInsert(SparseSet* ss, u32 value, const void* data) {
@@ -85,11 +72,11 @@ void* ssInsert(SparseSet* ss, u32 value, const void* data) {
         ssReserve(ss, value + 1);
     }
     u32 address = ss->elementSize * ss->size;
-    memcpy(ss->data + address, data, ss->elementSize);
+    std::memcpy(ss->data.data() + address, data, ss->elementSize);
     ss->dense[ss->size] = value;
     ss->sparse[value]   = ss->size;
     ss->size++;
-    return ss->data + address;
+    return ss->data.data() + address;
 }
 
 void* ssNewItem(SparseSet* ss, u32 value) {
@@ -99,15 +86,15 @@ void* ssNewItem(SparseSet* ss, u32 value) {
         ssReserve(ss, value + 1);
     }
     u32 address = ss->elementSize * ss->size;
-    memset(ss->data + address, 0, ss->elementSize);
+    std::memset(ss->data.data() + address, 0, ss->elementSize);
     ss->dense[ss->size] = value;
     ss->sparse[value]   = ss->size;
     ss->size++;
-    return ss->data + address;
+    return ss->data.data() + address;
 }
 
 void ssClear(SparseSet* ss) {
     ss->size = 0;
-    arrayClear(ss->dense);
-    arrayClear(ss->sparse);
+    ss->dense.clear();
+    ss->sparse.clear();
 }

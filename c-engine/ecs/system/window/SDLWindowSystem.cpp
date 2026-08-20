@@ -12,7 +12,7 @@
 #include "stb/git/stb_image.h"          // IWYU pragma: keep
 #include "stb/git/stb_image_resize2.h"  // IWYU pragma: keep
 
-typedef struct WindowBackendApi {
+struct WindowBackendApi {
     const char* name;
     void (*added)(void);
     void (*removed)(void);
@@ -38,7 +38,7 @@ typedef struct WindowBackendApi {
     char const* const* (*getRequiredVulkanExtensions)(u32* extensionCount);
     bool (*createVulkanSurface)(VkInstance instance, VkSurfaceKHR* surface);
     SetCursorFn (*getSetCursorFn)(void);
-} WindowBackendApi;
+};
 
 static void initSDL(void);
 static void setDimensions(void);
@@ -142,7 +142,7 @@ static void windowRemovedDelayed(void* _) {
 
 void sdlWindowSystemRemoved(void) {
     // let render system handle it's freeing first
-    futureTaskAdd(0, windowRemovedDelayed, NULL);
+    futureTaskAdd(0, windowRemovedDelayed, nullptr);
 }
 
 void initSDL(void) {
@@ -166,7 +166,7 @@ void setDimensions(void) {
         // window.height = 720;
     }
 
-    window.ratio = (float)window.width / (float)window.height;
+    window.ratio = static_cast<float>(window.width) / static_cast<float>(window.height);
 }
 
 void createWindow(void) {
@@ -219,10 +219,10 @@ void centerWindow(void) {
 SDL_Cursor* loadCursor(const char* path, float xHot, float yHot) {
     Image image = imageLoadKtx(path, KTX_FORMAT_RGBA32);
 
-    u64 resizedWidth  = (int)(image.width / 2.5F * settingsGetDouble("cursorScale"));
-    u64 resizedHeight = (int)(image.height / 2.5F * settingsGetDouble("cursorScale"));
-    u64 resizedHotX   = (int)(xHot / 2.5F * settingsGetDouble("cursorScale"));
-    u64 resizedHotY   = (int)(yHot / 2.5F * settingsGetDouble("cursorScale"));
+    u64 resizedWidth  = static_cast<int>(image.width / 2.5F * settingsGetDouble("cursorScale"));
+    u64 resizedHeight = static_cast<int>(image.height / 2.5F * settingsGetDouble("cursorScale"));
+    u64 resizedHotX   = static_cast<int>(xHot / 2.5F * settingsGetDouble("cursorScale"));
+    u64 resizedHotY   = static_cast<int>(yHot / 2.5F * settingsGetDouble("cursorScale"));
 
     Image resizedImage = imageResize(&image, resizedWidth, resizedHeight);
 
@@ -329,7 +329,7 @@ void sdlWindowSystemShowCursor(void) {
     cursorVisible = true;
     SDL_SetWindowRelativeMouseMode(window.sdlWindowHandle, false);
     SDL_WarpMouseInWindow(window.sdlWindowHandle, cursorSaveX, cursorSaveY);
-    futureTaskAdd(10, showCursorDelayed, NULL);
+    futureTaskAdd(10, showCursorDelayed, nullptr);
 }
 
 bool sdlWindowSystemIsCursorVisible(void) {
@@ -451,7 +451,7 @@ void sdlWindowSystemGetRelativeMouseDelta(float* dx, float* dy) {
 }
 
 static bool windowSystemIsMouseButtonMaskSet(u32 mask) {
-    u32 mouseState = SDL_GetMouseState(NULL, NULL);
+    u32 mouseState = SDL_GetMouseState(nullptr, nullptr);
     return (mouseState & mask) != 0;
 }
 
@@ -472,7 +472,7 @@ char const* const* sdlWindowSystemGetRequiredVulkanExtensions(u32* extensionCoun
 }
 
 bool sdlWindowSystemCreateVulkanSurface(VkInstance instance, VkSurfaceKHR* surface) {
-    return SDL_Vulkan_CreateSurface(window.sdlWindowHandle, instance, NULL, surface);
+    return SDL_Vulkan_CreateSurface(window.sdlWindowHandle, instance, nullptr, surface);
 }
 
 static void windowSystemPushInputEvent(SDL_Event* event) {
@@ -621,8 +621,8 @@ void sdlWindowSystemPreUpdate(void) {
 
         if (event.type == SDL_EVENT_WINDOW_RESIZED) {
             SDL_GetWindowSize(window.sdlWindowHandle, &window.width, &window.height);
-            window.ratio = (float)window.width / (float)window.height;
-            signalEmit("windowResized", NULL);
+            window.ratio = static_cast<float>(window.width) / static_cast<float>(window.height);
+            signalEmit("windowResized", nullptr);
         }
 
         if (event.type == SDL_EVENT_QUIT) {

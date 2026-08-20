@@ -4,15 +4,15 @@
 #include "json/Json.h"
 #include "container/Map.h"
 
-typedef struct Entity {
+struct Entity {
     u32 id;
     struct Scene* scene;
     struct Entity* parent;
     Array(struct Entity*) children;
-    const char* name; // optional, NULL if unnamed. owned copy.
-} Entity;
+    const char* name; // optional, nullptr if unnamed. owned copy.
+};
 
-typedef struct Scene {
+struct Scene {
     void* backendScene;
     String name;  // also stores source path (e.g. "models/terrain/foo.dat") for sidecar loading
     Map(u32, Json*) extras;
@@ -52,5 +52,5 @@ typedef struct Scene {
     // Optional callback invoked on the main thread once the scene is ready.
     void (*loadCallback)(struct Scene* scene, void* userData);
     void* loadCallbackUserData;
-} Scene;
+};
 

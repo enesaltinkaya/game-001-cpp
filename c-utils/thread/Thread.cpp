@@ -77,7 +77,7 @@ void threadSignal(Thread* thread) {
 
 void threadSetName(const char* name) {
     if (threadLocalNameKey == 0) {
-        pthread_key_create(&threadLocalNameKey, NULL);
+        pthread_key_create(&threadLocalNameKey, nullptr);
     }
     pthread_setspecific(threadLocalNameKey, name);
 }
@@ -98,7 +98,7 @@ void threadInitMutex(Thread* thread) {
     pthread_mutex_init(&thread->mutex, &attr);
     pthread_mutexattr_destroy(&attr);  // Don't forget to clean up the attributes object
 #else
-    pthread_mutex_init(&thread->mutex, NULL);
+    pthread_mutex_init(&thread->mutex, nullptr);
 #endif
 }
 

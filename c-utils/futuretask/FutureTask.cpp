@@ -4,12 +4,12 @@
 #include "thread/Thread.h"
 #include "container/Array.h"
 
-typedef struct TaskEntry {
+struct TaskEntry {
     double date;
     void (*fn)(void*);
     void (*fnVoid)(void);
     void* userData;
-} TaskEntry;
+};
 
 static Map(int, TaskEntry) tasks;
 static int taskCounter;
@@ -34,7 +34,7 @@ int futureTaskAddNoParam(double millis, FnVoid fn) {
     TaskEntry task = {};
     task.fnVoid    = fn;
     task.date      = nanos() + millis * MILLION;
-    task.userData  = NULL;
+    task.userData  = nullptr;
 
     int taskKey = taskCounter;
     taskCounter++;

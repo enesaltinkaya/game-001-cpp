@@ -38,7 +38,7 @@ static void buildGpuLight(Scene* scene, u32 entity, Light* light, GpuLight* out)
     glm_quat_rotatev(wt->rot, fwd, dir);
     glm_vec3_normalize(dir);
     glm_vec3_copy(dir, out->directionAndType);
-    out->directionAndType[3] = (float)light->lightType;
+    out->directionAndType[3] = static_cast<float>(light->lightType);
 
     glm_vec3_copy(light->color, out->colorAndIntensity);
     out->colorAndIntensity[3] = light->intensity;
@@ -70,15 +70,19 @@ static void applyIblSun(void* _) {
     // HDR environment maps can have sun pixels in the tens of thousands,
     // which would blow out the entire scene.
     float intensity = fminf(rawIntensity, 5.0f);
-    glm_vec4_copy((vec4){negDir[0], negDir[1], negDir[2], intensity}, sun.direction);
+    vec4 dirVec = {negDir[0], negDir[1], negDir[2], intensity};
+    glm_vec4_copy(dirVec, sun.direction);
     vec3 normalizedColor;
     if (intensity > 0.001f) {
         glm_vec3_scale(iblSun.color, 1.0f / intensity, normalizedColor);
     } else {
-        glm_vec3_copy((vec3){1.0f, 1.0f, 1.0f}, normalizedColor);
+        vec3 white = {1.0f, 1.0f, 1.0f};
+        glm_vec3_copy(white, normalizedColor);
     }
-    glm_vec4_copy((vec4){normalizedColor[0], normalizedColor[1], normalizedColor[2], 0.0f}, sun.color);
-    glm_vec4_copy((vec4){0.05f, 0.05f, 0.05f, 0.0f}, sun.ambient);
+    vec4 colorVec = {normalizedColor[0], normalizedColor[1], normalizedColor[2], 0.0f};
+    glm_vec4_copy(colorVec, sun.color);
+    vec4 ambientVec = {0.05f, 0.05f, 0.05f, 0.0f};
+    glm_vec4_copy(ambientVec, sun.ambient);
     rendererUploadSun(&sun);
 }
 

@@ -1,20 +1,20 @@
 #pragma once
 
-typedef struct System System;
-typedef struct Scene Scene;
-typedef struct Entity Entity;
+struct System;
+struct Scene;
+struct Entity;
 
-typedef struct Ecs {
+struct Ecs {
     Array(System*) systems;
 
     Array(Scene*) scenes;
     Scene* defaultScene;
     Array(SparseSet*) components;
 
-    char showStats;
+    bool showStats;
     double totalCpuElapsed;
     double totalCpuElapsedTemp;
-} Ecs;
+};
 
 extern struct Ecs ecs;
 

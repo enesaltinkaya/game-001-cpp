@@ -42,7 +42,7 @@ void added(void) {
     // distant-landmark screenshots (e.g. the volcano from 5 km).
     {
         const char* zfarEnv = getenv("ENGINE_CAM_ZFAR");
-        if (zfarEnv && *zfarEnv) camera->zfar = strtof(zfarEnv, NULL);
+        if (zfarEnv && *zfarEnv) camera->zfar = strtof(zfarEnv, nullptr);
     }
     camera->exposure    = 1.0f;
 
@@ -68,7 +68,7 @@ void added(void) {
     // DEBUG: offset yaw for IBL investigation
     const char* yawOff = getenv("ENGINE_YAW_OFFSET");
     if (yawOff && *yawOff) {
-        camera->yaw += glm_rad((float)atof(yawOff));
+        camera->yaw += glm_rad(static_cast<float>(atof(yawOff)));
     }
 
     flyingCameraInit(cameraEntity);
@@ -101,8 +101,8 @@ void perspective(u32 cameraEntity) {
     auto camera = getComponent(scene, Camera, cameraEntity);
 
     camera->aspectRatio           = window.ratio;
-    camera->cameraUbo.viewport[0] = (float)window.renderWidth;
-    camera->cameraUbo.viewport[1] = (float)window.renderHeight;
+    camera->cameraUbo.viewport[0] = static_cast<float>(window.renderWidth);
+    camera->cameraUbo.viewport[1] = static_cast<float>(window.renderHeight);
     camera->cameraUbo.znear       = camera->znear;
     camera->cameraUbo.zfar        = camera->zfar;
 
@@ -135,14 +135,14 @@ void perspective(u32 cameraEntity) {
      * so it captures this motion — letting us check disocclusion ghosting. */
     {
         static float dollyAmp = 0.0f;
-        static char dollyInit = 0;
+        static bool dollyInit = false;
         if (!dollyInit) {
-            dollyInit = 1;
+            dollyInit = true;
             const char* env = getenv("ENGINE_TAA_GHOST_DOLLY");
-            if (env && *env) dollyAmp = (float)atof(env);
+            if (env && *env) dollyAmp = static_cast<float>(atof(env));
         }
         if (dollyAmp != 0.0f) {
-            float dist = sinf((float)camera->frameIndex * 0.03f) * dollyAmp;
+            float dist = sinf(static_cast<float>(camera->frameIndex) * 0.03f) * dollyAmp;
             vec3 off;
             glm_vec3_scale(currentDir, dist, off);
             glm_vec3_add(currentPos, off, currentPos);
@@ -193,11 +193,11 @@ void perspective(u32 cameraEntity) {
 
         if ((rendererIsUpscalerEnabled() || rendererIsTAAEnabled()) && window.width > 0) {
             int32_t phaseCount =
-                rendererGetJitterPhaseCount((uint32_t)window.renderWidth, (uint32_t)window.width);
+                rendererGetJitterPhaseCount(static_cast<uint32_t>(window.renderWidth), static_cast<uint32_t>(window.width));
             if (phaseCount > 0) {
                 rendererGetJitterOffset(&jitterX,
                                         &jitterY,
-                                        (int32_t)((camera->frameIndex - 1) % (u32)phaseCount),
+                                        static_cast<int32_t>(((camera->frameIndex - 1) % static_cast<u32>(phaseCount))),
                                         phaseCount);
                 useJitter = 1;
             }
@@ -216,8 +216,8 @@ void perspective(u32 cameraEntity) {
              *    viewport (negative height) ndc.y-down = screen-down, so
              *    the image moves DOWN by jitterY pixels, matching FSR's
              *    convention.                                               */
-            float jxNdc = jitterX * 2.0f / (float)window.renderWidth;
-            float jyNdc = jitterY * 2.0f / (float)window.renderHeight;
+            float jxNdc = jitterX * 2.0f / static_cast<float>(window.renderWidth);
+            float jyNdc = jitterY * 2.0f / static_cast<float>(window.renderHeight);
             projectionJittered[2][0] -= jxNdc;
             projectionJittered[2][1] += jyNdc;
             /* Store jitter as the UV unjitter offset.  Shaders recover

@@ -148,7 +148,7 @@ Image imageResize(Image *image, int newWidth, int newHeight) {
 
   Image resizedImage = {};
   resizedImage.data =
-      stbir_resize_uint8_srgb(reinterpret_cast<const unsigned char*>(image->data), image->width, image->height, 0, NULL,
+      stbir_resize_uint8_srgb(reinterpret_cast<const unsigned char*>(image->data), image->width, image->height, 0, nullptr,
                               newWidth, newHeight, 0, STBIR_RGBA);
   resizedImage.width = newWidth;
   resizedImage.height = newHeight;
@@ -349,13 +349,13 @@ void convolveHorizontalSIMD(const float *input, float *output, int width,
 void gaussianBlur(const float *input, float *output, int width, int height,
                   int radius, float sigma) {
   int size = (2 * radius) + 1;
-  float *kernel = (float *)malloc(size * sizeof(float));
+  float *kernel = static_cast<float*>(malloc(size * sizeof(float)));
 #ifdef __linux
   float *temp = (float *)aligned_alloc(
-      32, (long)width * height * sizeof(float)); // 32-byte aligned for SIMD
+      32, static_cast<long>(width) * height * sizeof(float)); // 32-byte aligned for SIMD
 #else
   float *temp = (float *)_aligned_malloc(
-      32, (long)width * height * sizeof(float)); // 32-byte aligned for SIMD
+      32, static_cast<long>(width) * height * sizeof(float)); // 32-byte aligned for SIMD
 #endif
 
   generateGaussianKernel(kernel, radius, sigma);
@@ -375,7 +375,7 @@ void gaussianBlur(const float *input, float *output, int width, int height,
 // Alternative: Box blur approximation (much faster for large radii)
 void boxBlur(const float *input, float *output, int width, int height,
              int radius) {
-  float *temp = (float *)malloc((long)width * height * sizeof(float));
+  float *temp = static_cast<float*>(malloc(static_cast<long>(width) * height * sizeof(float)));
   float inv_size = 1.0f / (2 * radius + 1);
 
   // Horizontal pass
@@ -447,15 +447,15 @@ void gaussianBlurNormalMap(const signed char *input_normal_map,
                            signed char *output_normal_map, int width,
                            int height, int radius, float sigma) {
   const int num_channels = 4;
-  long total_elements = (long)width * height * num_channels;
-  float *input_float = (float *)malloc(total_elements * sizeof(float));
+  long total_elements = static_cast<long>(width) * height * num_channels;
+  float *input_float = static_cast<float*>(malloc(total_elements * sizeof(float)));
   for (long i = 0; i < total_elements; i++)
-    input_float[i] = (float)input_normal_map[i];
+    input_float[i] = static_cast<float>(input_normal_map[i]);
   int kernel_size = (2 * radius) + 1;
-  float *kernel = (float *)malloc(kernel_size * sizeof(float));
+  float *kernel = static_cast<float*>(malloc(kernel_size * sizeof(float)));
   generateGaussianKernel(kernel, radius, sigma);
-  float *temp_float = (float *)malloc(total_elements * sizeof(float));
-  float *output_float_temp = (float *)malloc(total_elements * sizeof(float));
+  float *temp_float = static_cast<float*>(malloc(total_elements * sizeof(float)));
+  float *output_float_temp = static_cast<float*>(malloc(total_elements * sizeof(float)));
   convolveHorizontal(input_float, temp_float, width, height, num_channels,
                      kernel, radius);
   convolveVertical(temp_float, output_float_temp, width, height, num_channels,
@@ -481,16 +481,16 @@ void boxBlurNormalMap(const signed char *input_normal_map,
                       signed char *output_normal_map, int width, int height,
                       int radius) {
   const int num_channels = 4; // RGBA like your Gaussian version
-  const long total_elements = (long)width * height * num_channels;
+  const long total_elements = static_cast<long>(width) * height * num_channels;
 
   // Convert to float (like your Gaussian version)
-  float *input_float = (float *)malloc(total_elements * sizeof(float));
+  float *input_float = static_cast<float*>(malloc(total_elements * sizeof(float)));
   for (long i = 0; i < total_elements; i++) {
-    input_float[i] = (float)input_normal_map[i];
+    input_float[i] = static_cast<float>(input_normal_map[i]);
   }
 
-  float *temp_float = (float *)malloc(total_elements * sizeof(float));
-  float *output_float = (float *)malloc(total_elements * sizeof(float));
+  float *temp_float = static_cast<float*>(malloc(total_elements * sizeof(float)));
+  float *output_float = static_cast<float*>(malloc(total_elements * sizeof(float)));
 
   const float inv_kernel_size = 1.0f / (2 * radius + 1);
 
@@ -558,15 +558,15 @@ void boxBlurNormalMapFast(const signed char *input_normal_map,
                           signed char *output_normal_map, int width, int height,
                           int radius) {
   const int num_channels = 4;
-  const long total_elements = (long)width * height * num_channels;
+  const long total_elements = static_cast<long>(width) * height * num_channels;
 
-  float *input_float = (float *)malloc(total_elements * sizeof(float));
+  float *input_float = static_cast<float*>(malloc(total_elements * sizeof(float)));
   for (long i = 0; i < total_elements; i++) {
-    input_float[i] = (float)input_normal_map[i];
+    input_float[i] = static_cast<float>(input_normal_map[i]);
   }
 
-  float *temp_float = (float *)malloc(total_elements * sizeof(float));
-  float *output_float = (float *)malloc(total_elements * sizeof(float));
+  float *temp_float = static_cast<float*>(malloc(total_elements * sizeof(float)));
+  float *output_float = static_cast<float*>(malloc(total_elements * sizeof(float)));
 
   const float inv_kernel_size = 1.0f / (2 * radius + 1);
 
@@ -681,7 +681,7 @@ void multiPassBoxBlurNormalMap(const signed char *input_normal_map,
     return;
   }
 
-  const long total_elements = (long)width * height * 4;
+  const long total_elements = static_cast<long>(width) * height * 4;
   signed char *temp_buffers[2];
   temp_buffers[0] = (signed char *)malloc(total_elements);
   temp_buffers[1] = (signed char *)malloc(total_elements);
@@ -712,7 +712,7 @@ void multiPassBoxBlurNormalMap(const signed char *input_normal_map,
 // Box blur that ignores FLT_MAX values (holes) and preserves them
 void boxBlurWithHoles(const float *input, float *output, int width, int height,
                       int radius) {
-  float *temp = (float *)malloc((long)width * height * sizeof(float));
+  float *temp = static_cast<float*>(malloc(static_cast<long>(width) * height * sizeof(float)));
 
   // Horizontal pass
   for (int y = 0; y < height; y++) {
@@ -794,7 +794,7 @@ void boxBlurWithHoles(const float *input, float *output, int width, int height,
 // Optimized version with sliding window (more complex but faster)
 void boxBlurWithHolesOptimized(const float *input, float *output, int width,
                                int height, int radius) {
-  float *temp = (float *)malloc((long)width * height * sizeof(float));
+  float *temp = static_cast<float*>(malloc(static_cast<long>(width) * height * sizeof(float)));
 
   // Horizontal pass with sliding window
   for (int y = 0; y < height; y++) {

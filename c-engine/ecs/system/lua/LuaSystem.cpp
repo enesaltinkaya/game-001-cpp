@@ -42,7 +42,7 @@ i32 luacClickSound(void* luaState) {
 }
 
 void luaRegisterFunction(const char* name, LuaFunction luaFunction) {
-    lua_register(luaState, name, (lua_CFunction)luaFunction);
+    lua_register(luaState, name, reinterpret_cast<lua_CFunction>(luaFunction));
 }
 
 void* luaGetState(void) {

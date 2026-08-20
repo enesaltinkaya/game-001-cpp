@@ -9,7 +9,7 @@
 
 static sqlite3* db;
 
-static char* errorMessage = 0;
+static char* errorMessage = nullptr;
 #define checkdb(expr) \
     if ((expr) != SQLITE_OK) terminate("SQL db error: %s", sqlite3_errmsg(db));
 #define checkQuery(expr) \
@@ -19,7 +19,8 @@ void sqliteInit(const char* directory) {
     info("database: initializing");
     
 
-    char* path = relative(strtmp("data/%s/db.db", directory));
+    char pathBuf[1024];
+    char* path = R_relativePath(strtmp("data/%s/db.db", directory), pathBuf);
     createDirectory(path);
 
     checkdb(sqlite3_open(path, &db));
@@ -67,7 +68,7 @@ void sqliteBindBlob(void* statement, int index, void* data, u64 dataSize) {
     checkdb(sqlite3_bind_blob(static_cast<sqlite3_stmt*>(statement), index, data, static_cast<int>(dataSize), SQLITE_STATIC));
 }
 
-char sqliteStep(void* statement) {
+bool sqliteStep(void* statement) {
     return sqlite3_step(static_cast<sqlite3_stmt*>(statement)) == SQLITE_ROW;
 }
 
@@ -83,14 +84,14 @@ void* sqliteGetBlob(void* statement, int index) {
     return const_cast<void*>(sqlite3_column_blob(static_cast<sqlite3_stmt*>(statement), index));
 }
 
-char sqliteTableExists(const char* tableName) {
+bool sqliteTableExists(const char* tableName) {
     sqlite3_stmt* stmt;
     char sql[256];
-    char exists = 0;
+    bool exists = false;
     snprintf(sql, sizeof(sql), "PRAGMA table_info(%s);", tableName);
     if (sqlite3_prepare_v2(db, sql, -1, &stmt, 0) == SQLITE_OK) {
         if (sqlite3_step(stmt) != SQLITE_DONE) {
-            exists = 1;
+            exists = true;
         }
         sqlite3_finalize(stmt);
     }

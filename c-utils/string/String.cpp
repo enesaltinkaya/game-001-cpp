@@ -12,8 +12,8 @@ static void maybeGrow(String* string, u32 grow);
 String* stringNew(const char* format, ...) {
     String* string = static_cast<String*>(memoryAlloc(sizeof *string));
     string->allocated = 0;
-    string->data      = 0;
-    string->onHeap    = 1;
+    string->data      = nullptr;
+    string->onHeap    = true;
 
     va_list args;
     String message = {};
@@ -32,9 +32,9 @@ String* stringNew(const char* format, ...) {
 }
 
 void stringDestroy(String* string) {
-    if (string->data != NULL) {
+    if (string->data != nullptr) {
         memoryFree(string->data);
-        string->data = NULL;
+        string->data = nullptr;
     }
 
     string->size      = 0;
@@ -119,27 +119,27 @@ void stringTrim(String* string) {
     string->data[string->size] = 0;
 }
 
-char stringStartsWith(String* string, const char* check) {
+bool stringStartsWith(String* string, const char* check) {
     return strncmp(string->data, check, strlen(check)) == 0;
 }
 
-char strStartsWith(const char* string, const char* check) {
+bool strStartsWith(const char* string, const char* check) {
     return strncmp(string, check, strlen(check)) == 0;
 }
 
-char stringEndsWith(String* string, const char* check) {
+bool stringEndsWith(String* string, const char* check) {
     u32 checkLen = strlen(check);
     if (checkLen > string->size) {
-        return 0;
+        return false;
     }
     return strncmp(string->data + string->size - checkLen, check, checkLen) == 0;
 }
 
-char strEndsWithC(const char* string, const char* check) {
+bool strEndsWithC(const char* string, const char* check) {
     u32 checkLen  = strlen(check);
     u32 stringLen = strlen(string);
     if (checkLen > stringLen) {
-        return 0;
+        return false;
     }
     return strncmp(string + stringLen - checkLen, check, checkLen) == 0;
 }
@@ -171,7 +171,7 @@ void stringPrintf(String* string, const char* format, ...) {
     stringDestroy(&temp);
 }
 
-char stringEquals(String* string, const char* str) {
+bool stringEquals(String* string, const char* str) {
     return !strcmp(string->data, str);
 }
 
@@ -188,7 +188,7 @@ char* strReplace(const char* source, const char* find, const char* replace) {
             i += oldWlen - 1;
         }
     }
-    result = (char*)memoryAlloc(i + (cnt * (newWlen - oldWlen)) + 1);
+    result = static_cast<char*>(memoryAlloc(i + (cnt * (newWlen - oldWlen)) + 1));
 
     i = 0;
     while (*source != 0) {
@@ -211,7 +211,7 @@ void stringAppendBinary(String* string, void* data, u32 size) {
     string->data[string->size] = 0;
 }
 
-char strequals(const char* str1, const char* str2) {
+bool strequals(const char* str1, const char* str2) {
     return !strcmp(str1, str2);
 }
 
@@ -242,11 +242,11 @@ char* strtmp(const char* format, ...) {
 Array(String*) stringSplit(String* string, const char* delim) {
     Array(String*) result = {};
 
-    if (string == NULL || string->data == NULL || string->size == 0) {
+    if (string == nullptr || string->data == nullptr || string->size == 0) {
         return result;
     }
 
-    if (delim == NULL || *delim == '\0') {
+    if (delim == nullptr || *delim == '\0') {
         arrayPut(result, stringDuplicate(string));
         return result;
     }
@@ -257,12 +257,12 @@ Array(String*) stringSplit(String* string, const char* delim) {
 
     while ((delim_ptr = strstr(start_ptr, delim)) != NULL) {
         u32 token_len = delim_ptr - start_ptr;
-        arrayPut(result, (String*)stringNew("%.*s", token_len, start_ptr));
+        arrayPut(result, static_cast<String*>(stringNew("%.*s", token_len, start_ptr)));
         start_ptr = delim_ptr + delim_len;
     }
 
     u32 last_token_len = string->size - (start_ptr - string->data);
-    arrayPut(result, (String*)stringNew("%.*s", last_token_len, start_ptr));
+    arrayPut(result, static_cast<String*>(stringNew("%.*s", last_token_len, start_ptr)));
     return result;
 }
 
@@ -273,8 +273,8 @@ void stringArrayDestroy(Array(String*) array) {
     arrayFree(array);
 }
 
-char strContains(const char* haystack, const char* needle) {
-    return (strstr(haystack, needle) != NULL);
+bool strContains(const char* haystack, const char* needle) {
+    return (strstr(haystack, needle) != nullptr);
 }
 
 Array(char*) strSplit(const char* input, const char* delimiter) {
@@ -305,14 +305,14 @@ const char* strBaseName(const char* path) {
 
 void strToLowerInPlace(char* s) {
     while (*s) {
-        *s = (char)tolower((unsigned char)*s);
+        *s = static_cast<char>(tolower(static_cast<unsigned char>(*s)));
         s++;
     }
 }
 
 void strToUpperInPlace(char* s) {
     while (*s) {
-        *s = (char)toupper((unsigned char)*s);
+        *s = static_cast<char>(toupper(static_cast<unsigned char>(*s)));
         s++;
     }
 }

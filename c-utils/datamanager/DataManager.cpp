@@ -12,7 +12,7 @@
 static StrMap(struct zip*) zipHandles;
 static int pakSort(const void* first, const void* second);
 static struct zip* findPak(const char* path);
-static Thread lock = {.mutex = PTHREAD_MUTEX_INITIALIZER};
+static Thread lock = {.cond = {}, .mutex = PTHREAD_MUTEX_INITIALIZER, .thread = {}};
 
 void dataManagerInit(void) {
     info("dataManager: initializing");
@@ -26,7 +26,7 @@ void dataManagerInit(void) {
     struct dirent* dir;
     directory = opendir(tempString.data);
     if (directory) {
-        while ((dir = readdir(directory)) != NULL) {
+        while ((dir = readdir(directory)) != nullptr) {
             stringPrintf(&tempString, dir->d_name);
             if (stringEndsWith(&tempString, "pak")) {
                 char* name = static_cast<char*>(memoryAlloc(100));
@@ -101,12 +101,12 @@ u32 dataManagerGetCRC(const char* path) {
     return zipStats.crc;
 }
 
-char dataManagerFileExists(const char* path) {
+bool dataManagerFileExists(const char* path) {
     struct zip* zipHandle = findPak(path);
     if (!zipHandle) {
-        return 0;
+        return false;
     }
-    return 1;
+    return true;
 }
 
 int pakSort(const void* first, const void* second) {
@@ -125,7 +125,7 @@ struct zip* findPak(const char* path) {
             return zipHandle;
         }
     }
-    return NULL;
+    return nullptr;
 }
 
 void dataManagerDestroy(void) {
@@ -230,7 +230,7 @@ void* dmRmlopen(const char* path) {
 
 void dmRmlclose(void* file) {
     threadLock(&lock);
-    ZipFile* zipFile = (ZipFile*)(file);
+    ZipFile* zipFile = static_cast<ZipFile*>(file);
     zip_fclose(zipFile->zipfile);
     memoryFree(zipFile);
     threadUnlock(&lock);
@@ -238,7 +238,7 @@ void dmRmlclose(void* file) {
 
 unsigned long long dmRmlread(void* buffer, unsigned long long size, void* file) {
     threadLock(&lock);
-    ZipFile* zipFile = (ZipFile*)(file);
+    ZipFile* zipFile = static_cast<ZipFile*>(file);
     u64 read         = zip_fread(zipFile->zipfile, buffer, size);
     zipFile->pos     = zipFile->pos + read;
     threadUnlock(&lock);
@@ -248,7 +248,7 @@ unsigned long long dmRmlread(void* buffer, unsigned long long size, void* file) 
 
 int dmRmlseek(void* file, unsigned long long offset, int origin) {
     threadLock(&lock);
-    ZipFile* zipFile = (ZipFile*)(file);
+    ZipFile* zipFile = static_cast<ZipFile*>(file);
 
     if (origin == SEEK_CUR) {
         zipFile->pos += offset;
@@ -269,7 +269,7 @@ int dmRmlseek(void* file, unsigned long long offset, int origin) {
 
 unsigned long long dmRmltell(void* file) {
     threadLock(&lock);
-    ZipFile* zipFile = (ZipFile*)(file);
+    ZipFile* zipFile = static_cast<ZipFile*>(file);
     threadUnlock(&lock);
     return zipFile->pos;
 }

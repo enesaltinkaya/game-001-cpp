@@ -73,7 +73,7 @@ void postUpdate(void) {
                         glm_lerp(lastTransform->pos[3], worldTransform->pos[3], timer.alpha);
                     rendererUploadTransform(scene, entity, &lerp);
                 } else if (worldTransform) {
-                    rendererUploadTransform(scene, entity, (Transform*)worldTransform);
+                    rendererUploadTransform(scene, entity, reinterpret_cast<Transform*>(worldTransform));
                 }
             } else {
                 arrayPut(scene->activeEntityRemoveList, entity);
@@ -183,7 +183,7 @@ WorldTransform* transformGetWorld(Scene* scene, u32 entity) {
         return worldTransform;
     }
     Transform* transform = getComponent(scene, Transform, entity);
-    return (WorldTransform*)transform;
+    return reinterpret_cast<WorldTransform*>(transform);
 }
 
 void transformSaveLast(Scene* scene, u32 entity) {

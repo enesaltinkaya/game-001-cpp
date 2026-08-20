@@ -21,15 +21,15 @@
 
 // Vulkan Xlib surface — declared manually to avoid needing VK_USE_PLATFORM_XLIB_KHR globally
 typedef VkFlags VkXlibSurfaceCreateFlagsKHR;
-typedef struct VkXlibSurfaceCreateInfoKHR {
+struct VkXlibSurfaceCreateInfoKHR {
     VkStructureType              sType;
     const void*                  pNext;
     VkXlibSurfaceCreateFlagsKHR  flags;
     Display*                     dpy;
     Window                       window;
-} VkXlibSurfaceCreateInfoKHR;
+};
 typedef VkResult (*PFN_vkCreateXlibSurfaceKHR)(VkInstance, const VkXlibSurfaceCreateInfoKHR*, const VkAllocationCallbacks*, VkSurfaceKHR*);
-#define MY_VK_STRUCTURE_TYPE_XLIB_SURFACE_CREATE_INFO_KHR ((VkStructureType)1000004000)
+#define MY_VK_STRUCTURE_TYPE_XLIB_SURFACE_CREATE_INFO_KHR (static_cast<VkStructureType>(1000004000))
 
 struct X11Backend {
     Display*    dpy;
@@ -89,7 +89,7 @@ static bool initXInput2(X11Backend* b) {
 X11Backend* x11BackendCreate(const char* title, int width, int height, bool fullscreen) {
     X11Backend* b = static_cast<X11Backend*>(calloc(1, sizeof(X11Backend)));
 
-    b->dpy    = XOpenDisplay(NULL);
+    b->dpy    = XOpenDisplay(nullptr);
     b->screen = DefaultScreen(b->dpy);
 
     b->wmDeleteWindow    = XInternAtom(b->dpy, "WM_DELETE_WINDOW", False);
@@ -133,13 +133,13 @@ X11Backend* x11BackendCreate(const char* title, int width, int height, bool full
     XFlush(b->dpy);
 
     // Input method
-    b->xim = XOpenIM(b->dpy, NULL, NULL, NULL);
+    b->xim = XOpenIM(b->dpy, nullptr, nullptr, nullptr);
     if (b->xim) {
         b->xic = XCreateIC(b->xim,
                             XNInputStyle, XIMPreeditNothing | XIMStatusNothing,
                             XNClientWindow, b->win,
                             XNFocusWindow, b->win,
-                            NULL);
+                            nullptr);
     }
 
     initXInput2(b);
@@ -222,7 +222,7 @@ static Cursor createCursorFromRGBA(Display* dpy, const unsigned char* rgba, int 
         unsigned char g = rgba[i * 4 + 1];
         unsigned char b = rgba[i * 4 + 2];
         unsigned char a = rgba[i * 4 + 3];
-        img->pixels[i] = ((XcursorPixel)a << 24) | ((XcursorPixel)r << 16) | ((XcursorPixel)g << 8) | (XcursorPixel)b;
+        img->pixels[i] = (static_cast<XcursorPixel>(a) << 24) | (static_cast<XcursorPixel>(r) << 16) | (static_cast<XcursorPixel>(g) << 8) | static_cast<XcursorPixel>(b);
     }
     Cursor cur = XcursorImageLoadCursor(dpy, img);
     XcursorImageDestroy(img);
@@ -367,8 +367,8 @@ int x11BackendPollEvents(X11Backend* b, X11Event* out, int maxEvents) {
 
             case MotionNotify: {
                 e->type     = X11_EVENT_MOTION;
-                e->motion.x = (float)ev.xmotion.x;
-                e->motion.y = (float)ev.xmotion.y;
+                e->motion.x = static_cast<float>(ev.xmotion.x);
+                e->motion.y = static_cast<float>(ev.xmotion.y);
                 count++;
             } break;
 
@@ -413,7 +413,7 @@ int x11BackendPollEvents(X11Backend* b, X11Event* out, int maxEvents) {
             } break;
 
             case ClientMessage: {
-                if ((Atom)ev.xclient.data.l[0] == b->wmDeleteWindow) {
+                if (static_cast<Atom>(ev.xclient.data.l[0]) == b->wmDeleteWindow) {
                     e->type = X11_EVENT_CLOSE;
                     count++;
                 }
@@ -441,7 +441,7 @@ const char** x11BackendGetVulkanExtensions(uint32_t* count) {
 
 bool x11BackendCreateVulkanSurface(X11Backend* b, void* vkInstance, void* vkSurface) {
     PFN_vkCreateXlibSurfaceKHR fn =
-        (PFN_vkCreateXlibSurfaceKHR)vkGetInstanceProcAddr((VkInstance)vkInstance, "vkCreateXlibSurfaceKHR");
+        reinterpret_cast<PFN_vkCreateXlibSurfaceKHR>(vkGetInstanceProcAddr(static_cast<VkInstance>(vkInstance), "vkCreateXlibSurfaceKHR"));
     if (!fn) return false;
 
     VkXlibSurfaceCreateInfoKHR createInfo = {
@@ -449,7 +449,7 @@ bool x11BackendCreateVulkanSurface(X11Backend* b, void* vkInstance, void* vkSurf
         .dpy    = b->dpy,
         .window = b->win,
     };
-    return fn((VkInstance)vkInstance, &createInfo, NULL, (VkSurfaceKHR*)vkSurface) == VK_SUCCESS;
+    return fn(static_cast<VkInstance>(vkInstance), &createInfo, nullptr, static_cast<VkSurfaceKHR*>(vkSurface)) == VK_SUCCESS;
 }
 
 #endif // __linux__

@@ -36,8 +36,8 @@ static void sceneSystemPostUpdate(void) {
 
     Entity* cameraEntity = cameraGetEntity();
     Camera* camera      = cameraEntity ? getComponent(cameraEntity->scene, Camera, cameraEntity->id)
-                                       : NULL;
-    vec4* frustumPlanes = camera ? (vec4*)camera->cameraUbo.frustumPlanes : NULL;
+                                       : nullptr;
+    vec4* frustumPlanes = camera ? (vec4*)camera->cameraUbo.frustumPlanes : nullptr;
 
     int culledCount = 0;
     foreach (Scene* scene, ecs.scenes) {
@@ -57,7 +57,7 @@ static void sceneSystemPostUpdate(void) {
         }
     }
 
-    rendererSetVisibleScenes(visibleScenes, (u32)arraySize(visibleScenes));
+    rendererSetVisibleScenes(visibleScenes, static_cast<u32>(arraySize(visibleScenes)));
 }
 
 struct System sceneSystem = {
@@ -91,25 +91,25 @@ void* F_sceneAddComponent(Scene* scene, u32 entity, u64* typeIdPtr, u64 size, vo
 }
 
 void* F_sceneGetComponent(Scene* scene, u32 entity, u64* typeIdPtr) {
-    if (*typeIdPtr == 0) return NULL;
+    if (*typeIdPtr == 0) return nullptr;
     u64 id = *typeIdPtr;
-    if (id >= arraySize(scene->components)) return NULL;
-    if (scene->components[id] == NULL) return NULL;
+    if (id >= arraySize(scene->components)) return nullptr;
+    if (scene->components[id] == nullptr) return nullptr;
     return ssGetDataByValue(scene->components[id], entity);
 }
 
 SparseSet* F_sceneGetComponents(Scene* scene, u64* typeIdPtr) {
-    if (*typeIdPtr == 0) return NULL;
+    if (*typeIdPtr == 0) return nullptr;
     u64 id = *typeIdPtr;
-    if (id >= arraySize(scene->components)) return NULL;
-    if (scene->components[id] == NULL) return NULL;
+    if (id >= arraySize(scene->components)) return nullptr;
+    if (scene->components[id] == nullptr) return nullptr;
     return scene->components[id];
 }
 
 void F_sceneRemoveComponent(Scene* scene, u32 entity, u64* typeIdPtr) {
     if (*typeIdPtr == 0) return;
     int id = *typeIdPtr;
-    if (scene->components[id] == NULL) return;
+    if (scene->components[id] == nullptr) return;
 
     ssRemoveByValue(scene->components[id], entity);
 }
@@ -126,12 +126,12 @@ Entity* createEntity(Scene* scene, const char* name) {
     }
 
     Entity* entity = static_cast<Entity*>(memoryAlloc(sizeof(Entity)));
-    *entity        = (Entity){
+    *entity        = Entity{
         .id       = newEntityId,
         .scene    = scene,
-        .parent   = NULL,
-        .children = NULL,
-        .name     = NULL,
+        .parent   = nullptr,
+        .children = nullptr,
+        .name     = nullptr,
     };
 
     if (name && name[0]) {
@@ -154,7 +154,7 @@ Entity* sceneFindEntity(Scene* scene, const char* name) {
     foreach (Entity* e, scene->entities) {
         if (e->name && strequals(e->name, name)) return e;
     }
-    return NULL;
+    return nullptr;
 }
 
 Entity* entityFindDescendant(Entity* root, const char* name) {
@@ -163,7 +163,7 @@ Entity* entityFindDescendant(Entity* root, const char* name) {
         Entity* found = entityFindDescendant(child, name);
         if (found) return found;
     }
-    return NULL;
+    return nullptr;
 }
 
 void destroyEntity(Entity* entity) {
@@ -175,7 +175,7 @@ void destroyEntity(Entity* entity) {
     }
 
     if (entity->name) {
-        memoryFree((void*)entity->name);
+        memoryFree(const_cast<char*>(entity->name));
     }
 
     if (entity->parent) {
@@ -248,7 +248,7 @@ void sceneDestroy(Scene* scene) {
     arrayFree(scene->entityFreeList);
 
     foreach (Entity* e, scene->entities) {
-        if (e->name) memoryFree((void*)e->name);
+        if (e->name) memoryFree(const_cast<char*>(e->name));
         arrayFree(e->children);
         memoryFree(e);
     }
@@ -263,7 +263,7 @@ void sceneDestroy(Scene* scene) {
     mapFree(scene->extras);
     stringDestroy(&scene->name);
 
-    for (i32 i = 0, si = (i32)arraySize(ecs.scenes); i < si; i++) {
+    for (i32 i = 0, si = static_cast<i32>(arraySize(ecs.scenes)); i < si; i++) {
         if (ecs.scenes[i] == scene) {
             arrayDeleteSlow(ecs.scenes, i);
             break;
@@ -278,7 +278,7 @@ Entity* searchEntity(const char* name) {
         Entity* entity = sceneFindEntity(item, name);
         if (entity) return entity;
     }
-    return NULL;
+    return nullptr;
 }
 
 Array(Scene*) sceneSystemGetVisibleScenes(void) {

@@ -38,7 +38,7 @@ void utilsInit(MemoryAllocatorType allocatorType) {
 void utilsDestroy(void) {
     sqliteDestroy();
     dataManagerDestroy();
-    threadPoolDestroy(NULL);
+    threadPoolDestroy(nullptr);
     platformDestroy();
     settingsDestroy();
     signalCleanUp();
@@ -49,7 +49,7 @@ void utilsDestroy(void) {
 double nanos(void) {
     struct timespec spec;
     clock_gettime(CLOCK_MONOTONIC, &spec);
-    return ((double)spec.tv_sec * BILLION) + (double)spec.tv_nsec;
+    return (static_cast<double>(spec.tv_sec) * BILLION) + static_cast<double>(spec.tv_nsec);
 }
 
 double millies(void) {
@@ -61,11 +61,11 @@ void gotoSleepMS(long int millis) {
         return;
     }
 #ifdef _WIN32
-    static HANDLE wtimer = NULL;
-    if (!wtimer) wtimer = CreateWaitableTimer(NULL, TRUE, NULL);
+    static HANDLE wtimer = nullptr;
+    if (!wtimer) wtimer = CreateWaitableTimer(nullptr, TRUE, nullptr);
     LARGE_INTEGER li;
     li.QuadPart = -(millis * 10000LL);
-    if (!SetWaitableTimer(wtimer, &li, 0, NULL, NULL, FALSE)) return;
+    if (!SetWaitableTimer(wtimer, &li, 0, nullptr, nullptr, FALSE)) return;
     WaitForSingleObject(wtimer, INFINITE);
 #else
     struct timespec spec = {};
@@ -86,11 +86,11 @@ void gotoSleepNS(long int nanos) {
         return;
     }
 #ifdef _WIN32
-    static HANDLE timer = NULL;
-    if (!timer) timer = CreateWaitableTimer(NULL, TRUE, NULL);
+    static HANDLE timer = nullptr;
+    if (!timer) timer = CreateWaitableTimer(nullptr, TRUE, nullptr);
     LARGE_INTEGER li;
     li.QuadPart = -(nanos / 100);
-    if (!SetWaitableTimer(timer, &li, 0, NULL, NULL, FALSE)) return;
+    if (!SetWaitableTimer(timer, &li, 0, nullptr, nullptr, FALSE)) return;
     WaitForSingleObject(timer, INFINITE);
 #else
     struct timespec req = {};
@@ -147,23 +147,19 @@ void randomChars(char* dest, long int length) {
     *dest = '\0';
 }
 
-char isDebug(void) {
-    static char debug = -1;
-    if (debug == -1) {
+bool isDebug(void) {
+    static int cached = -1;
+    if (cached == -1) {
         const char* s = getenv("ENGINE_DEBUG");
-        if (s && strequals(s, "1")) {
-            debug = 1;
-        } else {
-            debug = 0;
-        }
+        cached = (s && strequals(s, "1")) ? 1 : 0;
     }
-    return debug;
+    return cached == 1;
 }
 
 // static inline float ImSaturate(float f) {
 //     return (f < 0.0f) ? 0.0f : (f > 1.0f) ? 1.0f : f;
 // }
-#define IM_F32_TO_INT8_SAT(_VAL) ((int)(((_VAL) * 255.0f) + 0.5f))  // Saturated, always output 0..255
+#define IM_F32_TO_INT8_SAT(val) ((int)(((val) * 255.0f) + 0.5f))  // Saturated, always output 0..255
 
 u32 colorHexToUInt(const char* hex) {
     u32 r;
@@ -172,10 +168,10 @@ u32 colorHexToUInt(const char* hex) {
     u32 a;
     u32 out = 0;
     sscanf(hex, "%02x%02x%02x%02x", &r, &g, &b, &a);
-    out = ((u32)IM_F32_TO_INT8_SAT(r / 255.F)) << 0;
-    out |= ((u32)IM_F32_TO_INT8_SAT(g / 255.F)) << 8;
-    out |= ((u32)IM_F32_TO_INT8_SAT(b / 255.F)) << 16;
-    out |= ((u32)IM_F32_TO_INT8_SAT(a / 255.F)) << 24;
+    out = static_cast<u32>(IM_F32_TO_INT8_SAT(r / 255.F)) << 0;
+    out |= static_cast<u32>(IM_F32_TO_INT8_SAT(g / 255.F)) << 8;
+    out |= static_cast<u32>(IM_F32_TO_INT8_SAT(b / 255.F)) << 16;
+    out |= static_cast<u32>(IM_F32_TO_INT8_SAT(a / 255.F)) << 24;
     return out;
 }
 
@@ -184,13 +180,12 @@ struct Pcg32State {
     uint64_t inc;
 };
 
-static Pcg32State pcg32_random_t;
 static Pcg32State pcg32;
 
 uint32_t pcg32_random_r(void* rng) {
     Pcg32State* _rng = static_cast<Pcg32State*>(rng);
     if (!_rng->state) {
-        _rng->state = (u64)nanos();
+        _rng->state = static_cast<u64>(nanos());
     }
     uint64_t oldstate = _rng->state;
     // Advance internal state
@@ -205,10 +200,10 @@ uint32_t pcg32_random_r(void* rng) {
 float pcg32_random_float_r(void* rng) {
     Pcg32State* _rng = static_cast<Pcg32State*>(rng);
     if (!_rng->state) {
-        _rng->state = (u64)nanos();
+        _rng->state = static_cast<u64>(nanos());
     }
     float scale = 1.0F / 16777216.0F;
-    return (float)(pcg32_random_r(rng) & ((1L << 24) - 1)) * scale;
+    return static_cast<float>(pcg32_random_r(rng) & ((1L << 24) - 1)) * scale;
 }
 
 u32 randomU32(void) {
@@ -220,38 +215,38 @@ float randomFloat(void) {
 }
 
 void* customMemmem(const void* haystack, int haystack_len, const void* needle, int needle_len) {
-    unsigned char* csrc = (unsigned char*)haystack;
-    unsigned char* ctrg = (unsigned char*)needle;
+    unsigned char* csrc = static_cast<unsigned char*>(const_cast<void*>(haystack));
+    unsigned char* ctrg = static_cast<unsigned char*>(const_cast<void*>(needle));
     unsigned char* tptr;
     unsigned char* cptr;
     int searchlen;
     int ndx = 0;
 
-    if (haystack == NULL) {
-        return NULL;
+    if (haystack == nullptr) {
+        return nullptr;
     }
     if (haystack_len == 0) {
-        return NULL;
+        return nullptr;
     }
-    if (needle == NULL) {
-        return NULL;
+    if (needle == nullptr) {
+        return nullptr;
     }
     if (needle_len == 0) {
-        return (void*)haystack;
+        return const_cast<void*>(haystack);
     }
 
     while (ndx <= haystack_len) {
         cptr = &csrc[ndx];
         if ((searchlen = haystack_len - ndx - needle_len + 1) <= 0) {
-            return NULL;
+            return nullptr;
         }
-        if ((tptr = static_cast<unsigned char*>(memchr(cptr, *ctrg, searchlen))) == NULL) {
-            return NULL;
+        if ((tptr = static_cast<unsigned char*>(memchr(cptr, *ctrg, searchlen))) == nullptr) {
+            return nullptr;
         }
         if (memcmp(tptr, ctrg, needle_len) == 0) {
             return tptr;
         }
-        ndx += (int)(tptr - cptr + 1);
+        ndx += static_cast<int>(tptr - cptr + 1);
     }
-    return NULL;
+    return nullptr;
 }

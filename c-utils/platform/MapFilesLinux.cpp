@@ -10,10 +10,10 @@
 
 
 
-MappedFile* map_file(const char* path, u64 size, char create_and_resize) {
+MappedFile* map_file(const char* path, u64 size, bool create_and_resize) {
     MappedFile* out_map = static_cast<MappedFile*>(memoryAlloc(sizeof *out_map));
 
-    out_map->data = NULL;
+    out_map->data = nullptr;
     out_map->size = 0;
 
     // --- LINUX / POSIX IMPLEMENTATION ---
@@ -21,21 +21,21 @@ MappedFile* map_file(const char* path, u64 size, char create_and_resize) {
     if (create_and_resize) flags = O_RDWR | O_CREAT | O_TRUNC;
 
     int fd = open(path, flags, 0644);
-    if (fd == -1) return 0;
+    if (fd == -1) return nullptr;
 
     if (create_and_resize) {
         // CRITICAL: On Linux, you must explicitly expand the file size
         // before mmapping, otherwise you get a bus error when writing.
         if (ftruncate(fd, size) == -1) {
             close(fd);
-            return 0;
+            return nullptr;
         }
     } else {
         // Get actual size
         struct stat sb;
         if (fstat(fd, &sb) == -1) {
             close(fd);
-            return 0;
+            return nullptr;
         }
         size = sb.st_size;
     }
@@ -46,14 +46,14 @@ MappedFile* map_file(const char* path, u64 size, char create_and_resize) {
     void* ptr = mmap(NULL, size, prot, MAP_SHARED, fd, 0);
     if (ptr == MAP_FAILED) {
         close(fd);
-        return 0;
+        return nullptr;
     }
 
     out_map->data = ptr;
     out_map->size = size;
     // Store fd in handle_1 (cast to void*), handle_2 unused
-    out_map->internal_handle_1 = (void*)(intptr_t)fd;
-    out_map->internal_handle_2 = NULL;
+    out_map->internal_handle_1 = reinterpret_cast<void*>(static_cast<intptr_t>(fd));
+    out_map->internal_handle_2 = nullptr;
     return out_map;
 }
 
@@ -62,9 +62,9 @@ void unmap_file(MappedFile* map) {
     if (!map || !map->data) return;
 
     munmap(map->data, map->size);
-    close((int)(intptr_t)map->internal_handle_1);
-    
-    map->data = NULL;
+    close(static_cast<int>(reinterpret_cast<intptr_t>(map->internal_handle_1)));
+
+    map->data = nullptr;
     map->size = 0;
     memoryFree(map);
 }

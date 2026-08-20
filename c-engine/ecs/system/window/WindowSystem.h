@@ -2,7 +2,7 @@
 
 #include "shared/InputEventShared.h"
 
-typedef struct Window {
+struct Window {
     struct GLFWwindow* glfwWindowHandle;
     struct SDL_Window* sdlWindowHandle;
 
@@ -16,9 +16,9 @@ typedef struct Window {
     /* Render resolution (width/height * renderScale). Updated by rendererUpdateRenderDimensions(). */
     int renderWidth;
     int renderHeight;
-} Window;
+};
 
-typedef struct Input {
+struct Input {
     // keyboard
     i32 key;
     i32 scancode;
@@ -51,7 +51,7 @@ typedef struct Input {
 
     InputEvent* events;  // stb_array
 
-} Input;
+};
 
 extern struct Window window;
 extern struct Input input;

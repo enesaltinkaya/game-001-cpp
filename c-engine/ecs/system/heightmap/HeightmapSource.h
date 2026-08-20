@@ -14,10 +14,10 @@
  * from the source — the surface must be a pure function of (source, xz).
  */
 
-typedef struct HeightmapSource {
+struct HeightmapSource {
     // Final terrain height in metres (sea level 0, negative = seabed) at
     // world (wx, wz).
     float (*heightAt)(void* userData, float wx, float wz);
 
     void* userData;
-} HeightmapSource;
+};

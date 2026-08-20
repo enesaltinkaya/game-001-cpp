@@ -5,10 +5,10 @@
 #include "soloud/git/include/soloud_c.h"
 #include "soloud/git/src/backend/miniaudio/miniaudio.h"
 
-typedef struct Sound {
+struct Sound {
     Wav sample;
     int handle;
-} Sound;
+};
 
 static struct {
     Soloud soloud;
@@ -96,7 +96,7 @@ void soundDestroy(Sound* sound) {
     // it per-sound corrupts the heap for the next looping sound.
 }
 
-void soundPlay(Sound* sound, float volume, char loop) {
+void soundPlay(Sound* sound, float volume, bool loop) {
     if (loop) {
         sound->handle = Soloud_playBackgroundEx((Soloud*)audio.soloud, (AudioSource*)sound->sample, volume, 0, 0);
         Soloud_setLooping((Soloud*)audio.soloud, sound->handle, 1);

@@ -1,19 +1,19 @@
 #pragma once
 #include "pthread.h"
 
-typedef struct Thread {
+struct Thread {
     pthread_cond_t cond;
     pthread_mutex_t mutex;
     pthread_t thread;
-} Thread;
+};
 
 // ThreadPool wrapper for libthpool
-typedef struct ThreadPool {
+struct ThreadPool {
     void* internal;
-} ThreadPool;
+};
 
-#define THREAD_LOCK                                              \
-    static Thread thread = {.mutex = PTHREAD_MUTEX_INITIALIZER}; \
+#define THREAD_LOCK                                                                       \
+    static Thread thread = {.cond = {}, .mutex = PTHREAD_MUTEX_INITIALIZER, .thread = {}}; \
     threadLock(&thread)
 #define THREAD_UNLOCK threadUnlock(&thread)
 
