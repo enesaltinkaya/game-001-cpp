@@ -1,0 +1,90 @@
+body {
+  width: 100%;
+  height: 100%;
+  z-index: 10;
+  flex-direction: column;
+  opacity: 1;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  /* background-color: #3c4649; */
+
+  color: white;
+}
+
+.main {
+  width: 1000dp;
+  height: 720dp;
+  margin: auto;
+  background-color: #303030d0;
+  background-color: #000000f0;
+  justify-content: flex-start;
+  /* decorator: image("../images/water.ktx2" none cover); */
+}
+
+.top {
+  position: absolute;
+  background-color: #212121;
+  width: 100%;
+  display: flex;
+  height: 70dp;
+  align-items: center;
+  justify-content: center;
+  font-size: 25dp;
+  font-weight: bold;
+}
+
+.middle {
+  flex: 1;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+}
+
+.middle .buttonContainer {
+  max-width: 450dp;
+}
+
+#videoSettings .middle .buttonContainer {
+  max-width: 550dp;
+}
+
+#graphicsSettings .middle .buttonContainer {
+  max-width: 550dp;
+}
+
+#audioSettings button.active,
+#videoSettings button.active,
+#graphicsSettings button.active {
+  transform: scale(1.05);
+}
+
+#first {
+  nav-up: "#last";
+}
+
+#last {
+  nav-down: "#first";
+}
+
+.tab {
+  display: none;
+}
+
+.currentTab {
+  display: flex;
+
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  align-items: center;
+  justify-content: center;
+}
+
+.red {
+  background-color: red;
+  height: 10dp;
+  width: 10dp;
+}

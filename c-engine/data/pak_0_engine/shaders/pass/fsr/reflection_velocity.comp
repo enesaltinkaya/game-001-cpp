@@ -1,0 +1,105 @@
+#version 460
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_nonuniform_qualifier : require
+#extension GL_ARB_shading_language_include : enable
+
+#include "../../includes/utils.shader"
+#include "../../includes/globalset.shader"
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(push_constant) uniform PushConstants {
+    uint depthIndex;       // depth buffer (sampled, D32)
+    uint normalsIndex;     // G-buffer normals (sampled, R16G16: oct-encoded)
+    uint velocityIndex;    // velocity buffer (storage, RG16F) — overwritten for reflection pixels
+    uint materialIndex;    // G-buffer material (sampled, R8G8: roughness, metallic)
+    uint width;
+    uint height;
+} pc;
+
+void main() {
+    ivec2 coord = ivec2(gl_GlobalInvocationID.xy);
+    if (coord.x >= int(pc.width) || coord.y >= int(pc.height)) {
+        return;
+    }
+
+    // Skip sky pixels
+    float depth = texelFetch(
+        sampler2D(textures[nonuniformEXT(pc.depthIndex)],
+                  samplers[SAMPLER_NEAREST]),
+        coord, 0).r;
+    if (depth == 0.0) {
+        return;
+    }
+
+    // Check if this is a reflection-plane pixel.
+    // Do not rely on the shaded G-buffer normal here: normal maps and
+    // sub-pixel filtering can make the floor classification flip under
+    // jitter even when the underlying geometry is perfectly planar.
+    const vec3 planeN = vec3(0.0, 1.0, 0.0);
+    float planeOffset = 0.0;
+
+    // Reconstruct world position using the unjittered inverse VP.
+    // Use depth only for plane classification, then intersect the stable
+    // camera ray with the plane to avoid sub-pixel jitter wobble.
+    vec2 uv = (vec2(coord) + 0.5) / vec2(pc.width, pc.height);
+    vec2 unjitteredUv = uv + vec2(sceneBuffer.cameras[0].jitterX,
+                                   sceneBuffer.cameras[0].jitterY);
+    vec2 ndc = vec2(unjitteredUv.x * 2.0 - 1.0, 1.0 - unjitteredUv.y * 2.0);
+    vec4 worldH = sceneBuffer.cameras[0].invViewProjectionNoJitter * vec4(ndc, depth, 1.0);
+    vec3 worldPosDepth = worldH.xyz / worldH.w;
+
+    float planeDist = abs(dot(worldPosDepth, planeN) + planeOffset);
+    if (planeDist > 0.15) {
+        return;
+    }
+
+    vec4 farWorldH = sceneBuffer.cameras[0].invViewProjectionNoJitter * vec4(ndc, 0.0, 1.0);
+    vec3 farWorld  = farWorldH.xyz / farWorldH.w;
+    vec3 camPos    = sceneBuffer.cameras[0].position.xyz;
+    vec3 rayDir    = normalize(farWorld - camPos);
+    float denom    = dot(rayDir, planeN);
+    if (abs(denom) < 1e-5) {
+        return;
+    }
+    float t = -(dot(camPos, planeN) + planeOffset) / denom;
+    if (t <= 0.0) {
+        return;
+    }
+    vec3 worldPos = camPos + rayDir * t;
+
+    // Check roughness — only smooth surfaces show visible reflections
+    vec2 matData = texelFetch(
+        sampler2D(textures[nonuniformEXT(pc.materialIndex)],
+                  samplers[SAMPLER_NEAREST]),
+        coord, 0).rg;
+    float roughness = matData.r;
+    if (roughness > 0.35) {
+        return;
+    }
+
+    // Compute motion vector of reflected content using the mirrored camera
+    // (cameras[1]) which has correct prevViewProjectionNoJitter set from
+    // the previous frame's mirrored VP.
+    //
+    // The reflection at this floor pixel shows content as seen by the
+    // mirrored camera. The MV of that content in screen space can be
+    // approximated by reprojecting the floor point through the mirrored
+    // camera's current and previous VP, then computing the difference.
+    // This captures the camera-rotation component of the reflection motion.
+    vec4 clipCurrent = sceneBuffer.cameras[1].viewProjectionNoJitter * vec4(worldPos, 1.0);
+    vec4 clipPrev    = sceneBuffer.cameras[1].prevViewProjectionNoJitter * vec4(worldPos, 1.0);
+
+    vec2 ndcCurrent = clipCurrent.xy / clipCurrent.w;
+    vec2 ndcPrev    = clipPrev.xy / clipPrev.w;
+    vec2 ndcVelocity = ndcCurrent - ndcPrev;
+
+    // Convert to pixel-space velocity (same convention as depth_prepass.vert)
+    vec2 pixelVelocity = ndcVelocity * (sceneBuffer.cameras[0].viewport * 0.5);
+    pixelVelocity.y = -pixelVelocity.y;
+    pixelVelocity = clamp(pixelVelocity, vec2(-32767.0), vec2(32767.0));
+
+    imageStore(storageImages[nonuniformEXT(pc.velocityIndex)],
+               coord, vec4(pixelVelocity, 0.0, 0.0));
+}

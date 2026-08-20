@@ -1,0 +1,74 @@
+#version 460
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_nonuniform_qualifier : require
+#extension GL_ARB_shading_language_include : enable
+
+#include "../../includes/globalset.shader"
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(push_constant) uniform PushConstants {
+    uint sceneColorIndex;
+    uint depthIndex;
+    uint outputIndex;
+    uint width;
+    uint height;
+    uint fullWidth;
+    uint fullHeight;
+} pc;
+
+void main() {
+    ivec2 coord = ivec2(gl_GlobalInvocationID.xy);
+    if (coord.x >= int(pc.width) || coord.y >= int(pc.height)) return;
+
+    vec2 uv = (vec2(coord) + 0.5) / vec2(pc.width, pc.height);
+
+    /* Sample depth (full-res image; take the center texel of this
+       half-res pixel's 2x2 block). */
+    ivec2 depthCoord = clamp(ivec2(uv * vec2(pc.fullWidth, pc.fullHeight)),
+                             ivec2(0), ivec2(int(pc.fullWidth) - 1, int(pc.fullHeight) - 1));
+    float depth = texelFetch(
+        sampler2D(textures[nonuniformEXT(pc.depthIndex)], samplers[SAMPLER_NEAREST]),
+        depthCoord, 0).r;
+
+    bool isSky = (depth == 0.0);
+
+    vec3 sunColor    = sceneBuffer.directionalLight.color.rgb;
+    float sunIntensity = sceneBuffer.directionalLight.direction.w;
+    vec3 toSun = normalize(-sceneBuffer.directionalLight.direction.xyz);
+
+    vec3 lightColor = vec3(0.0);
+
+    if (isSky) {
+        /* Reconstruct the world-space view direction for this sky pixel.
+           Normalizing invViewProjection.xyz directly is wrong once the
+           camera moves, because it includes camera translation and still
+           needs the homogeneous divide. */
+        vec2 unjitteredUv = uv + vec2(sceneBuffer.cameras[0].jitterX,
+                                       sceneBuffer.cameras[0].jitterY);
+        vec2 ndc = vec2(unjitteredUv.x * 2.0 - 1.0,
+                        1.0 - unjitteredUv.y * 2.0);
+        vec4 worldH = sceneBuffer.cameras[0].invViewProjectionNoJitter
+                    * vec4(ndc, 1.0, 1.0);
+        vec3 worldPos = worldH.xyz / worldH.w;
+        vec3 worldDir = normalize(worldPos - sceneBuffer.cameras[0].position.xyz);
+
+        float sunDot = max(dot(worldDir, toSun), 0.0);
+
+        /* Sun disk (Renard approximation). */
+        float sunDisk = pow(sunDot, 256.0) * 15.0;
+
+        /* Sun glow (halo around the sun). */
+        float sunGlow = pow(sunDot, 8.0) * 0.5;
+
+        /* Keep the source localized around the sun.  Treating the whole sky
+           (or bright scene surfaces) as a source makes the radial blur project
+           scene silhouettes onto foreground geometry when fog is enabled. */
+        float sunHalo = pow(sunDot, 24.0) * 0.35;
+        lightColor = sunColor * sunIntensity * (sunDisk + sunGlow + sunHalo);
+    }
+
+    imageStore(storageImages[nonuniformEXT(pc.outputIndex)],
+               coord, vec4(lightColor, 1.0));
+}

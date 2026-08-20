@@ -1,0 +1,53 @@
+<html>
+
+<head>
+  <link type="text/rcss" href="../../milligram.css" />
+  <link type="text/rcss" href="../settings.css" />
+  <script src="audio.lua" />
+  <script src="../../global.lua"></script>
+
+</head>
+
+<body id="audioSettings" onkeydown="audioSettingsKeyDown(event)" onload="documentInit(element)">
+
+  <div class="main">
+    <div class="top">
+      <span>Audio</span>
+    </div>
+
+    <div class="middle">
+      <div class="buttonContainer" data-model="audio">
+        <button id="first" class="option" autofocus>
+          <div class="label">Effects ({{format(effects,0)}})</div>
+          <div class="widget">
+            <div class="slider">
+              <p class="leftarrow">&#xe806;</p>
+              <p class="rightarrow">&#xe808;</p>
+              <!-- effectsChange lua function is registered in src/engine/renderer/gui/rmlui/guis/settingsGui/audio/SettingsAudioGui.c -->
+              <input type="range" min="0" max="100" step="5" data-value="effects" style="tab-index:none;" onchange="effectsChange()" />
+            </div>
+          </div>
+        </button>
+
+        <button class="option">
+          <div class="label">Music ({{format(music,0)}})</div>
+          <div class="widget">
+            <div class="slider">
+              <p class="leftarrow">&#xe806;</p>
+              <p class="rightarrow">&#xe808;</p>
+              <input type="range" min="0" max="100" step="5" data-value="music" style="tab-index:none;" onchange="musicChange()" />
+            </div>
+          </div>
+        </button>
+
+        <button id="last" onclick="audioSettingsClose()">
+          <div>
+            BACK
+          </div>
+        </button>
+      </div>
+    </div>
+  </div>
+</body>
+
+</html>

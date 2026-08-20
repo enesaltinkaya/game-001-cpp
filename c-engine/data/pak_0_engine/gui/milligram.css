@@ -1,0 +1,503 @@
+body {
+  position: relative;
+  font-size: 10dp;
+  font-family: "Montserrat";
+  font-weight: 500;
+  display: flex;
+  font-weight: 300;
+  letter-spacing: 0.01em;
+  line-height: 1.6;
+  box-sizing: border-box;
+  color: #fff;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+div {
+  display: block;
+  box-sizing: border-box;
+}
+
+h1 {
+  display: block;
+  margin: 3rem 0;
+  font-weight: 400;
+  color: black;
+}
+
+scrollbarvertical {
+  transform: scaleY(0.9);
+  float: right;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  right: 10dp;
+  position: relative;
+  width: 9dp;
+  padding: 0;
+  margin: 0;
+  border: 0;
+}
+
+scrollbarvertical sliderbar {
+  position: relative;
+  left: 3dp;
+  width: 9dp;
+  background-color: white;
+}
+
+scrollbarvertical slidertrack {
+  width: 1.5rem;
+  /* background-color: blue; */
+}
+
+scrollbarvertical sliderarrowdec,
+scrollbarvertical sliderarrowinc {
+  /* width: 1.5rem; */
+  /* background-color: blue; */
+  /* height: 20dp; */
+  display: none;
+}
+
+b {
+  font-weight: bold;
+}
+hr {
+  border: 0;
+  border-top: 0.1rem #f4f5f6;
+  margin: 3rem 0;
+}
+
+h1 {
+  font-size: 4.6rem;
+  line-height: 1.2;
+}
+
+.buttonContainer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 4rem;
+}
+
+button {
+  position: relative;
+  nav: auto;
+  tab-index: auto;
+  width: 100%;
+  height: 25dp;
+  color: #fff;
+  margin-bottom: 1.25rem;
+  display: flex;
+  align-items: center;
+  transition: transform 0.15s cubic-out;
+  font-size: 1.5rem;
+
+  cursor: pointer;
+  font-weight: 900;
+  font-effect: shadow(2dp 2dp black);
+}
+
+button.active {
+  transform: scale(1.2);
+  z-index: 2;
+  color: white;
+  decorator: image("/gui/images/button.png.ktx2");
+}
+
+button.disabled {
+  color: gray;
+  opacity: 0.75;
+  nav: none;
+  tab-index: none;
+  cursor: auto;
+  font-effect: glow(0dp black);
+}
+
+button .leftThing {
+  display: none;
+  pointer-events: none;
+}
+
+button .label {
+  pointer-events: none;
+  text-align: left;
+}
+
+button.active .leftThing {
+  pointer-events: none;
+  position: absolute;
+  left: 0;
+  right: 0;
+  width: 1.5rem;
+  height: 100%;
+  background-color: #000;
+  display: block;
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+button div {
+  text-align: center;
+  flex: 1;
+}
+
+button.option div.label {
+  display: inline-block;
+  flex: 1.25;
+}
+button.option .widget {
+  flex: 1;
+  display: flex;
+  height: 100%;
+  justify-content: space-between;
+  /* align-items: center; */
+}
+
+button.option.active .widget {
+  /* background-color: #555; */
+}
+
+.main {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+}
+
+.hidden {
+  opacity: 0;
+  pointer-events: none;
+  tab-index: none;
+  nav: none;
+}
+
+.icon {
+  font-family: "fontello";
+}
+
+.slider {
+  position: relative;
+  flex: 1;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* padding: 12.5dp; */
+}
+
+.slider .leftarrow {
+  font-family: "fontello";
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  left: 0;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.slider .rightarrow {
+  font-family: "fontello";
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  right: 0;
+  z-index: 2;
+  pointer-events: none;
+}
+
+input.range {
+  position: relative;
+  height: 20dp;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  flex: 1;
+}
+input.disabled {
+  /* display: none; */
+  pointer-events: none;
+}
+
+input.range slidertrack {
+  position: relative;
+  background: black;
+  height: 15dp;
+  top: 2.5dp;
+}
+
+button.active input.range slidertrack {
+  background: white;
+}
+
+input.range sliderbar {
+  z-index: 1;
+  width: 10dp;
+  height: 20dp;
+  background: orange;
+}
+
+input.range sliderarrowdec {
+  position: relative;
+  left: -4dp;
+  height: 20dp;
+  width: 20dp;
+  z-index: 1;
+}
+
+input.range sliderarrowinc {
+  position: relative;
+  right: -4dp;
+  height: 20dp;
+  width: 20dp;
+  z-index: 1;
+}
+
+input.range sliderarrowinc:active,
+input.range sliderarrowdec:active {
+  border-radius: 15dp;
+  background: white;
+}
+
+label {
+  display: flex;
+  align-items: center;
+}
+
+body label input {
+  width: 25dp;
+  height: 25dp;
+  border-width: 2dp;
+  border-color: black;
+  margin-right: 5dp;
+}
+
+.active label input {
+  border-color: white;
+}
+
+label input:checked {
+  background-color: orange;
+}
+
+div.checkbox {
+  display: flex;
+  align-items: center;
+  /* justify-content: center; */
+  width: 50dp;
+  flex: 1;
+}
+div.checkbox:nth-child(2) {
+  justify-content: flex-end;
+}
+
+input.checkbox {
+  opacity: 0;
+  position: absolute;
+}
+
+input.checkbox:checked {
+  background-color: orange;
+}
+
+div.checkbox .box {
+  min-width: 25dp;
+  height: 25dp;
+  border-width: 2dp;
+  border-color: black;
+  margin-right: 5dp;
+  cursor: pointer;
+  flex: 0;
+}
+
+div.checkbox .box.checked {
+  background-color: orange;
+}
+
+.active div.checkbox .box {
+  border-color: white;
+}
+
+.container {
+  margin: 0 auto;
+  max-width: 112rem;
+  padding: 0rem;
+  position: relative;
+  width: 100%;
+}
+
+.row {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  width: 100%;
+}
+
+.row.row-no-padding {
+  padding: 0;
+}
+
+.row.row-no-padding > .column {
+  padding: 0;
+}
+
+.row.row-wrap {
+  flex-wrap: wrap;
+}
+
+.row.row-top {
+  align-items: flex-start;
+}
+
+.row.row-bottom {
+  align-items: flex-end;
+}
+
+.row.row-center {
+  align-items: center;
+}
+
+.row.row-stretch {
+  align-items: stretch;
+}
+
+.row.row-baseline {
+  align-items: baseline;
+}
+
+.row .column {
+  display: block;
+  flex: 1 1 auto;
+  margin-left: 0;
+  max-width: 100%;
+  width: 100%;
+}
+
+.row .column.column-offset-10 {
+  margin-left: 10%;
+}
+
+.row .column.column-offset-20 {
+  margin-left: 20%;
+}
+
+.row .column.column-offset-25 {
+  margin-left: 25%;
+}
+
+.row .column.column-offset-33,
+.row .column.column-offset-34 {
+  margin-left: 33.3333%;
+}
+
+.row .column.column-offset-40 {
+  margin-left: 40%;
+}
+
+.row .column.column-offset-50 {
+  margin-left: 50%;
+}
+
+.row .column.column-offset-60 {
+  margin-left: 60%;
+}
+
+.row .column.column-offset-66,
+.row .column.column-offset-67 {
+  margin-left: 66.6666%;
+}
+
+.row .column.column-offset-75 {
+  margin-left: 75%;
+}
+
+.row .column.column-offset-80 {
+  margin-left: 80%;
+}
+
+.row .column.column-offset-90 {
+  margin-left: 90%;
+}
+
+.row .column.column-10 {
+  flex: 0 0 10%;
+  max-width: 10%;
+}
+
+.row .column.column-20 {
+  flex: 0 0 20%;
+  max-width: 20%;
+}
+
+.row .column.column-25 {
+  flex: 0 0 25%;
+  max-width: 25%;
+}
+
+.row .column.column-33,
+.row .column.column-34 {
+  flex: 0 0 33.3333%;
+  max-width: 33.3333%;
+}
+
+.row .column.column-40 {
+  flex: 0 0 40%;
+  max-width: 40%;
+}
+
+.row .column.column-50 {
+  flex: 0 0 50%;
+  max-width: 50%;
+}
+
+.row .column.column-60 {
+  flex: 0 0 60%;
+  max-width: 60%;
+}
+
+.row .column.column-66,
+.row .column.column-67 {
+  flex: 0 0 66.6666%;
+  max-width: 66.6666%;
+}
+
+.row .column.column-75 {
+  flex: 0 0 75%;
+  max-width: 75%;
+}
+
+.row .column.column-80 {
+  flex: 0 0 80%;
+  max-width: 80%;
+}
+
+.row .column.column-90 {
+  flex: 0 0 90%;
+  max-width: 90%;
+}
+
+.row .column .column-top {
+  align-self: flex-start;
+}
+
+.row .column .column-bottom {
+  align-self: flex-end;
+}
+
+.row .column .column-center {
+  align-self: center;
+}
+
+@media (min-width: 40rem) {
+  .row {
+    flex-direction: row;
+    /* margin-left: -1.0rem; */
+  }
+}

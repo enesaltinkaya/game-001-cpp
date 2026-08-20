@@ -1,0 +1,52 @@
+#version 460
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_nonuniform_qualifier : require
+#extension GL_ARB_shading_language_include : enable
+
+#include "../../includes/globalset.shader"
+
+layout(push_constant) uniform PushConstants {
+    uint srcIndex;   // sampled pool index of source mip
+    uint dstIndex;   // storage pool index of destination mip
+    uint srcWidth;
+    uint srcHeight;
+};
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+void main() {
+    ivec2 dstCoord = ivec2(gl_GlobalInvocationID.xy);
+
+    // Destination dimensions = ceil(src / 2)
+    uint dstWidth  = max(srcWidth >> 1, 1u);
+    uint dstHeight = max(srcHeight >> 1, 1u);
+
+    if (dstCoord.x >= int(dstWidth) || dstCoord.y >= int(dstHeight)) {
+        return;
+    }
+
+    // Texel centers in source mip UV space
+    vec2 srcTexelSize = vec2(1.0) / vec2(srcWidth, srcHeight);
+
+    // Map destination texel center to source UV
+    vec2 srcUV = (vec2(dstCoord) * 2.0 + 1.0) * srcTexelSize;
+
+    // Gather the 4 min values (.r channel) using textureGather
+    vec4 mins = textureGather(
+        sampler2D(textures[nonuniformEXT(srcIndex)], samplers[SAMPLER_NEAREST]),
+        srcUV, 0);
+
+    // Gather the 4 max values (.g channel) using textureGather
+    vec4 maxs = textureGather(
+        sampler2D(textures[nonuniformEXT(srcIndex)], samplers[SAMPLER_NEAREST]),
+        srcUV, 1);
+
+    // Reverse-Z: min = furthest depth (conservative for occlusion culling)
+    //            max = closest depth  (conservative for Hi-Z tracing)
+    float resultMin = min(min(mins.x, mins.y), min(mins.z, mins.w));
+    float resultMax = max(max(maxs.x, maxs.y), max(maxs.z, maxs.w));
+
+    imageStore(storageImages[nonuniformEXT(dstIndex)], dstCoord,
+               vec4(resultMin, resultMax, 0.0, 0.0));
+}

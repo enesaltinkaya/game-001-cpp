@@ -1,0 +1,132 @@
+<html>
+
+<head>
+    <link type="text/rcss" href="../../milligram.css" />
+    <link type="text/rcss" href="../settings.css" />
+    <script src="video.lua"></script>
+    <script src="../../global.lua"></script>
+
+</head>
+
+<body id="videoSettings" onkeydown="videoSettingsKeyDown(event)" onload="documentInit(element)">
+    <div class="main">
+        <div class="top">
+            <span>Video</span>
+        </div>
+
+        <div class="middle">
+            <div class="buttonContainer" data-model="video">
+                <button id="first" class="option" autofocus>
+
+                    <div class="label">Fullscreen</div>
+                    <div class="widget">
+                        <div class="checkbox">
+                            <div class="box" data-class-checked="fullScreen"></div>
+                            <p>On</p>
+                        </div>
+                        <div class="checkbox">
+                            <div class="box" data-class-checked="!fullScreen"></div>
+                            <p>Off</p>
+                        </div>
+                        <!-- toggleFullScreen lua function is registered in src/engine/renderer/gui/rmlui/guis/settingsGui/audio/SettingsVideoGui.c -->
+                        <input type="checkbox" style="tab-index:none;" data-checked="fullScreen"
+                            onchange="toggleFullScreen()" />
+                    </div>
+                </button>
+
+                <button id="vsync" class="option">
+
+                    <div class="label">Vsync</div>
+                    <div class="widget">
+                        <div class="checkbox">
+                            <div class="box" data-class-checked="vsync"></div>
+                            <p>On</p>
+                        </div>
+                        <div class="checkbox">
+                            <div class="box" data-class-checked="!vsync"></div>
+                            <p>Off</p>
+                        </div>
+                        <input type="checkbox" style="tab-index:none;" data-checked="vsync" onchange="toggleVsync()" />
+                    </div>
+                </button>
+
+                <button class="option">
+
+                    <div class="label">UI Scale ({{format(uiScale,2)}})</div>
+                    <div class="widget">
+                        <div class="slider">
+                            <p class="leftarrow">&#xe806;</p>
+                            <p class="rightarrow">&#xe808;</p>
+                            <input type="range" min="1" max="3" step="0.25" data-value="uiScale" style="tab-index:none;"
+                                onchange="uiScaleChange()" />
+                        </div>
+                    </div>
+                </button>
+
+                <button class="option">
+
+                    <div class="label">Cursor Scale ({{format(cursorScale,2)}})</div>
+                    <div class="widget">
+                        <div class="slider">
+                            <p class="leftarrow">&#xe806;</p>
+                            <p class="rightarrow">&#xe808;</p>
+                            <input type="range" min="1" max="3" step="0.25" data-value="cursorScale"
+                                style="tab-index:none;" onchange="cursorScaleChange()" />
+                        </div>
+                    </div>
+                </button>
+
+                <button id="vsync" class="option">
+                    <div class="label">Fps Limit</div>
+                    <div class="widget">
+                        <div class="checkbox">
+                            <div class="box" data-class-checked="fpsLimitChecked"></div>
+                            <p>On</p>
+                        </div>
+                        <div class="checkbox">
+                            <div class="box" data-class-checked="!fpsLimitChecked"></div>
+                            <p>Off</p>
+                        </div>
+                        <input type="checkbox" style="tab-index:none;" data-checked="fpsLimitChecked"
+                            onchange="fpsLimitCheckedChange()" />
+                    </div>
+                </button>
+
+                <button id="fpsLimit" class="option " data-class-disabled="!fpsLimitChecked"
+                    onmouseup="fpsLimitClick(element,event)">
+                    <div class="label">Fps Limit ({{format(fpsLimit,0)}})</div>
+                    <div class="widget">
+                        <div class="slider">
+                            <p class="leftarrow">&#xe806;</p>
+                            <p class="rightarrow">&#xe808;</p>
+                            <input data-attrif-disabled="!fpsLimitChecked" type="range" min="10" max="300" step="1"
+                                data-value="fpsLimit" style="tab-index:none;" onchange="fpsLimitChange()" />
+                        </div>
+                    </div>
+                </button>
+
+                <button id="vsync" class="option">
+                    <div class="label">Show Fps</div>
+                    <div class="widget">
+                        <div class="checkbox">
+                            <div class="box" data-class-checked="showFps"></div>
+                            <p>On</p>
+                        </div>
+                        <div class="checkbox">
+                            <div class="box" data-class-checked="!showFps"></div>
+                            <p>Off</p>
+                        </div>
+                        <input type="checkbox" style="tab-index:none;" data-checked="showFps"
+                            onchange="showFpsChange()" />
+                    </div>
+                </button>
+                <div style="flex:1;"></div>
+                <button id="last" onclick="videoClose()">
+                    <div>BACK</div>
+                </button>
+            </div>
+        </div>
+    </div>
+</body>
+
+</html>

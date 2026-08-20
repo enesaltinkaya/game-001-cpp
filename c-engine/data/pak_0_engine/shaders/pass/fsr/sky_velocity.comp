@@ -1,0 +1,79 @@
+#version 460
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_nonuniform_qualifier : require
+#extension GL_ARB_shading_language_include : enable
+
+#include "../../includes/utils.shader"
+#include "../../includes/globalset.shader"
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(push_constant) uniform PushConstants {
+    uint depthIndex;      // depth buffer (sampled, D32)
+    uint velocityIndex;   // velocity image (storage, RG16F)
+    uint width;
+    uint height;
+} pc;
+
+void main() {
+    ivec2 coord = ivec2(gl_GlobalInvocationID.xy);
+    if (coord.x >= int(pc.width) || coord.y >= int(pc.height)) {
+        return;
+    }
+
+    /* Only fill in velocity for background pixels (depth == 0 in reverse-Z). */
+    float depth = texelFetch(
+        sampler2D(textures[nonuniformEXT(pc.depthIndex)],
+                  samplers[SAMPLER_NEAREST]),
+        coord, 0).r;
+
+    if (depth != 0.0) {
+        return; /* geometry pixel — already has a motion vector */
+    }
+
+    /* ── Reconstruct the world-space direction for this pixel ─────────
+     *
+     * We use the unjittered inverse VP so that the result is consistent
+     * with the motion-vector convention (no jitter in MVs).
+     *
+     * For a background pixel the depth is at the far plane (0 in
+     * reverse-Z).  We reconstruct the clip-space position at depth 0
+     * and unproject to get a world-space direction.  Because the point
+     * is at infinite distance only the *direction* matters, not the
+     * magnitude — so we normalise and then project at a large radius
+     * to keep the maths stable. */
+
+    vec2 uv  = (vec2(coord) + 0.5) / vec2(pc.width, pc.height);
+    vec2 ndc = vec2(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
+
+    /* Unproject through the current (unjittered) inverse VP. */
+    vec4 worldH = sceneBuffer.cameras[0].invViewProjectionNoJitter * vec4(ndc, 0.0, 1.0);
+    vec3 worldDir = normalize(worldH.xyz / worldH.w);
+
+    /* Project this direction through the previous frame's unjittered VP.
+     * Use a large but finite distance so the perspective division is
+     * well-behaved. */
+    vec3 worldPos = sceneBuffer.cameras[0].position.xyz + worldDir * 10000.0;
+
+    vec4 clipCurrent = sceneBuffer.cameras[0].viewProjectionNoJitter    * vec4(worldPos, 1.0);
+    vec4 clipPrev    = sceneBuffer.cameras[0].prevViewProjectionNoJitter * vec4(worldPos, 1.0);
+
+    /* Guard against the previous clip being behind the camera. */
+    if (clipPrev.w <= 0.0) {
+        imageStore(storageImages[nonuniformEXT(pc.velocityIndex)],
+                   coord, vec4(0.0));
+        return;
+    }
+
+    vec2 ndcCurrent  = clipCurrent.xy / clipCurrent.w;
+    vec2 ndcPrev     = clipPrev.xy / clipPrev.w;
+    vec2 ndcVelocity = ndcCurrent - ndcPrev;
+
+    /* Same convention as depth_prepass.vert: pixel-space, Y flipped. */
+    vec2 pixelVelocity = ndcVelocity * (sceneBuffer.cameras[0].viewport * 0.5);
+    pixelVelocity.y    = -pixelVelocity.y;
+
+    imageStore(storageImages[nonuniformEXT(pc.velocityIndex)],
+               coord, vec4(clamp(pixelVelocity, vec2(-32767.0), vec2(32767.0)), 0.0, 0.0));
+}

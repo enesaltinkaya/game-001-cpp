@@ -1,0 +1,107 @@
+html,
+html *,
+body,
+body * {
+  pointer-events: none;
+}
+
+body {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 300dp;
+  font-family: "Jetbrains Mono";
+  font-size: 11dp;
+  font-weight: 300;
+  background-color: rgba(20, 20, 22, 235);
+  border-left: 1dp rgba(60, 60, 65, 200);
+  color: #ccc;
+  padding: 10dp 8dp;
+  z-index: 25;
+}
+
+#playerActionsBody.collapsed {
+  display: none;
+}
+
+.actions-toggle-btn {
+  display: block;
+  margin-bottom: 4dp;
+  font-weight: bold;
+  color: #e8c44a;
+  background-color: rgba(232, 196, 74, 40);
+  border: 1dp rgba(232, 196, 74, 120);
+}
+
+.actions-toggle-btn:hover,
+.actions-toggle-btn:focus {
+  color: #fff;
+  background-color: rgba(232, 196, 74, 90);
+}
+
+button,
+input {
+  display: block;
+  pointer-events: auto;
+  font-family: "Jetbrains Mono";
+  font-size: 10dp;
+}
+
+button {
+  padding: 4dp 8dp;
+  margin-left: 4dp;
+  height: auto;
+  background-color: rgba(50, 50, 55, 180);
+  color: #ddd;
+  border: 1dp rgba(70, 70, 75, 200);
+}
+
+button:hover,
+button:focus {
+  background-color: rgba(80, 80, 90, 220);
+  color: #fff;
+}
+
+input {
+  flex: 1;
+  min-width: 80dp;
+  background-color: rgba(10, 10, 12, 220);
+  color: #eee;
+  border: 1dp rgba(70, 70, 75, 200);
+  padding: 4dp;
+}
+
+.row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  margin: 3dp 0;
+}
+
+.label {
+  margin-top: 4dp;
+  margin-bottom: 2dp;
+}
+
+.section-title {
+  color: #e8c44a;
+  font-weight: bold;
+  font-size: 10dp;
+  margin-top: 6dp;
+  margin-bottom: 2dp;
+  text-transform: uppercase;
+  letter-spacing: 0.5dp;
+}
+
+.section-divider {
+  min-height: 1dp;
+  border-bottom: 1dp rgba(80, 80, 85, 180);
+  margin-top: 2dp;
+  margin-bottom: 3dp;
+}
+
+.hint {
+  font-size: 9dp;
+  color: #888;
+  margin-top: 4dp;
+}

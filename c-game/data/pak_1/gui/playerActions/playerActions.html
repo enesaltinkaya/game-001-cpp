@@ -1,0 +1,32 @@
+<html>
+
+<head>
+  <link type="text/rcss" href="../milligram.css" />
+  <link type="text/rcss" href="playerActions.css" />
+</head>
+
+<body id="playerActions">
+  <div class="container" data-model="playerActions">
+    <div class="section-title">PLAYER ACTIONS</div>
+    <div class="section-divider"></div>
+
+    <button class="actions-toggle-btn" onclick="playerActionsToggle()">Player Actions</button>
+
+    <div id="playerActionsBody" class="collapsed">
+      <div class="label">Teleport to Azgaar cell</div>
+      <div class="row">
+        <input type="number" min="0" step="1" data-value="cellId" />
+        <button onclick="playerActionTeleportToCell()">Teleport</button>
+      </div>
+
+      <div class="label">Teleport to coordinates</div>
+      <div class="row">
+        <button onclick="playerActionTeleportToOrigin()">Teleport to 0, 0, 0</button>
+      </div>
+
+      <div class="hint">{{statusText}}</div>
+    </div>
+  </div>
+</body>
+
+</html>

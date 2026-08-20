@@ -1,0 +1,70 @@
+#version 460
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_nonuniform_qualifier : require
+#extension GL_ARB_shading_language_include : enable
+
+#include "../../includes/globalset.shader"
+
+layout(push_constant) uniform PushConstants {
+    uint  srcIndex;    // sampled pool index of the lower (smaller) mip
+    uint  dstIndex;    // storage pool index of the upper (larger) mip (read+write)
+    uint  dstWidth;
+    uint  dstHeight;
+    float bloomRadius;
+    float bloomIntensity;
+};
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+void main() {
+    ivec2 dstCoord = ivec2(gl_GlobalInvocationID.xy);
+
+    if (dstCoord.x >= int(dstWidth) || dstCoord.y >= int(dstHeight)) {
+        return;
+    }
+
+    // UV in the source (smaller) mip for the tent filter
+    vec2 uv = (vec2(dstCoord) + 0.5) / vec2(dstWidth, dstHeight);
+
+    // Source texel size (the smaller mip we're upsampling from)
+    ivec2 srcSize = textureSize(
+        sampler2D(textures[nonuniformEXT(srcIndex)], samplers[SAMPLER_CLAMP_LINEAR]),
+        0);
+    vec2 texelSize = bloomRadius / vec2(srcSize);
+
+    // ── 9-tap tent filter (3×3 bilinear with tent weighting) ──────────
+    //
+    //   1  2  1
+    //   2  4  2  × (1/16)
+    //   1  2  1
+
+    #define S(off) textureLod( \
+        sampler2D(textures[nonuniformEXT(srcIndex)], \
+                  samplers[SAMPLER_CLAMP_LINEAR]), \
+        uv + (off), 0).rgb
+
+    vec3 a = S(vec2(-texelSize.x,  texelSize.y));
+    vec3 b = S(vec2( 0.0,          texelSize.y));
+    vec3 c = S(vec2( texelSize.x,  texelSize.y));
+    vec3 d = S(vec2(-texelSize.x,  0.0));
+    vec3 e = S(vec2( 0.0,          0.0));
+    vec3 f = S(vec2( texelSize.x,  0.0));
+    vec3 g = S(vec2(-texelSize.x, -texelSize.y));
+    vec3 h = S(vec2( 0.0,         -texelSize.y));
+    vec3 i = S(vec2( texelSize.x, -texelSize.y));
+
+    #undef S
+
+    vec3 upsampled = (a + c + g + i) * (1.0 / 16.0)
+                   + (b + d + f + h) * (2.0 / 16.0)
+                   + e               * (4.0 / 16.0);
+
+    // Read existing downsample value via imageLoad (same pixel, well-defined)
+    vec3 existing = imageLoad(storageImages[nonuniformEXT(dstIndex)], dstCoord).rgb;
+
+    vec3 result = existing + upsampled * bloomIntensity;
+
+    imageStore(storageImages[nonuniformEXT(dstIndex)], dstCoord,
+               vec4(result, 1.0));
+}

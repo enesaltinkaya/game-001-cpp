@@ -1,0 +1,173 @@
+#version 460
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_buffer_reference              : require
+#extension GL_ARB_shading_language_include      : enable
+
+/* One workgroup covers one 16x16 screen tile.
+ * All 256 threads collectively test every point/spot light against the
+ * tile's view-space frustum, then write the per-tile light list. */
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+#include "../../includes/globalset.shader"
+
+/* Push constants — set by VulkanLightCullingPass each frame */
+layout(push_constant) uniform PC {
+    uint  tileCountX;   /* ceil(viewport.x / 16) */
+    uint  tileCountY;   /* ceil(viewport.y / 16) */
+    float zNear;
+    float zFar;
+};
+
+/* Shared memory for the tile's accepted light indices */
+shared uint  s_lightCount;
+shared uint  s_lightIndices[MAX_LIGHTS_PER_TILE];
+
+/* -----------------------------------------------------------------------
+ * Build a normalized view-space frustum plane from two NDC corner rays.
+ * The plane is oriented so that positive half-space is "inside" the tile.
+ * ----------------------------------------------------------------------- */
+vec3 frustumPlaneFromEdge(vec4 a_clip, vec4 b_clip, mat4 invProj) {
+    /* Unproject to view space (w=0 directional — we only need direction) */
+    vec4 av = invProj * a_clip;
+    vec4 bv = invProj * b_clip;
+    vec3 a  = normalize(av.xyz / av.w);
+    vec3 b  = normalize(bv.xyz / bv.w);
+    /* Plane normal = cross product of the two edge directions from origin */
+    return normalize(cross(a, b));
+}
+
+/* Returns true if a sphere (center in view space, radius r) is inside
+ * or overlapping all four tile frustum planes. */
+bool sphereInFrustum(vec3 centerVS, float r, vec4 planes[4]) {
+    for (int i = 0; i < 4; i++) {
+        /* planes[i].xyz = normal (pointing inward), planes[i].w = d */
+        float dist = dot(planes[i].xyz, centerVS) + planes[i].w;
+        if (dist < -r) return false;
+    }
+    return true;
+}
+
+void main() {
+    /* ------------------------------------------------------------------
+     * 0. Initialise shared state (one thread per workgroup)
+     * ------------------------------------------------------------------ */
+    if (gl_LocalInvocationIndex == 0u) {
+        s_lightCount = 0u;
+    }
+    barrier();
+
+    /* ------------------------------------------------------------------
+     * 1. Build tile frustum planes in view space
+     * ------------------------------------------------------------------ */
+    ivec2 tileID   = ivec2(gl_WorkGroupID.xy);
+    float tileMinX = float(tileID.x * 16);
+    float tileMinY = float(tileID.y * 16);
+    float tileMaxX = float((tileID.x + 1) * 16);
+    float tileMaxY = float((tileID.y + 1) * 16);
+
+    Camera cam    = sceneBuffer.cameras[0];
+    vec2 viewport = cam.viewport;
+
+    /* Convert tile pixel bounds to NDC [-1,+1] matching the camera projection.
+     * The camera uses an OpenGL-style projection (Y-up: NDC +1 = screen top),
+     * but Vulkan pixel Y runs top→bottom (y=0 at top).  We must flip Y so
+     * that invProjection receives the correct NDC for each tile edge.
+     * Note: a larger screen-Y → smaller OpenGL NDC Y, so min/max swap for Y. */
+    vec4 ndcMin = vec4((tileMinX / viewport.x) * 2.0 - 1.0,
+                       1.0 - (tileMaxY / viewport.y) * 2.0,   /* flip Y */
+                        1.0, 1.0);
+    vec4 ndcMax = vec4((tileMaxX / viewport.x) * 2.0 - 1.0,
+                       1.0 - (tileMinY / viewport.y) * 2.0,   /* flip Y */
+                        1.0, 1.0);
+
+    mat4 invProj = cam.invProjection;
+
+    /* Four NDC corners of this tile at z=1 (far), w=1 */
+    vec4 c00 = vec4(ndcMin.x, ndcMin.y, 1.0, 1.0);
+    vec4 c10 = vec4(ndcMax.x, ndcMin.y, 1.0, 1.0);
+    vec4 c11 = vec4(ndcMax.x, ndcMax.y, 1.0, 1.0);
+    vec4 c01 = vec4(ndcMin.x, ndcMax.y, 1.0, 1.0);
+
+    /* Frustum planes (inward normals, origin-offset = 0 since planes pass
+     * through the eye at origin in view space).
+     * After the Y-NDC flip the corner winding produces outward normals for
+     * all four edges — negate every plane to make them point inward. */
+    vec4 planes[4];
+    planes[0] = vec4(frustumPlaneFromEdge(c00, c10, invProj), 0.0); /* bottom */
+    planes[1] = vec4(frustumPlaneFromEdge(c10, c11, invProj), 0.0); /* right  */
+    planes[2] = vec4(frustumPlaneFromEdge(c11, c01, invProj), 0.0); /* top    */
+    planes[3] = vec4(frustumPlaneFromEdge(c01, c00, invProj), 0.0); /* left   */
+
+    /* Negate all four to make normals point inward */
+    planes[0].xyz = -planes[0].xyz;
+    planes[1].xyz = -planes[1].xyz;
+    planes[2].xyz = -planes[2].xyz;
+    planes[3].xyz = -planes[3].xyz;
+
+    /* ------------------------------------------------------------------
+     * 2. Assign directional lights to every tile (they're global,
+     *    no spatial culling needed).
+     * ------------------------------------------------------------------ */
+    int dirCount   = sceneBuffer.lightCounts.x;
+    int totalCount = sceneBuffer.lightCounts.w;
+    uint localIdx  = gl_LocalInvocationIndex;
+
+    /* Only thread 0 writes directionals — they're few and global */
+    if (localIdx == 0u) {
+        for (int li = 0; li < dirCount && s_lightCount < uint(MAX_LIGHTS_PER_TILE); li++) {
+            uint slot = s_lightCount++;
+            s_lightIndices[slot] = uint(li);
+        }
+    }
+    barrier();
+
+    /* ------------------------------------------------------------------
+     * 3. Cull point + spot lights against the tile frustum.
+     *    Each thread tests a strided subset of lights.
+     * ------------------------------------------------------------------ */
+    for (int li = dirCount + int(localIdx);
+         li < totalCount;
+         li += 256) {
+
+        GpuLight light = sceneBuffer.lights[li];
+        float range    = light.positionAndRange.w;
+
+        bool visible;
+        if (range <= 0.0) {
+            /* Infinite-range light — always visible in every tile */
+            visible = true;
+        } else {
+            vec3 lightPosRel = light.positionAndRange.xyz;
+            vec4  posVS = cam.view * vec4(lightPosRel, 1.0);
+
+            /* Near/far cull in view space (view-space Z is negative in front of cam) */
+            if (-posVS.z + range < zNear || -posVS.z - range > zFar) continue;
+
+            visible = sphereInFrustum(posVS.xyz, range, planes);
+        }
+
+        if (visible) {
+            uint slot = atomicAdd(s_lightCount, 1u);
+            if (slot < uint(MAX_LIGHTS_PER_TILE)) {
+                s_lightIndices[slot] = uint(li);
+            }
+        }
+    }
+
+    barrier();
+
+    /* ------------------------------------------------------------------
+     * 4. Write tile result (one thread per workgroup)
+     * ------------------------------------------------------------------ */
+    if (gl_LocalInvocationIndex == 0u) {
+        uint tileIndex  = uint(tileID.y) * tileCountX + uint(tileID.x);
+        uint count      = min(s_lightCount, uint(MAX_LIGHTS_PER_TILE));
+        uint startSlot  = tileIndex * uint(MAX_LIGHTS_PER_TILE);
+
+        lightGridBuffer.tiles[tileIndex] = uvec2(startSlot, count);
+
+        for (uint i = 0u; i < count; i++) {
+            lightIndexBuffer.indices[startSlot + i] = s_lightIndices[i];
+        }
+    }
+}

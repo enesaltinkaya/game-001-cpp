@@ -1,0 +1,572 @@
+#include "LoadingAzgaar.h"
+#include "azgaar/AzgaarHeightmapSource.h"
+#include "azgaar/AzgaarRoadDecals.h"
+#include "azgaar/AzgaarRoadCorridor.h"
+#include "azgaar/AzgaarWater.h"
+#include "azgaar/AzgaarWeather.h"
+#include "azgaar/AzgaarRivers.h"
+#include "azgaar/AzgaarLandmarks.h"
+#include "azgaar/AzgaarSettlements.h"
+#include "azgaar/AzgaarWorld.h"
+#include "gameState/GameState.h"
+#include "player/Player.h"
+#include "ecs/system/scene/SceneParser.h"
+#include "ecs/system/scene/SceneSystem.h"
+#include "ecs/system/heightmap/HeightmapTerrain.h"
+#include "ecs/system/transform/TransformComponent.h"
+#include "ecs/system/transform/TransformDb.h"
+#include "ecs/system/window/WindowSystem.h"
+#include "renderer/Renderer.h"
+#include "renderer/gui/rmlui/GuiManagerRmlUi.h"
+#include "renderer/vulkan/command/VulkanCommand.h"
+#include "renderer/vulkan/resources/VulkanBuffer.h"
+#include "renderer/vulkan/resources/VulkanImage.h"
+#include "renderer/vulkan/resources/VulkanResourceManager.h"
+#include "rmlui/wrapper/src/crmlui.h"
+#include "timer/Timer.h"
+
+static void added(void);
+static void removed(void);
+static void update(void);
+
+struct System loadingAzgaarSystem = {
+    .name    = "loadingAzgaar",
+    .added   = added,
+    .removed = removed,
+    .update  = update,
+};
+
+typedef enum {
+    AZGAAR_LOAD_STAGE_MAP,
+    AZGAAR_LOAD_STAGE_WORLD_DATA,
+    AZGAAR_LOAD_STAGE_TERRAIN,
+    AZGAAR_LOAD_STAGE_ANIMATIONS,
+    AZGAAR_LOAD_STAGE_READY,
+    AZGAAR_LOAD_STAGE_ERROR,
+} AzgaarLoadStage;
+
+static const char* const stageTexts[] = {
+    [AZGAAR_LOAD_STAGE_MAP]        = "Loading Azgaar map...",
+    [AZGAAR_LOAD_STAGE_WORLD_DATA] = "Parsing Azgaar world data...",
+    [AZGAAR_LOAD_STAGE_TERRAIN]    = "Generating Azgaar terrain tiles...",
+    [AZGAAR_LOAD_STAGE_ANIMATIONS] = "Loading animations...",
+    [AZGAAR_LOAD_STAGE_READY]      = "Azgaar world loaded...",
+    [AZGAAR_LOAD_STAGE_ERROR]      = "Failed to load Azgaar world. Press ESC to return.",
+};
+
+static const char* const azgaarMapPath = "azgaar/Chilerel 2026-08-11-15-35.map";
+
+static AzgaarLoadStage loadStage;
+static char cancelled;
+static double enterTime;
+static void* document;
+static void* model;
+static char stageTextBuf[128];
+static char* stageTextPtr = stageTextBuf;
+static AzgaarWorld azgaarWorld;
+static bool worldLoaded;  // azgaarWorld holds valid data
+// Climate textures (workstream A): static per-world RGBA8 uploads sampled by
+// the heightmap terrain pass for biome tint / snow / beach blending.
+static VulkanImage climateBiomeColorImg;
+static VulkanImage climateFieldImg;
+static AzgaarHeightmapSource azgaarHeightmapSrc;
+// Heightmap host for the loading stage: the window is generated while the
+// loading screen is up, then activated as the active heightmap world at the
+// READY stage (the engine's heightmap system follows the player camera from
+// the first gameplay frame).
+static HeightmapTerrain loadHeightmap;
+static float loadSpawnX, loadSpawnZ;
+static i32 loadCenterTileX, loadCenterTileZ;
+static bool heightmapAttached;
+
+static void azgaarHeightmapDetach(void);
+static void azgaarHeightmapVerifyGrid(void* userData);
+static Scene* loadedAnimationsScene;
+static char animationsSignalEmitted;
+static char keepAssetsOnExit;
+
+// Forward declare to avoid including AnimatorComponent.h (EventCallback name clash with crmlui.h)
+extern void animationPlayBlendedByName(const char* entityName,
+                                       const char* clipName,
+                                       float speed,
+                                       bool loop,
+                                       float blendDuration);
+
+static void emitAnimationsLoadedIfTerrainReady(void) {
+    if (animationsSignalEmitted) return;
+    if (loadStage != AZGAAR_LOAD_STAGE_ANIMATIONS) return;
+    if (!loadedAnimationsScene) return;
+
+    animationsSignalEmitted = 1;
+    signalEmit("animationsLoaded", NULL);
+}
+
+static void checkReady(void) {
+    emitAnimationsLoadedIfTerrainReady();
+    if (loadStage == AZGAAR_LOAD_STAGE_ANIMATIONS && loadedAnimationsScene &&
+        getPlayerScene() != NULL) {
+        loadStage = AZGAAR_LOAD_STAGE_READY;
+    }
+}
+
+static void azgaarAnimationsLoaded(Scene* scene, void* _) {
+    (void)_;
+    if (cancelled) {
+        rendererSceneDestroy(scene);
+        sceneDestroy(scene);
+        return;
+    }
+
+    loadedAnimationsScene = scene;
+    scene->alwaysVisible  = true;
+    animationPlayBlendedByName("eve_animator", "female_walk", 0.1f, true, 1.0f);
+    checkReady();
+}
+
+const char* loadingAzgaarStageText(void) {
+    return stageTexts[loadStage];
+}
+
+const AzgaarWorld* loadingAzgaarGetWorld(void) {
+    return worldLoaded ? &azgaarWorld : NULL;
+}
+
+AzgaarHeightmapSource* loadingAzgaarGetHeightmapSource(void) {
+    return worldLoaded ? &azgaarHeightmapSrc : NULL;
+}
+
+// ── Climate textures + terrain climate state (workstream A) ────────────
+// Packs the world's biome-colour and climate grids into two RGBA8 textures,
+// uploads them once per world load, and points the terrain pass' TerrainData
+// at them (plus map bounds for the world->map-UV transform and the blend
+// thresholds, env-overridable).  Mirrored by azgaarClimateDestroy on release.
+static void azgaarClimateDestroy(void) {
+    if (climateBiomeColorImg.img) vulkanDestroyImage(&climateBiomeColorImg, VK_NULL_HANDLE);
+    if (climateFieldImg.img) vulkanDestroyImage(&climateFieldImg, VK_NULL_HANDLE);
+    climateBiomeColorImg = (VulkanImage){0};
+    climateFieldImg      = (VulkanImage){0};
+    // Clear the SceneBuffer slots so nothing samples stale (freed) pool
+    // indices after the world is gone.
+    vulkanResourceSetTerrainClimateTextures(0, 0);
+    vulkanResourceSetTerrainClimateParams(0.0f, 0.0f, 0.0f, 0.0f);
+}
+
+static VulkanImage azgaarClimateUploadTexture(const char* name,
+                                              VkFormat format,
+                                              const u8* pixels,
+                                              u32 width,
+                                              u32 height) {
+    VulkanImage img = vulkanCreateImage(.name   = name,
+                                        .format = format,
+                                        .usage  = VK_IMAGE_USAGE_SAMPLED_BIT |
+                                                 VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                                        .width  = (int)width,
+                                        .height = (int)height);
+    if (!img.img) {
+        warn("loadingAzgaar: climate texture creation failed: %s", name);
+        return img;
+    }
+
+    VulkanCommand* cmd = vulkanTransientBegin();
+    vulkanTransition(cmd, &img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 0, 1);
+    vulkanCopy(.cmd        = cmd,
+               .source.data = (void*)pixels,
+               .target.img  = &img,
+               .size        = (u32)width * height * 4u);
+    vulkanTransition(cmd, &img, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
+    vulkanTransientEnd(cmd, 1);
+    return img;
+}
+
+static float azgaarEnvFloat(const char* name, float fallback) {
+    const char* v = getenv(name);
+    if (!v || !*v) return fallback;
+    float f = (float)atof(v);
+    return f;
+}
+
+static void azgaarClimateUpload(const AzgaarWorld* world) {
+    azgaarClimateDestroy();
+
+    u32 w = 0, h = 0;
+    u8* biomePixels = azgaarWorldPackBiomeColorTexture(world, &w, &h);
+    u8* fieldPixels = azgaarWorldPackClimateTexture(world, &w, &h);
+    if (!biomePixels || !fieldPixels) {
+        warn("loadingAzgaar: no climate grids; terrain climate blending stays off");
+        memoryFree(biomePixels);
+        memoryFree(fieldPixels);
+        return;
+    }
+
+    // Biome colours are authored display-referred values -> sRGB view so the
+    // GPU decodes them to linear like the other albedo textures; the climate
+    // field carries exact byte-encoded scalars -> UNORM roundtrip.
+    climateBiomeColorImg = azgaarClimateUploadTexture("azgaar_biome_color",
+                                                      VK_FORMAT_R8G8B8A8_SRGB,
+                                                      biomePixels,
+                                                      w,
+                                                      h);
+    climateFieldImg = azgaarClimateUploadTexture("azgaar_climate",
+                                                  VK_FORMAT_R8G8B8A8_UNORM,
+                                                  fieldPixels,
+                                                  w,
+                                                  h);
+    memoryFree(biomePixels);
+    memoryFree(fieldPixels);
+
+    if (!climateBiomeColorImg.img || !climateFieldImg.img) {
+        azgaarClimateDestroy();
+        return;
+    }
+
+    vulkanResourceSetTerrainClimateTextures(climateBiomeColorImg.sampledPoolIndex,
+                                             climateFieldImg.sampledPoolIndex);
+
+    // Blend thresholds (deg C / m above sea level).  Same env-var pattern as
+    // ENGINE_AZGAAR_HM_SIGMA.  ENGINE_AZGAAR_CLIMATE_DISABLED turns every
+    // climate fetch off (kill switch / A-B timing baseline).
+    float snowLo = azgaarEnvFloat("ENGINE_AZGAAR_SNOW_LO", -1.0f);
+    float snowHi = azgaarEnvFloat("ENGINE_AZGAAR_SNOW_HI", 3.0f);
+    float beachH = azgaarEnvFloat("ENGINE_AZGAAR_BEACH_H", 2.5f);
+    if (getenv("ENGINE_AZGAAR_CLIMATE_DISABLED")) {
+        snowLo = snowHi = beachH = 0.0f;
+    }
+    vulkanResourceSetTerrainClimateParams(snowLo, snowHi, beachH, beachH > 0.0f ? 1.0f : 0.0f);
+
+    // Map bounds in world space: the terrain pass derives the map-UV (for
+    // both climate textures) and the altitude rock band (worldMax.y) from
+    // these.  azgaarMapToWorld centres the map at the world origin.
+    float halfW = (float)(world->widthPx * 0.5) * (float)world->metersPerPixel;
+    float halfH = (float)(world->heightPx * 0.5) * (float)world->metersPerPixel;
+    vulkanResourceSetTerrainBounds(-halfW,
+                                   -AZGAAR_OCEAN_DEPTH_METERS,
+                                   -halfH,
+                                   halfW,
+                                   world->maxLandHeightM,
+                                   halfH);
+
+    info("loadingAzgaar: climate textures uploaded (biomeColor=%ux%u idx=%d, climate idx=%d), "
+         "snow=[%.1f, %.1f] C, beach=%.1f m, maxLand=%.0f m%s",
+         w,
+         h,
+         climateBiomeColorImg.sampledPoolIndex,
+         climateFieldImg.sampledPoolIndex,
+         snowLo,
+         snowHi,
+         beachH,
+         world->maxLandHeightM,
+         getenv("ENGINE_AZGAAR_CLIMATE_DISABLED") ? " (DISABLED)" : "");
+}
+
+void loadingAzgaarReleaseWorld(void) {
+    if (!worldLoaded) {
+        // A failed reload may still hold textures from the previous world
+        // (azgaarWorldLoad already reset the world struct on failure).
+        azgaarClimateDestroy();
+        azgaarHeightmapDetach();
+        return;
+    }
+    azgaarClimateDestroy();
+    azgaarHeightmapDetach();
+    azgaarWaterDestroy();
+    azgaarWeatherDestroy();
+    azgaarRiversClear();
+    azgaarLandmarksClear();
+    azgaarSettlementsClear();
+    azgaarRoadDecalsClear();
+    azgaarRoadCorridorClear();
+    azgaarWorldDestroy(&azgaarWorld);
+    worldLoaded = false;
+}
+
+// Pick the tile to center the initial generation on. Uses the player's saved
+// DB transform when present (so reloading drops the player back onto terrain
+// they previously stood on); otherwise falls back to the default spawn.
+static void azgaarInitialCenterTile(i32* outTileX, i32* outTileZ, float* outSpawnX, float* outSpawnZ) {
+    float spawnX;
+    float spawnZ;
+    vec3 spawn;
+    playerGetSpawn(spawn);
+    spawnX = spawn[0];
+    spawnZ = spawn[2];
+
+    transformDbInit();
+    Transform saved;
+    if (transformDbLoad("player", &saved)) {
+        spawnX = saved.pos[0];
+        spawnZ = saved.pos[2];
+    }
+
+    *outTileX = heightmapWorldToTileCoord(&loadHeightmap, spawnX);
+    *outTileZ = heightmapWorldToTileCoord(&loadHeightmap, spawnZ);
+    if (outSpawnX) *outSpawnX = spawnX;
+    if (outSpawnZ) *outSpawnZ = spawnZ;
+    info("loadingAzgaar: initial terrain center tile (%d, %d) from spawn (%.1f, %.1f)",
+         *outTileX,
+         *outTileZ,
+         spawnX,
+         spawnZ);
+}
+
+static void azgaarSnapPlayerToTerrain(void);
+
+// Make the loading-stage heightmap host the active heightmap world. Called
+// once per load, right before the gameplay transition; from the first
+// gameplay frame the engine's heightmap system drives the window from the
+// player camera.
+static void azgaarHeightmapAttach(void) {
+    heightmapTerrainSetActive(&loadHeightmap);
+
+    info("azgaarHeightmap: activated (tile %.0f m, window %u) seed=0x%08x",
+         HEIGHTMAP_TILE_SIZE_M,
+         HEIGHTMAP_WINDOW_SIZE,
+         azgaarHeightmapSrc.noiseSeed);
+
+    // One-shot sanity probes through the public sample API. The world origin
+    // is the map centre; +/-2048 m crosses one tile border.
+    const float probeWx[4] = {0.0f, 2048.0f, -1024.0f, 512.0f};
+    const float probeWz[4] = {0.0f, -2048.0f, 1024.0f, -512.0f};
+    for (int i = 0; i < 4; ++i) {
+        float y = heightmapTerrainSample(&loadHeightmap, probeWx[i], probeWz[i]);
+        info("azgaarHeightmap: probe (%.0f, %.0f) -> %.2f m", probeWx[i], probeWz[i], y);
+    }
+
+    // The initial window takes ~1.2 s to generate on the builder thread;
+    // verify the grid-vs-source agreement once it is ready.
+    futureTaskAdd(4000, azgaarHeightmapVerifyGrid, NULL);
+}
+
+// Free the tile data and clear the active pointer (the host struct itself is
+// a file-static and survives; re-init happens on the next load).
+// Phase 1 verification: once the initial window is generated, confirm the
+// CPU-grid sample path returns the same values as the source at texel-center
+// coordinates (grid vertices store the source value verbatim, so the
+// bilinear sampler must return it exactly). Catches coordinate-mapping bugs
+// in tile origin / grid spacing before GPU and physics phases build on top.
+typedef struct HmVerifyPoint {
+    i32 tileX, tileZ;
+    i32 texX, texZ;
+} HmVerifyPoint;
+
+static void azgaarHeightmapVerifyGrid(void* _) {
+    (void)_;
+    HeightmapTerrain* ht = heightmapTerrainGetActive();
+    if (!ht) {
+        warn("azgaarHeightmap: verify skipped (no active heightmap terrain)");
+        return;
+    }
+
+    const HmVerifyPoint points[5] = {
+        {0, 0, 256, 256},
+        {0, 0, 100, 401},
+        {-1, 0, 300, 128},
+        {-2, 2, 511, 0},   // border corner (shared with neighbours)
+        {1, -2, 0, 511},   // border corner
+    };
+
+    int failures = 0;
+    for (int i = 0; i < 5; ++i) {
+        float step = HEIGHTMAP_TILE_SIZE_M / (float)(HEIGHTMAP_TEX - 1);
+        float wx   = (float)points[i].tileX * HEIGHTMAP_TILE_SIZE_M + (float)points[i].texX * step;
+        float wz   = (float)points[i].tileZ * HEIGHTMAP_TILE_SIZE_M + (float)points[i].texZ * step;
+
+        float yGrid = heightmapTerrainSample(ht, wx, wz);
+        float ySrc  = azgaarHeightmapSrc.vtable.heightAt(&azgaarHeightmapSrc, wx, wz);
+        float diff  = fabsf(yGrid - ySrc);
+        bool ok     = (diff < 1e-3f);
+        if (!ok) failures++;
+        info("azgaarHeightmap: verify tile(%d,%d) texel(%d,%d) grid=%.4f m source=%.4f m diff=%.6f m %s",
+             points[i].tileX,
+             points[i].tileZ,
+             points[i].texX,
+             points[i].texZ,
+             yGrid,
+             ySrc,
+             diff,
+             ok ? "OK" : "MISMATCH");
+    }
+    if (failures == 0) {
+        info("azgaarHeightmap: grid verification passed (5/5)");
+    } else {
+        warn("azgaarHeightmap: grid verification FAILED (%d/5 mismatches)", failures);
+    }
+}
+
+static void azgaarHeightmapDetach(void) {
+    if (heightmapTerrainGetActive() == &loadHeightmap) {
+        heightmapTerrainSetActive(NULL);
+    }
+    // Safe on a never-initialized host (zeroed struct: the drain loop exits
+    // immediately).
+    heightmapTerrainDestroyData(&loadHeightmap);
+    heightmapAttached = false;
+}
+
+void loadingAzgaarOnEnter(void) {
+    cancelled = 0;
+    enterTime = timer.timeSinceStart;
+    loadStage = AZGAAR_LOAD_STAGE_MAP;
+    loadingAzgaarReleaseWorld();  // free any previously retained world
+    azgaarWorld             = (AzgaarWorld){0};
+    loadedAnimationsScene   = NULL;
+    animationsSignalEmitted = 0;
+    keepAssetsOnExit        = 0;
+
+    loadStage = AZGAAR_LOAD_STAGE_WORLD_DATA;
+    if (!azgaarWorldLoad(&azgaarWorld, azgaarMapPath)) {
+        loadStage = AZGAAR_LOAD_STAGE_ERROR;
+        return;
+    }
+    worldLoaded = true;
+    signalEmit("azgaarMapLoaded", NULL);
+    azgaarHeightmapSourceInit(&azgaarHeightmapSrc, &azgaarWorld, azgaarWorld.mapName);
+
+    // Build the settlement building clusters and upload them to the
+    // azgaar_props pass' global instance buffer (workstream D).  Runs BEFORE
+    // any heightmap tile is generated, so the D8 plateau grid is live for
+    // every tile (houses must not float above the ground).  Each building's
+    // Y is sampled through the source' exact heightAt (natural + detail +
+    // plateau) so buildings sit flush with the rendered terrain.
+    azgaarSettlementsInit(&azgaarWorld, azgaarHeightmapSrc.vtable.heightAt, &azgaarHeightmapSrc);
+
+    // Climate textures + terrain climate state (biome tint / snow / beach)
+    // before any terrain tile renders.
+    azgaarClimateUpload(&azgaarWorld);
+
+    // Host the heightmap for the whole load: the window is generated in the
+    // background while the loading screen is up (driven from the TERRAIN
+    // stage below), so gameplay starts with a warm tile cache.
+    heightmapTerrainInit(&loadHeightmap, &azgaarHeightmapSrc.vtable,
+                         HEIGHTMAP_TILE_SIZE_M, HEIGHTMAP_WINDOW_SIZE);
+
+    // Build the walkable road corridor before road decals are placed (so they
+    // sample the corridor surface height).
+    azgaarRoadCorridorBuild(&azgaarWorld);
+
+    // Snap the player onto Azgaar terrain BEFORE computing the tile grid centre,
+    // so the grid is centred on the player's actual position.
+    azgaarSnapPlayerToTerrain();
+
+    i32 centerTileX;
+    i32 centerTileZ;
+    float spawnX;
+    float spawnZ;
+    azgaarInitialCenterTile(&centerTileX, &centerTileZ, &spawnX, &spawnZ);
+    loadSpawnX        = spawnX;
+    loadSpawnZ        = spawnZ;
+    loadCenterTileX   = centerTileX;
+    loadCenterTileZ   = centerTileZ;
+    azgaarRoadDecalsBuild(&azgaarWorld);
+
+    loadStage = AZGAAR_LOAD_STAGE_TERRAIN;
+
+    sceneLoadCb("models/animations.dat", azgaarAnimationsLoaded, NULL);
+}
+
+void loadingAzgaarOnExit(void) {
+    cancelled = 1;
+    if (!keepAssetsOnExit) {
+        azgaarRoadDecalsClear();
+        if (loadedAnimationsScene) {
+            rendererSceneDestroy(loadedAnimationsScene);
+            sceneDestroy(loadedAnimationsScene);
+            loadedAnimationsScene = NULL;
+        }
+        // Cancel path: free the world now. On the gameplay path the world is
+        // retained for streaming and released by gameplay teardown instead.
+        loadingAzgaarReleaseWorld();
+    }
+}
+
+void added(void) {
+    document = rmlNewDocument("gui/loading/loading.html");
+    model    = rmlCreateModel("loading");
+    rmlBindCharPointer(model, "stage", &stageTextPtr);
+    rmlLoadDocument(document);
+    rmlShowDocument(document);
+}
+
+void removed(void) {
+    if (!keepAssetsOnExit) {
+        azgaarRoadDecalsClear();
+        if (loadedAnimationsScene) {
+            rendererSceneDestroy(loadedAnimationsScene);
+            sceneDestroy(loadedAnimationsScene);
+            loadedAnimationsScene = NULL;
+        }
+        loadingAzgaarReleaseWorld();
+    }
+
+    rmlUnloadDocument(document);
+    document = NULL;
+    rmlUnloadModel(model);
+    model = NULL;
+}
+
+// Use the player's saved position as-is. No snapping or height adjustment.
+static void azgaarSnapPlayerToTerrain(void) {
+    if (!worldLoaded) return;
+
+    transformDbInit();
+    Transform saved;
+    if (!transformDbLoad("player", &saved)) {
+        return;
+    }
+
+    // Already has the saved position — use it directly, no changes needed.
+}
+
+void update(void) {
+    if (cancelled) return;
+
+    if (loadStage == AZGAAR_LOAD_STAGE_TERRAIN) {
+        // The global heightmap system only follows the (production) camera, so
+        // the loading screen drives the window itself, anchored at the spawn
+        // point. Generation queues the center tile first, so the center being
+        // ready is the earliest useful gate.
+        heightmapTerrainUpdateWindow(&loadHeightmap, loadSpawnX, loadSpawnZ);
+
+        HeightmapTile* centerTile = heightmapTerrainGetTile(&loadHeightmap, loadCenterTileX, loadCenterTileZ);
+        if (centerTile && centerTile->state == HEIGHTMAP_TILE_READY) {
+            loadStage = AZGAAR_LOAD_STAGE_ANIMATIONS;
+            // Initialise the water grid once the seabed terrain is ready
+            // (water reads the depth buffer written by the terrain pass).
+            azgaarWaterInit(&azgaarWorld);
+            // GPU particle weather: needs the terrain depth buffer at
+            // runtime, not at init — start it beside the water system so
+            // snow/dust are live from the first gameplay frame.
+            azgaarWeatherInit(&azgaarWorld);
+            // Build the river ribbons + wet-strip decals + river-point hash,
+            // and upload the ribbon mesh to the azgaar_river pass.
+            azgaarRiversInit(&azgaarWorld);
+            // Landmarks (workstream E) run after the river hash so bridges
+            // can span their river; also publishes the sacred-forest density
+            // discs the props scatter queries during gameplay.
+            azgaarLandmarksInit(&azgaarWorld,
+                                azgaarHeightmapSrc.vtable.heightAt,
+                                &azgaarHeightmapSrc);
+            emitAnimationsLoadedIfTerrainReady();
+        }
+    }
+
+    checkReady();
+
+    snprintf(stageTextBuf, sizeof(stageTextBuf), "%s", stageTexts[loadStage]);
+    rmlUpdateDirtyAll(model);
+
+    if (input.pressed == KEY_ESCAPE) {
+        gameStateTransition(STATE_MAIN_MENU);
+        return;
+    }
+
+    if (loadStage == AZGAAR_LOAD_STAGE_READY && (timer.timeSinceStart - enterTime) >= 1.0) {
+        keepAssetsOnExit = 1;
+        if (!heightmapAttached) {
+            heightmapAttached = true;
+            azgaarHeightmapAttach();
+        }
+        gameStateSetLoadedAnimationsScene(loadedAnimationsScene);
+        loadedAnimationsScene = NULL;
+        gameStateTransition(STATE_GAMEPLAY);
+    }
+}

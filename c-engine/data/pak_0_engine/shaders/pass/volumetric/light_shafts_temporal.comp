@@ -1,0 +1,194 @@
+#version 460
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_nonuniform_qualifier : require
+#extension GL_ARB_shading_language_include : enable
+
+/* Volumetric light shafts — temporal accumulation with variance clipping.
+ *
+ * The radial march intentionally jitters sample positions to hide banding.
+ * This pass makes that jitter useful instead of noisy by reprojecting the
+ * previous filtered shaft image and blending it conservatively. */
+
+#include "../../includes/globalset.shader"
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(push_constant) uniform PushConstants {
+    uint  currentIndex;
+    uint  historyIndex;
+    uint  velocityIndex;
+    uint  depthIndex;
+    uint  normalIndex;
+    uint  outputIndex;
+    uint  width;
+    uint  height;
+    uint  fullWidth;
+    uint  fullHeight;
+    uint  historyValid;
+    float jitterDeltaX;
+    float jitterDeltaY;
+} pc;
+
+const vec3 kLumW = vec3(0.2126, 0.7152, 0.0722);
+
+/* Output is half resolution; depth/velocity/normal images are full
+   resolution.  Convert an output-space texel to the full-res texel at its
+   center. */
+ivec2 toFullCoord(ivec2 c) {
+    vec2 size    = vec2(pc.width, pc.height);
+    vec2 fullSize = vec2(pc.fullWidth, pc.fullHeight);
+    ivec2 fc = ivec2(((vec2(c) + 0.5) / size) * fullSize);
+    return clamp(fc, ivec2(0), ivec2(int(pc.fullWidth) - 1, int(pc.fullHeight) - 1));
+}
+
+float linearizeDepth(float d) {
+    float N = sceneBuffer.cameras[0].zNear;
+    float F = sceneBuffer.cameras[0].zFar;
+    return (2.0 * N * F) / max((F - N) * d + N + F, 1e-7);
+}
+
+vec3 loadNormal(ivec2 coord) {
+    vec2 nxy = texelFetch(sampler2D(textures[nonuniformEXT(pc.normalIndex)],
+                                    samplers[SAMPLER_NEAREST]),
+                          coord, 0).rg;
+    return vec3(nxy, sqrt(max(1.0 - dot(nxy, nxy), 0.0)));
+}
+
+vec3 loadCurrent(ivec2 coord) {
+    return texelFetch(sampler2D(textures[nonuniformEXT(pc.currentIndex)],
+                                samplers[SAMPLER_NEAREST]),
+                      coord, 0).rgb;
+}
+
+void storeCurrent(ivec2 coord, vec3 current) {
+    imageStore(storageImages[nonuniformEXT(pc.outputIndex)],
+               coord, vec4(max(current, vec3(0.0)), 1.0));
+}
+
+void main() {
+    ivec2 coord = ivec2(gl_GlobalInvocationID.xy);
+    if (coord.x >= int(pc.width) || coord.y >= int(pc.height)) return;
+
+    vec3 current = loadCurrent(coord);
+
+    float centerDepth = texelFetch(sampler2D(textures[nonuniformEXT(pc.depthIndex)],
+                                             samplers[SAMPLER_NEAREST]),
+                                   toFullCoord(coord), 0).r;
+    if (centerDepth == 0.0 || pc.historyValid == 0u) {
+        storeCurrent(coord, current);
+        return;
+    }
+
+    vec3  centerNormal = loadNormal(coord);
+    float centerLinZ   = linearizeDepth(centerDepth);
+
+    /* Closest-depth velocity dilation.  This avoids using background/edge
+     * velocities when a foreground receiver covers only part of the pixel. */
+    float bestDepth = 0.0;
+    ivec2 bestOff   = ivec2(0);
+    for (int y = -1; y <= 1; ++y) {
+        for (int x = -1; x <= 1; ++x) {
+            ivec2 sc = clamp(coord + ivec2(x, y),
+                             ivec2(0), ivec2(int(pc.width) - 1, int(pc.height) - 1));
+            float d = texelFetch(sampler2D(textures[nonuniformEXT(pc.depthIndex)],
+                                           samplers[SAMPLER_NEAREST]),
+                                 toFullCoord(sc), 0).r;
+            if (d > bestDepth) {
+                bestDepth = d;
+                bestOff   = ivec2(x, y);
+            }
+        }
+    }
+
+    ivec2 velCoord = clamp(coord + bestOff,
+                           ivec2(0), ivec2(int(pc.width) - 1, int(pc.height) - 1));
+    vec2 velocity = texelFetch(sampler2D(textures[nonuniformEXT(pc.velocityIndex)],
+                                         samplers[SAMPLER_NEAREST]),
+                               toFullCoord(velCoord), 0).rg;
+
+    vec2 size     = vec2(pc.width, pc.height);
+    vec2 fullSize = vec2(pc.fullWidth, pc.fullHeight);
+    vec2 uv       = (vec2(coord) + 0.5) / size;
+    /* Velocity is in full-res pixels — convert to UV with the full size. */
+    vec2 historyUV = uv - velocity / fullSize + vec2(pc.jitterDeltaX, pc.jitterDeltaY);
+
+    if (historyUV.x < 0.0 || historyUV.x > 1.0 ||
+        historyUV.y < 0.0 || historyUV.y > 1.0) {
+        storeCurrent(coord, current);
+        return;
+    }
+
+    /* History is stored at output resolution; depth/normal lookups are
+       full resolution. */
+    ivec2 historyCoordFull = clamp(ivec2(historyUV * fullSize),
+                                   ivec2(0), ivec2(int(pc.fullWidth) - 1, int(pc.fullHeight) - 1));
+
+    float historyDepth = texelFetch(sampler2D(textures[nonuniformEXT(pc.depthIndex)],
+                                              samplers[SAMPLER_NEAREST]),
+                                    historyCoordFull, 0).r;
+    if (historyDepth == 0.0) {
+        storeCurrent(coord, current);
+        return;
+    }
+
+    vec3  historyNormal = loadNormal(historyCoordFull);
+    float historyLinZ   = linearizeDepth(historyDepth);
+    float relDepthDiff  = abs(centerLinZ - historyLinZ) / max(max(centerLinZ, historyLinZ), 1e-4);
+    float normalMatch   = dot(centerNormal, historyNormal);
+
+    vec3 history = texture(sampler2D(textures[nonuniformEXT(pc.historyIndex)],
+                                     samplers[SAMPLER_CLAMP_LINEAR]),
+                           historyUV).rgb;
+
+    /* RGB neighbourhood clamp.  Use both min/max and variance so history can
+     * smooth noise while still being clipped on newly revealed shafts. */
+    vec3 valMin   = current;
+    vec3 valMax   = current;
+    vec3 valSum   = current;
+    vec3 valSqSum = current * current;
+    for (int y = -1; y <= 1; ++y) {
+        for (int x = -1; x <= 1; ++x) {
+            if (x == 0 && y == 0) continue;
+            ivec2 sc = clamp(coord + ivec2(x, y),
+                             ivec2(0), ivec2(int(pc.width) - 1, int(pc.height) - 1));
+            vec3 sv = loadCurrent(sc);
+            valMin    = min(valMin, sv);
+            valMax    = max(valMax, sv);
+            valSum   += sv;
+            valSqSum += sv * sv;
+        }
+    }
+
+    vec3  valMean     = valSum / 9.0;
+    vec3  valVariance = max(valSqSum / 9.0 - valMean * valMean, vec3(0.0));
+    vec3  valSigma    = sqrt(valVariance);
+    float speed       = length(velocity);
+    float gamma       = mix(1.5, 3.0, smoothstep(0.5, 8.0, speed));
+    vec3  varMin      = max(valMean - gamma * valSigma, valMin);
+    vec3  varMax      = min(valMean + gamma * valSigma, valMax);
+    history = clamp(history, varMin, varMax);
+
+    float disocclusion = smoothstep(0.01, 0.08, relDepthDiff) +
+                         (1.0 - smoothstep(0.85, 0.98, normalMatch));
+    disocclusion = clamp(disocclusion, 0.0, 1.0);
+
+    /* Light shafts are low-frequency after the blur, so static pixels can
+     * accumulate aggressively.  Raise the current-frame weight on motion and
+     * disocclusion to avoid visible trails. */
+    float currentLum = dot(current, kLumW);
+    float historyLum = dot(history, kLumW);
+    float lumChange  = abs(currentLum - historyLum) / max(max(currentLum, historyLum), 0.02);
+    /* Keep the static-camera current weight very low.  The radial marcher
+     * changes its sample jitter every frame, so a high base blend leaves
+     * visible animated grain even after temporal filtering. */
+    float baseBlend  = 0.015;
+    float motionBlend = smoothstep(0.5, 12.0, speed) * 0.20;
+    float changeBlend = smoothstep(0.25, 1.0, lumChange) * 0.20;
+    float blend = max(baseBlend, max(disocclusion, max(motionBlend, changeBlend)));
+    blend = clamp(blend, 0.0, 0.40);
+
+    vec3 result = mix(history, current, blend);
+    imageStore(storageImages[nonuniformEXT(pc.outputIndex)],
+               coord, vec4(max(result, vec3(0.0)), 1.0));
+}

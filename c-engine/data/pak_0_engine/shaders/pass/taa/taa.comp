@@ -1,0 +1,284 @@
+#version 460
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_nonuniform_qualifier : require
+#extension GL_ARB_shading_language_include : enable
+
+#include "../../includes/utils.shader"
+#include "../../includes/globalset.shader"
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(push_constant) uniform PushConstants {
+    uint colorIndex;      // current frame color (sampled, R16G16B16A16_SFLOAT)
+    uint velocityIndex;   // motion vectors (sampled, R16G16_SFLOAT)
+    uint depthIndex;      // depth buffer (sampled, D32_SFLOAT)
+    uint prevIndex;       // previous TAA accumulator (sampled)
+    uint outIndex;        // current TAA accumulator (storage)
+    uint width;
+    uint height;
+    float blendWeight;    // max temporal blend factor (0.9)
+    float ghostThreshold; // relative color rejection threshold
+    float depthThreshold; // relative depth rejection threshold
+    uint maskCurIndex;    // weather coverage, this frame (0xFFFFFFFF = none)
+    uint maskPrevIndex;   // weather coverage, previous frame (0xFFFFFFFF = none)
+} pc;
+
+/* Inverse view-space depth S = 1 / viewDistance(d), where d is the raw
+ * buffer value (this engine stores reversed depth: 0 = far/empty,
+ * 1 = near — see VulkanPipe.c: depth test GREATER_OR_EQUAL, clear 0).
+ * The view distance for this buffer is D(d) = N*F / (N + (F-N)*d)
+ * (the same function every other pass' linearizeDepth uses), so
+ *
+ *     S = (N + (F-N)*d) / (N*F)
+ *
+ * is an AFFINE function of the raw buffer value — no division, no
+ * precision loss — and S is exactly 1/D: 10 for the near plane, 0.1 at
+ * 10 m, 0.01 at 100 m.  float16 (the history alpha channel) stores all
+ * of that range with ≈0.05% relative precision, plenty for a few-percent
+ * rejection threshold.
+ *
+ * Comparing in S-space is exact: for two view distances D1, D2,
+ *
+ *     |S1 - S2| / max(S1, S2)  ==  |D1 - D2| / max(D1, D2)
+ *
+ * i.e. it is the relative difference in true view space.  Two nearby
+ * leaves differ by <<1%; a real surface vs. "empty" (sky / no data,
+ * sentinel S = 0) differs by 100%.  Leaf-vs-sky disocclusions are
+ * therefore unambiguous, and the threshold can stay tight without
+ * false-firing on canopy depth noise. */
+float depthToInv(float rawDepth) {
+    if (rawDepth <= 0.0) return 0.0; /* empty (sky) — doubles as "no data" */
+    float N = sceneBuffer.cameras[0].zNear;
+    float F = sceneBuffer.cameras[0].zFar;
+    return (N + (F - N) * rawDepth) / (N * F);
+}
+
+void main() {
+    ivec2 coord = ivec2(gl_GlobalInvocationID.xy);
+    if (coord.x >= int(pc.width) || coord.y >= int(pc.height)) {
+        return;
+    }
+
+    vec2 res = vec2(pc.width, pc.height);
+    vec2 uv  = (vec2(coord) + 0.5) / res;
+
+    float jx = sceneBuffer.cameras[0].jitterX;
+    float jy = sceneBuffer.cameras[0].jitterY;
+    vec2 jitter = vec2(jx, jy);
+
+    /* ── Current frame color ── */
+    vec3 curr = texture(
+        sampler2D(textures[nonuniformEXT(pc.colorIndex)],
+                   samplers[SAMPLER_LINEAR]),
+        uv - jitter).rgb;
+
+    /* ── 3×3 neighborhood min/max for clamping ──
+     *
+     * Sample the current frame's 3×3 neighborhood to build an AABB.
+     * The history is clamped into this box before blending, which
+     * prevents stale history from producing visible ghosts at edges
+     * without killing temporal accumulation in flat areas.
+     *
+     * The AABB is expanded by a jitter-compensation margin so that
+     * the per-frame sub-pixel shift doesn't cause the clamp bounds
+     * to oscillate (which would manifest as shimmer). */
+    vec3 nMin = curr;
+    vec3 nMax = curr;
+    for (int dy = -1; dy <= 1; dy++) {
+        for (int dx = -1; dx <= 1; dx++) {
+            if (dx == 0 && dy == 0) continue;
+            vec2 offUv = uv + vec2(float(dx), float(dy)) / res - jitter;
+            vec3 c = texture(
+                sampler2D(textures[nonuniformEXT(pc.colorIndex)],
+                           samplers[SAMPLER_LINEAR]),
+                offUv).rgb;
+            nMin = min(nMin, c);
+            nMax = max(nMax, c);
+        }
+    }
+
+    /* Expand the AABB.  The jitter shifts the sample position by up to
+     * 0.5px each frame, so a flat area's neighborhood min/max can shift
+     * by the local gradient × 0.5px.  We approximate this by padding
+     * the AABB by half the local range (capped) plus a small absolute
+     * floor for near-black areas.  This keeps the clamp stable across
+     * jitter phases while still constraining large deviations. */
+    vec3 nRange = nMax - nMin;
+    vec3 nPad   = max(nRange * 0.5, vec3(0.005));
+    nMin -= nPad;
+    nMax += nPad;
+
+    /* ── Motion vector & reprojection ── */
+    vec2 mv = texture(
+        sampler2D(textures[nonuniformEXT(pc.velocityIndex)],
+                   samplers[SAMPLER_NEAREST]),
+        uv).xy;
+    vec2 prevUv = uv - mv / res;
+
+    /* ── Weather particle coverage ──
+     *
+     * Fast-moving particles (falling leaves, rain) leave a ghost chain in
+     * the temporal history: the reprojected previous frame still holds
+     * each particle at its OLD position, and the rejections below don't
+     * fire on sub-pixel camera motion, so the tail survives at the full
+     * blend weight — leaves read as meteor streaks.  The weather pass
+     * writes a per-pixel coverage mask each frame; drop the temporal
+     * weight where a particle covered the pixel NOW (maskCur) or at the
+     * reprojected history position LAST FRAME (maskPrev).  The particle
+     * head stays crisp (it is this frame's coverage); the fading tail is
+     * removed. */
+    float wMask = 0.0;
+    if (pc.maskCurIndex != 0xFFFFFFFFu) {
+        wMask = max(wMask, texture(
+            sampler2D(textures[nonuniformEXT(pc.maskCurIndex)],
+                       samplers[SAMPLER_LINEAR]),
+            uv - jitter).r);
+    }
+    if (pc.maskPrevIndex != 0xFFFFFFFFu) {
+        wMask = max(wMask, texture(
+            sampler2D(textures[nonuniformEXT(pc.maskPrevIndex)],
+                       samplers[SAMPLER_LINEAR]),
+            prevUv).r);
+    }
+
+    bool prevValid = prevUv.x >= 0.0 && prevUv.x <= 1.0 &&
+                     prevUv.y >= 0.0 && prevUv.y <= 1.0;
+
+    /* History color + the depth the history holds for this pixel (stored
+     * in the accumulator's alpha; 0 = "no data", e.g. right after a clear
+     * or resize, which must behave like empty and reject). */
+    vec4 prevData = texture(
+        sampler2D(textures[nonuniformEXT(pc.prevIndex)],
+                   samplers[SAMPLER_CLAMP_LINEAR]),
+        prevUv);
+    vec3  prev         = prevData.rgb;
+    float prevInvDepth = max(prevData.a, 0.0);
+
+    /* ── Motion (scales the blend weight for fast-moving content) ── */
+    float motion     = length(mv);
+    float motionConf = 1.0 - smoothstep(0.5, 2.0, motion);
+
+    /* ── Rejection ── */
+    float reject = 0.0;
+
+    /* Current surface depth in inverse-view-space S (see depthToInv).
+     * Also carried forward in the accumulator's alpha so next frame's
+     * temporal depth test compares against the actual previous-frame
+     * surface. */
+    float currInvDepth = depthToInv(
+        texelFetch(sampler2D(textures[nonuniformEXT(pc.depthIndex)],
+                             samplers[SAMPLER_NEAREST]),
+                   coord, 0).r);
+
+    /* ── Cutout-edge awareness ────────────────────────────────────────
+     *
+     * Alpha-tested foliage (leaf / flower cutouts) is the hard case for
+     * temporal rejection.  A cutout edge is a one-pixel band where the
+     * 3x3 neighbourhood holds BOTH sides of the boundary at once (leaf
+     * and the background showing through the gap).  The sub-pixel jitter
+     * shifts that boundary by up to 0.5px every phase, so the pixel's own
+     * surface FLIPS between the two sides from frame to frame even in a
+     * perfectly static scene.  Both the colour and the depth of the two
+     * sides differ strongly (dark leaf vs bright sky, leaf depth vs empty
+     * depth), so a naive "|curr - prev| is large → reject" test fires
+     * exactly at the cutout edge — throwing the history away precisely
+     * where temporal accumulation is needed most.  The edge never
+     * converges and reads as full-canopy shimmer.
+     *
+     * The discriminator: at a cutout edge the temporal difference is
+     * BOUNDED by the neighbourhood's own variation (both sides are
+     * present locally), whereas a true disocclusion brings in a surface
+     * whose colour / depth falls OUTSIDE the neighbourhood (the old
+     * surface is gone locally).  So both rejections below measure the
+     * history against the current neighbourhood instead of against the
+     * current pixel, and fire only on the part of the difference the
+     * local edge cannot explain. */
+
+    /* Neighbourhood depth span (same 3x3 taps as the colour AABB), in S
+     * space, expressed as a relative fraction like depthDiff below. */
+    float nDepthMin = currInvDepth;
+    float nDepthMax = currInvDepth;
+    for (int dy = -1; dy <= 1; dy++) {
+        for (int dx = -1; dx <= 1; dx++) {
+            if (dx == 0 && dy == 0) continue;
+            float nd = depthToInv(
+                texelFetch(sampler2D(textures[nonuniformEXT(pc.depthIndex)],
+                                     samplers[SAMPLER_NEAREST]),
+                           ivec2(coord.x + dx, coord.y + dy), 0).r);
+            nDepthMin = min(nDepthMin, nd);
+            nDepthMax = max(nDepthMax, nd);
+        }
+    }
+    float nDepthSpanRel = (nDepthMax - nDepthMin) / max(nDepthMax, 1e-5);
+
+    /* Temporal depth rejection (true disocclusion test).
+     *
+     * Compare the current surface depth against the depth the history
+     * carries for this pixel (accumulator alpha), then subtract the
+     * neighbourhood's own relative depth variation: the excess is what a
+     * local cutout edge cannot produce, i.e. a genuine disocclusion.
+     *   - Stable content (same surface both frames, any camera speed):
+     *     depthDiff ≈ 0 → no rejection → full accumulation.  A swaying
+     *     canopy is tracked because the velocity buffer captures the wind
+     *     sway, so the reprojected tap lands on the same world leaf.
+     *   - Cutout edge (leaf<->gap flip from jitter): depthDiff is large
+     *     but ≤ nDepthSpanRel → excess ≈ 0 → no rejection → the edge
+     *     accumulates instead of shimmering.
+     *   - Real disocclusion: depthDiff exceeds the neighbourhood span →
+     *     excess > 0 → reject → no ghosting. */
+    float sMax        = max(currInvDepth, prevInvDepth);
+    float depthDiff   = (sMax > 1e-5) ? abs(currInvDepth - prevInvDepth) / sMax : 0.0;
+    float depthExcess = max(depthDiff - nDepthSpanRel, 0.0);
+    float depthReject =
+        smoothstep(pc.depthThreshold * 0.25, pc.depthThreshold, depthExcess);
+    reject = max(reject, depthReject);
+
+    /* Colour rejection (neighbourhood-AABB-aware).
+     *
+     * Reject only when the reprojected history lies OUTSIDE the current
+     * frame's neighbourhood colour AABB (the padded box used by the clamp
+     * below): that means the history is a surface that no longer exists
+     * locally — a real content change or a colour disocclusion.  Inside
+     * the AABB the history is either the same surface or the other side
+     * of a cutout edge; in both cases it is a legitimate local value and
+     * is kept, with the clamp + temporal blend resolving it.  The
+     * sensitivity adapts to the local contrast: in a flat area (tiny
+     * nSpanC) even a small excursion outside the box rejects strongly,
+     * while at a high-contrast edge (large nSpanC) the same excursion is
+     * ignored. */
+    vec3  prevDev      = max(nMin - prev, prev - nMax); /* 0 inside the box */
+    float prevDevMax   = max(prevDev.x, max(prevDev.y, prevDev.z));
+    float nSpanC       = max(nRange.x, max(nRange.y, nRange.z));
+    float colorOutFrac = prevDevMax / (nSpanC + 1e-4);
+    float colorReject  = smoothstep(pc.ghostThreshold * 0.5, pc.ghostThreshold,
+                                    colorOutFrac);
+    reject = max(reject, colorReject);
+
+    /* ── Temporal blend weight ── */
+    float weight = pc.blendWeight * motionConf * (1.0 - reject);
+    if (!prevValid) {
+        weight = 0.0;
+    }
+    /* Weather particles: kill the history where a particle is (head —
+     * keep the current frame) or was (tail — kill the ghost). */
+    weight *= 1.0 - smoothstep(0.15, 0.45, wMask);
+
+    /* ── Neighborhood clamp ──
+     *
+     * Clamp the history into the expanded 3×3 AABB.  In flat areas the
+     * history is already inside the (expanded) AABB so the clamp is a
+     * no-op and accumulation proceeds normally; at edges it constrains
+     * any residual stale history so it cannot persist as a visible
+     * ghost. */
+    vec3 prevClamped = clamp(prev, nMin, nMax);
+
+    /* ── Temporal blend ── */
+    vec3 result = mix(curr, prevClamped, weight);
+
+    /* Carry this frame's depth forward in the accumulator's alpha so
+     * next frame's temporal depth test compares against the actual
+     * previous-frame surface. */
+    imageStore(storageImages[nonuniformEXT(pc.outIndex)],
+               coord, vec4(result, currInvDepth));
+}

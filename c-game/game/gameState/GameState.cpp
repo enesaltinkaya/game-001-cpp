@@ -1,0 +1,289 @@
+#include <stdlib.h>
+#include "gameState/GameState.h"
+#include "Game.h"
+#include "ecs/Ecs.h"
+#include "ecs/system/System.h"
+#include "ecs/system/scene/SceneSystem.h"
+#include "ecs/system/animation/AnimatorComponent.h"
+#include "ecs/system/window/WindowSystem.h"
+#include "ecs/system/camera/flyingCamera/FlyingCamera.h"
+#include "renderer/Renderer.h"
+#include "player/Player.h"
+#include "character/CharacterSystem.h"
+#include "combat/Combat.h"
+#include "enemy/EnemySystem.h"
+#include "navmesh/NavMeshSystem.h"
+#include "hud/Hud.h"
+#include "compassGui/CompassGui.h"
+#include "zoneGui/ZoneGui.h"
+#include "azgaar/AzgaarCellTracker.h"
+#include "mainMenu/MainMenu.h"
+#include "loadingAzgaar/LoadingAzgaar.h"
+#include "azgaar/AzgaarStreaming.h"
+#include "pauseMenu/PauseMenuGui.h"
+#include "settingsGui/SettingsGui.h"
+#include "renderer/gui/rmlui/GuiManagerRmlUi.h"
+#include "events/Events.h"
+#include "timer/Timer.h"
+
+static GameState currentState;
+static GameState prevState;
+static float transitionProgress;
+// TEMP DEBUG: ENGINE_TEST_REENTRY drives an unattended
+// main menu -> loading -> gameplay -> main menu -> loading ... cycle.
+static bool testReentryActive;
+static double testStateEnterTime;
+
+// timer.timeSinceStart is in nanoseconds.
+#define TEST_REENTRY_MENU_WAIT_NS     (2.0 * BILLION)  // wait in the main menu (first start and after re-entry)
+#define TEST_REENTRY_GAMEPLAY_WAIT_NS (2.0 * BILLION)  // wait after entering the world completes
+
+#define STATE_TABLE_SIZE 8
+static StateCallbacks stateTable[STATE_TABLE_SIZE];
+
+static GameplayLoadState gameplayLoadState;
+
+// Assets transferred from Loading state
+static Scene* gameplayScene;
+static Scene* gameplayAnimationsScene;
+static Scene* gameplayPlayerScene;
+
+static void gameStateRendererInitialized(void*);
+
+// ── Asset transfer setters (called by the loading state) ───────────────────
+
+void gameStateSetLoadedScene(Scene* scene) {
+    gameplayScene = scene;
+}
+
+void gameStateSetLoadedAnimationsScene(Scene* scene) {
+    gameplayAnimationsScene = scene;
+}
+
+// ── Registration ─────────────────────────────────────────────────────────────
+
+void gameStateRegisterInternal(GameState state, StateCallbacks callbacks) {
+    if (state >= STATE_TABLE_SIZE) {
+        error("gameStateRegisterInternal: state %d out of bounds (max %d)",
+              state,
+              STATE_TABLE_SIZE - 1);
+        return;
+    }
+    stateTable[state] = callbacks;
+}
+
+// ── Init ─────────────────────────────────────────────────────────────────────
+
+void gameStateInit(void) {
+    transitionProgress      = 1.0f;
+    gameplayLoadState       = GAMEPLAY_LOADED_NONE;
+    gameplayScene           = NULL;
+    gameplayAnimationsScene = NULL;
+    gameplayPlayerScene     = NULL;
+
+    gameStateRegisterInternal(STATE_MAIN_MENU,
+                              (StateCallbacks){
+                                  .enter  = gameStateMainMenuEnter,
+                                  .exit   = gameStateMainMenuExit,
+                                  .update = gameStateMainMenuUpdate,
+                              });
+
+    gameStateRegisterInternal(STATE_LOADING_AZGAAR,
+                              (StateCallbacks){
+                                  .enter  = gameStateLoadingAzgaarEnter,
+                                  .exit   = gameStateLoadingAzgaarExit,
+                                  .update = gameStateLoadingAzgaarUpdate,
+                              });
+
+    gameStateRegisterInternal(STATE_GAMEPLAY,
+                              (StateCallbacks){
+                                  .enter  = gameStateGameplayEnter,
+                                  .exit   = gameStateGameplayExit,
+                                  .update = gameStateGameplayUpdate,
+                              });
+
+    testReentryActive = getenv("ENGINE_TEST_REENTRY") != NULL;
+
+    signalSubscribe("rendererInitialized", gameStateRendererInitialized);
+}
+
+static void gameStateSkipToLoading(void) {
+    gameStateTransition(STATE_LOADING_AZGAAR);
+}
+
+static void gameStateRendererInitialized(void* _) {
+    (void)_;
+    // Auto-skip main menu for automated testing (screenshots, logs, etc.)
+    if (getenv("ENGINE_SKIP_MAIN_MENU")) {
+        futureTaskAddNoParam(500, gameStateSkipToLoading);
+    }
+    gameStateTransition(STATE_MAIN_MENU);
+}
+
+// ── Transition ───────────────────────────────────────────────────────────────
+
+void gameStateTransition(GameState target) {
+    // Ignore requests to enter the state we are already in — including while
+    // a transition into it is still in progress.  A double click on "Enter
+    // World" used to re-run the loading state's enter() mid-transition:
+    // systems were added to the ECS twice and the in-flight world load was
+    // torn down while async workers were still using it (SIGSEGV).
+    if (target == currentState) return;
+
+    prevState          = currentState;
+    transitionProgress = 0.0f;
+
+    if (currentState != target && stateTable[currentState].exit) {
+        stateTable[currentState].exit();
+    }
+
+    currentState = target;
+    testStateEnterTime = timer.timeSinceStart;  // TEMP DEBUG: ENGINE_TEST_REENTRY
+
+    if (stateTable[currentState].enter) {
+        stateTable[currentState].enter();
+    }
+}
+
+// ── Update ───────────────────────────────────────────────────────────────────
+
+void gameStateUpdate(void) {
+    // TEMP DEBUG: ENGINE_TEST_REENTRY drives the crash repro without input:
+    // main menu (3 s) -> loading -> gameplay (3 s after world entry completes)
+    // -> main menu (3 s) -> re-enter world.
+    if (testReentryActive) {
+        double elapsed = timer.timeSinceStart - testStateEnterTime;
+        if (currentState == STATE_MAIN_MENU && elapsed >= TEST_REENTRY_MENU_WAIT_NS) {
+            info("testReentry: main menu -> loading");
+            gameStateTransition(STATE_LOADING_AZGAAR);
+        } else if (currentState == STATE_GAMEPLAY && elapsed >= TEST_REENTRY_GAMEPLAY_WAIT_NS) {
+            info("testReentry: gameplay -> main menu");
+            gameStateTransition(STATE_MAIN_MENU);
+        }
+    }
+
+    if (transitionProgress < 1.0f) {
+        transitionProgress += timer.dt;
+        if (transitionProgress > 1.0f) transitionProgress = 1.0f;
+    }
+
+    if (stateTable[currentState].update) {
+        stateTable[currentState].update();
+    }
+}
+
+GameState gameStateCurrent(void) {
+    return currentState;
+}
+
+GameplayLoadState gameStateGameplayLoadState(void) {
+    return gameplayLoadState;
+}
+
+/* ── Main Menu callbacks ─────────────────────────────────────────────────── */
+
+void gameStateMainMenuEnter(void) {
+    systemAdd(gameSystem.priority + 1, &mainMenu);
+}
+
+void gameStateMainMenuExit(void) {
+    systemRemove(&mainMenu);
+}
+
+void gameStateMainMenuUpdate(void) {
+    // F8 debug shortcut to skip straight to gameplay
+    if (input.pressed == KEY_F8) {
+        gameStateTransition(STATE_LOADING_AZGAAR);
+    }
+}
+
+/* ── Azgaar loading callbacks ─────────────────────────────────────────────── */
+
+void gameStateLoadingAzgaarEnter(void) {
+    // Reuse the normal player bootstrap, but keep Azgaar loading isolated from
+    // the existing .dat terrain/scene loader.
+    systemAddNow(gameSystem.priority + 2, &playerSystem);
+    systemAddNow(gameSystem.priority + 1, &loadingAzgaarSystem);
+    loadingAzgaarOnEnter();
+}
+
+void gameStateLoadingAzgaarExit(void) {
+    loadingAzgaarOnExit();
+    systemRemove(&loadingAzgaarSystem);
+}
+
+void gameStateLoadingAzgaarUpdate(void) {
+    // Input is handled inside loadingAzgaarSystem.update()
+}
+
+/* ── Gameplay callbacks ──────────────────────────────────────────────────── */
+
+void gameStateGameplayEnter(void) {
+    gameplayLoadState = GAMEPLAY_LOADED_READY;
+    flyingCameraLoadForGameplay();
+    signalEmit("gameLoaded", NULL);
+    // playerSystem was already added during STATE_LOADING
+    systemAdd(gameSystem.priority + 1, &characterSystem);
+    systemAdd(gameSystem.priority + 1, &combatSystem);
+    systemAdd(gameSystem.priority + 1, &enemySystem);
+    systemAdd(gameSystem.priority + 1, &navMeshSystem);
+    systemAdd(gameSystem.priority + 1, &azgaarStreamingSystem);
+    systemAdd(gameSystem.priority + 1, &azgaarCellTrackerSystem);
+    guiManagerAddGuiNextFrame(&hud);
+    guiManagerAddGuiNextFrame(&compassGui);
+    guiManagerAddGuiNextFrame(&zoneGui);
+}
+
+void gameStateGameplayExit(void) {
+    systemRemove(&characterSystem);
+    systemRemove(&combatSystem);
+    systemRemove(&enemySystem);
+    systemRemove(&navMeshSystem);
+    systemRemove(&azgaarStreamingSystem);
+    systemRemove(&azgaarCellTrackerSystem);
+    systemRemove(&playerSystem);
+    guiManagerRemoveGuiNextFrame(&hud);
+    guiManagerRemoveGuiNextFrame(&compassGui);
+    guiManagerRemoveGuiNextFrame(&zoneGui);
+
+    // Destroy Vulkan backends + free CPU data for each scene.
+    // (playerScene is destroyed by playerSystem.removed())
+    if (gameplayAnimationsScene) {
+        rendererSceneDestroy(gameplayAnimationsScene);
+        sceneDestroy(gameplayAnimationsScene);
+        gameplayAnimationsScene = NULL;
+    }
+    if (gameplayScene) {
+        rendererSceneDestroy(gameplayScene);
+        sceneDestroy(gameplayScene);
+        gameplayScene = NULL;
+    }
+    // gameplayPlayerScene is owned by playerSystem; it cleans up itself.
+    gameplayPlayerScene = NULL;
+
+    // Free the world data retained for streaming during gameplay (also
+    // detaches the heightmap and destroys grass/water/roads).
+    loadingAzgaarReleaseWorld();
+
+    gameplayLoadState = GAMEPLAY_LOADED_NONE;
+}
+
+void gameStateGameplayUpdate(void) {
+    if (input.pressed == KEY_ESCAPE) {
+        // Only add if no menu is showing: while the pause menu or the settings
+        // chain is open (settingsGui stays registered — sub-pages only hide its
+        // document), ESC is handled by the focused RMLUI document
+        // (pauseKeyDown / settingsKeyDown / *SettingsKeyDown -> *Close).
+        // Re-adding here would race the removal and pop the game menu on top
+        // of settings (addGui does not dedupe).
+        if (!pauseMenuGuiIsShowing() && !settingsGuiIsShowing()) {
+            guiManagerAddGuiNextFrame(&pauseMenuGui);
+        }
+        return;
+    }
+
+    // Track the player scene once it becomes available (loaded async)
+    if (!gameplayPlayerScene) {
+        gameplayPlayerScene = getPlayerScene();
+    }
+}

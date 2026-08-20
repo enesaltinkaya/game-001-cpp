@@ -1,0 +1,25 @@
+---
+If:
+  PathExclude: [legacy/.*, external/.*, build/.*]
+
+CompileFlags:
+  CompilationDatabase: ./build
+  Add: -ferror-limit=0
+InlayHints:
+  Enabled: No
+  Designators: No
+  ParameterNames: No
+  DeducedTypes: No
+  
+Diagnostics:
+  UnusedIncludes: Strict
+  ClangTidy:
+    Add: 
+      - "clang-analyzer-*"
+      - "bugprone-*"
+      - "performance-*"
+    Remove:
+      - "bugprone-implicit-widening-of-multiplication-result"
+      - "bugprone-easily-swappable-parameters"
+      - "bugprone-assignment-in-if-condition"
+      - "bugprone-narrowing-conversions"

@@ -1,0 +1,232 @@
+#version 460
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_nonuniform_qualifier : require
+
+#include "../../includes/utils.shader"
+#include "../../includes/globalset.shader"
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(push_constant) uniform PushConstants {
+    uint  depthIndex;
+    uint  normalIndex;
+    uint  outputIndex;
+    uint  width;
+    uint  height;
+    float nearZ;
+    float farZ;
+    float projM00;
+    float projM11;
+    float jitterX;
+    float jitterY;
+    uint  frameIndex;
+    uint  temporalAAActive;
+    float radius;
+    float falloffEnd;
+    float strength;
+} pc;
+
+/* ── Constants ──────────────────────────────────────────────────────── */
+
+/* 4 directions × 4 steps × 2 sides = 32 depth reads per pixel.
+ * Thin-geometry detection delegated to temporal pass.
+ * 1 center depth read = 33 total.
+ */
+#define NUM_DIRECTIONS  4
+#define NUM_STEPS       4
+#define HALF_PI         (PI * 0.5)
+
+
+/* ── Helpers ────────────────────────────────────────────────────────── */
+
+float linearizeDepth(float d) {
+    return (pc.nearZ * pc.farZ) / max(pc.nearZ + (pc.farZ - pc.nearZ) * d, 1e-7);
+}
+
+vec3 viewPosFromCoord(ivec2 coord, float linZ) {
+    vec2 uv  = (vec2(coord) + 0.5) / vec2(pc.width, pc.height);
+    vec2 ndc = vec2(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
+    return vec3(ndc.x * linZ / pc.projM00,
+                ndc.y * linZ / pc.projM11,
+                -linZ);
+}
+
+float interleavedGradientNoise(vec2 pos) {
+    return fract(52.9829189 * fract(0.06711056 * pos.x + 0.00583715 * pos.y));
+}
+
+vec3 loadNormal(ivec2 coord) {
+    vec2 nxy = texelFetch(sampler2D(textures[nonuniformEXT(pc.normalIndex)],
+                                    samplers[SAMPLER_NEAREST]), coord, 0).rg;
+    return vec3(nxy, sqrt(max(1.0 - dot(nxy, nxy), 0.0)));
+}
+
+float sampleDepth(ivec2 coord) {
+    return texelFetch(sampler2D(textures[nonuniformEXT(pc.depthIndex)],
+                                samplers[SAMPLER_NEAREST]), coord, 0).r;
+}
+
+
+/* ── GTAO inner integral ───────────────────────────────────────────── */
+
+/*
+ * Cosine-weighted visibility integral for one arc endpoint.
+ *   ∫ max(0, cos(θ − n)) dθ evaluated at h
+ * = 0.25 * ( −cos(2h − n) + cos(n) + 2h sin(n) )
+ * Reference: Jimenez et al. 2016, XeGTAO (Intel)
+ */
+float integrateArc(float h, float n) {
+    return 0.25 * (-cos(2.0 * h - n) + cos(n) + 2.0 * h * sin(n));
+}
+
+/* ── Main ──────────────────────────────────────────────────────────── */
+
+void main() {
+    ivec2 coord = ivec2(gl_GlobalInvocationID.xy);
+    /* Dispatch is at half resolution; scale to full-res for texture access. */
+    ivec2 fullCoord = coord * 2;
+    if (fullCoord.x >= int(pc.width) || fullCoord.y >= int(pc.height)) return;
+
+    float depth = sampleDepth(fullCoord);
+    if (depth == 0.0) {
+        imageStore(storageImages[nonuniformEXT(pc.outputIndex)], coord, vec4(1.0));
+        return;
+    }
+
+    float linZ   = linearizeDepth(depth);
+    vec3  posV   = viewPosFromCoord(fullCoord, linZ);
+    vec3  normV  = loadNormal(fullCoord);
+    vec3  viewV  = normalize(-posV);
+
+    /* Per-pixel noise for directional sampling decorrelation.
+     *
+     * When temporal accumulation is active, we keep the noise pattern
+     * identical between frames.  The camera jitter already provides
+     * sub-pixel sampling, so the noise only needs to decorrelate the
+     * discrete 6-directional sampling — not vary frame-to-frame.
+     *
+     * Strategy:
+     *   temporalAAActive == 0  → frame-varying noise (no history).
+     *   temporalAAActive == 1  → fixed per-pixel noise (no frame dep).
+     *                            Temporal pass averages the residual
+     *                            directional-quantisation error over time.
+     */
+    float temporal;
+    float noiseAngle;
+    float noiseStep;
+    if (pc.temporalAAActive != 0u) {
+        temporal    = interleavedGradientNoise(vec2(coord) + vec2(13.37, 42.0)) * PI;
+        noiseAngle  = temporal;
+        noiseStep   = fract(interleavedGradientNoise(vec2(coord) + vec2(47.0, 17.0)));
+    } else {
+        temporal    = float(pc.frameIndex % 64u) * (PI / 7.238917);
+        noiseAngle  = interleavedGradientNoise(vec2(coord)) * PI + temporal;
+        noiseStep   = fract(interleavedGradientNoise(vec2(coord) + vec2(47.0, 17.0))
+                             + float((pc.frameIndex + 37u) % 64u) * 0.1731);
+    }
+
+    /* Screen-space radius in pixels (full-res).
+     * projM00 converts view-space to NDC; multiply by width/2 to get pixels.
+     * Cap to a reasonable range so that NUM_STEPS yields fine-enough
+     * increments to resolve contact / crevice AO. */
+    float screenRadius = (pc.radius * pc.projM00) / linZ * (float(pc.width) * 0.5);
+    screenRadius = clamp(screenRadius, 2.0, 60.0);
+    /* Sub-pixel steps allowed for small radii (e.g. radius=2 with 4 steps). */
+    float stepPx = max(screenRadius / float(NUM_STEPS), 0.5);
+
+    float totalAO = 0.0;
+
+    for (int dir = 0; dir < NUM_DIRECTIONS; ++dir) {
+        float phi = (float(dir) + noiseAngle) * (PI / float(NUM_DIRECTIONS));
+        vec2 omega = vec2(cos(phi), sin(phi));
+
+        /* Screen → view-space direction (approximate, z=0 in view space). */
+        vec3 dirVS = normalize(vec3(omega.x / pc.projM00, -omega.y / pc.projM11, 0.0));
+
+        /* Build slice plane. */
+        vec3 slicePlaneNormal = normalize(cross(dirVS, viewV));
+        vec3 sliceTangent     = normalize(cross(slicePlaneNormal, viewV));
+
+        /* Project normal into slice plane. */
+        vec3  projNorm    = normV - slicePlaneNormal * dot(normV, slicePlaneNormal);
+        float projNLen    = length(projNorm);
+        vec3  projNormDir = projNLen > 1e-6 ? projNorm / projNLen : viewV;
+
+        /* Normal angle n (from view direction, signed by tangent side).
+         * Convention: n > 0 means normal tilts toward +sliceTangent.
+         * Range: (−π/2, π/2) for forward-facing surfaces. */
+        float cosN = clamp(dot(projNormDir, viewV), -1.0, 1.0);
+        float n    = sign(dot(projNormDir, sliceTangent)) * acos(cosN);
+
+        /* ── Horizon search ────────────────────────────────────────
+         * h1cos/h2cos track the maximum cosine (relative to viewV)
+         * of any occluder found on the positive/negative side.
+         * Start at −1 (cos(π) = horizon infinitely low = no occluder). */
+        float h1cos = -1.0;
+        float h2cos = -1.0;
+
+        for (int step = 0; step < NUM_STEPS; ++step) {
+            float t = (float(step) + noiseStep + 1.0) * stepPx;
+
+            /* ── Positive side ──────────── */
+            {
+                ivec2 sc = ivec2(vec2(fullCoord) + omega * t + 0.5);
+                if (sc.x >= 0 && sc.x < int(pc.width) && sc.y >= 0 && sc.y < int(pc.height)) {
+                    float sd = sampleDepth(sc);
+                    if (sd > 0.0) {
+                        float sLinZ = linearizeDepth(sd);
+                        vec3  delta = viewPosFromCoord(sc, sLinZ) - posV;
+                        float dist  = length(delta);
+                        if (dist > 1e-4) {
+                            float cH     = dot(delta, viewV) / dist;
+                            float falloff = clamp(1.0 - dist / pc.falloffEnd, 0.0, 1.0);
+                            cH = mix(-1.0, cH, falloff);
+                            h1cos = max(h1cos, cH);
+                        }
+                    }
+                }
+            }
+
+            /* ── Negative side ──────────── */
+            {
+                ivec2 sc = ivec2(vec2(fullCoord) - omega * t + 0.5);
+                if (sc.x >= 0 && sc.x < int(pc.width) && sc.y >= 0 && sc.y < int(pc.height)) {
+                    float sd = sampleDepth(sc);
+                    if (sd > 0.0) {
+                        float sLinZ = linearizeDepth(sd);
+                        vec3  delta = viewPosFromCoord(sc, sLinZ) - posV;
+                        float dist  = length(delta);
+                        if (dist > 1e-4) {
+                            float cH     = dot(delta, viewV) / dist;
+                            float falloff = clamp(1.0 - dist / pc.falloffEnd, 0.0, 1.0);
+                            cH = mix(-1.0, cH, falloff);
+                            h2cos = max(h2cos, cH);
+                        }
+                    }
+                }
+            }
+        }
+
+        /* ── Convert to angles (XeGTAO convention) ────────────────
+         * h1 negated: high cos → strongly negative h1 → heavy occlusion.
+         * h2 stays positive: high cos → large h2. */
+        float h1 = -acos(clamp(h1cos, -1.0, 1.0));
+        float h2 =  acos(clamp(h2cos, -1.0, 1.0));
+
+        /* Clamp to the hemisphere centred on the projected normal. */
+        h1 = n + max(h1 - n, -HALF_PI);
+        h2 = n + min(h2 - n,  HALF_PI);
+
+        float vis     = integrateArc(h1, n) + integrateArc(h2, n);
+        float visNoOcc = cos(n) + n * sin(n);
+        totalAO += vis / max(visNoOcc, 1e-6);
+    }
+
+    /* Normalize over directions. */
+    float ao = totalAO / float(NUM_DIRECTIONS);
+    ao = clamp(ao, 0.0, 1.0);
+    ao = pow(ao, max(pc.strength, 0.01));
+
+    imageStore(storageImages[nonuniformEXT(pc.outputIndex)], coord, vec4(ao, 0.0, 0.0, 1.0));
+}

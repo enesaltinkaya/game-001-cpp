@@ -1,0 +1,36 @@
+<html>
+
+<head>
+  <link type="text/rcss" href="../milligram.css" />
+  <link type="text/rcss" href="mainMenu.css" />
+  <script src="mainMenu.lua"></script>
+  <script src="../global.lua"></script>
+</head>
+
+<!-- id is used as a selector in context.documents -->
+
+<body id="mainMenu" onload="documentInit(element)">
+  <div class="main" data-model="mainMenu">
+    <img src="/gui/images/logo.png.ktx2"></img>
+    <div class="buttonContainer">
+      <button data-attrif-autofocus="true" data-attr-id="'first'" onclick="playGame()">
+        <div>ENTER WORLD</div>
+      </button>
+
+
+      <button onclick="settingsOpen()">
+        <div>SETTINGS</div>
+      </button>
+
+      <button onclick="creditsOpen()">
+        <div>CREDITS</div>
+      </button>
+
+      <button id="exit" onclick="luacExit()">
+        <div>EXIT</div>
+      </button>
+    </div>
+  </div>
+</body>
+
+</html>

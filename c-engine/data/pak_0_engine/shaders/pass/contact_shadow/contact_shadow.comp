@@ -1,0 +1,287 @@
+#version 460
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_nonuniform_qualifier : require
+#extension GL_ARB_shading_language_include : enable
+
+// Bend Studio Screen-Space Contact Shadows
+//
+// Faithful GLSL port of the original HLSL implementation.
+// 64-thread wavefronts march along 1D rays toward the projected light.
+// Neighbouring pixels share depth samples via shared memory (LDS).
+//
+// Reference: Graham Aldridge, "Screen Space Shadows", Bend Studio / SIGGRAPH
+//
+// Output: R16_SFLOAT — 1.0 = fully lit, 0.0 = fully shadowed.
+
+#include "../../includes/utils.shader"
+#include "../../includes/globalset.shader"
+
+#define WAVE_SIZE 64
+#define SAMPLE_COUNT 60
+#define HARD_SHADOW_SAMPLES 4
+#define FADE_OUT_SAMPLES 8
+#define READ_COUNT (SAMPLE_COUNT / WAVE_SIZE + 2) // = 2
+
+layout(local_size_x = WAVE_SIZE, local_size_y = 1, local_size_z = 1) in;
+
+layout(push_constant) uniform PushConstants {
+    vec4  lightCoordinate;     // xy: pixel coords of projected light, z: depth, w: sign(w)
+    ivec2 waveOffset;          // per-dispatch offset (already scaled by WAVE_SIZE on CPU)
+    vec2  invDepthTextureSize; // 1/width, 1/height
+    vec2  depthBounds;         // min/max depth range (usually 0..1)
+
+    float surfaceThickness;    // depth comparison threshold
+    float bilinearThreshold;   // edge-detect threshold for bilinear filter
+    float shadowContrast;      // contrast boost for final shadow
+    float farDepthValue;       // far plane depth (reverse-Z: 0)
+    float nearDepthValue;      // near plane depth (reverse-Z: 1)
+
+    int   ignoreEdgePixels;
+    int   usePrecisionOffset;
+    int   bilinearSamplingOffsetMode;
+    int   useEarlyOut;
+    int   debugOutputEdgeMask;
+    int   debugOutputThreadIndex;
+    int   debugOutputWaveIndex;
+
+    uint  depthImageIndex;     // bindless sampled depth
+    uint  normalImageIndex;    // bindless sampled view normal (unused here)
+    uint  outputImageIndex;    // bindless storage output
+} pc;
+
+// ── LDS ─────────────────────────────────────────────────────────────────
+shared float DepthData[READ_COUNT * WAVE_SIZE];
+
+// ── Helpers ─────────────────────────────────────────────────────────────
+
+// Sample depth with border behavior: returns farDepthValue for out-of-bounds
+float sampleDepthBorder(vec2 pixelXY) {
+    vec2 uv = pixelXY * pc.invDepthTextureSize;
+    if (uv.x < 0.0 || uv.x >= 1.0 || uv.y < 0.0 || uv.y >= 1.0)
+        return pc.farDepthValue;
+    return textureLod(
+        sampler2D(textures[nonuniformEXT(pc.depthImageIndex)],
+                  samplers[SAMPLER_CLAMP_NEAREST]),
+        uv, 0.0).r;
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// main()
+// Faithful port of Bend Studio's WriteScreenSpaceShadow + ComputeWavefrontExtents
+// ─────────────────────────────────────────────────────────────────────────
+
+void main() {
+    uint tid = gl_LocalInvocationID.x; // 0..63
+
+    // ── ComputeWavefrontExtents ──────────────────────────────────────
+    // Dispatch is (WAVE_SIZE, Nx, Ny) workgroups.
+    // gl_WorkGroupID.x  = 0..63  (perpendicular axis offset)
+    // gl_WorkGroupID.yz = grid   (ray column/row)
+
+    ivec2 xy = ivec2(int(gl_WorkGroupID.y), int(gl_WorkGroupID.z)) * WAVE_SIZE
+             + pc.waveOffset;
+
+    // Integer light position / fractional component
+    vec2 light_xy          = floor(pc.lightCoordinate.xy) + 0.5;
+    vec2 light_xy_fraction = pc.lightCoordinate.xy - light_xy;
+    bool reverse_direction = pc.lightCoordinate.w > 0.0;
+
+    ivec2 sign_xy    = sign(xy);
+    bool  horizontal = abs(xy.x + sign_xy.y) < abs(xy.y - sign_xy.x);
+
+    ivec2 axis;
+    axis.x = horizontal ? (+sign_xy.y) : 0;
+    axis.y = horizontal ? 0 : (-sign_xy.x);
+
+    // Apply perpendicular-axis wave offset (gl_WorkGroupID.x)
+    xy = axis * int(gl_WorkGroupID.x) + xy;
+    vec2 xy_f = vec2(xy);
+
+    // Major axis determination
+    bool  x_axis_major    = abs(xy_f.x) > abs(xy_f.y);
+    float major_axis      = x_axis_major ? xy_f.x : xy_f.y;
+    float major_axis_start = abs(major_axis);
+    float major_axis_end   = major_axis_start - float(WAVE_SIZE);
+
+    float ma_light_frac = x_axis_major ? light_xy_fraction.x : light_xy_fraction.y;
+    ma_light_frac = major_axis > 0.0 ? -ma_light_frac : ma_light_frac;
+
+    // Back to screen coordinates
+    vec2 start_xy = xy_f + light_xy;
+
+    // For the inner-most ring, interpolate to a pixel-centered UV
+    float denom = major_axis_start + ma_light_frac;
+    vec2 end_xy = (abs(denom) > 1e-6)
+        ? mix(pc.lightCoordinate.xy, start_xy,
+              (major_axis_end + ma_light_frac) / denom)
+        : start_xy;
+
+    // Delta spans WAVE_SIZE pixels along the major axis
+    vec2 xy_delta = start_xy - end_xy;
+
+    // Thread ordering: XOR reverses when light is in front of camera
+    float thread_step = float(tid ^ (reverse_direction ? 0u : uint(WAVE_SIZE - 1)));
+
+    vec2  pixel_xy       = mix(start_xy, end_xy, thread_step / float(WAVE_SIZE));
+    float pixel_distance = major_axis_start - thread_step + ma_light_frac;
+
+    // ── Read depth values ────────────────────────────────────────────
+
+    const float direction = -pc.lightCoordinate.w;
+    const float z_sign    = pc.nearDepthValue > pc.farDepthValue ? -1.0 : 1.0;
+    const float edge_skip = 1e20;
+
+    float sampling_depth[READ_COUNT];
+    float shadowing_depth[READ_COUNT];
+    float depth_thickness_scale[READ_COUNT];
+    float sample_dist[READ_COUNT];
+
+    bool is_edge    = false;
+    bool skip_pixel = false;
+    vec2 write_xy   = floor(pixel_xy);
+
+    vec2 current_pixel = pixel_xy;
+
+    for (int i = 0; i < READ_COUNT; i++) {
+        vec2 read_xy = floor(current_pixel);
+        float minor_axis_val = x_axis_major ? current_pixel.y : current_pixel.x;
+
+        float bilinear = fract(minor_axis_val) - 0.5;
+
+        // Half-pixel offset for correct point sampling
+        read_xy += 0.5;
+
+        float bias_dir = bilinear > 0.0 ? 1.0 : -1.0;
+        vec2 offset_xy = x_axis_major ? vec2(0.0, bias_dir) : vec2(bias_dir, 0.0);
+
+        float d0 = sampleDepthBorder(read_xy);
+        float d1 = sampleDepthBorder(read_xy + offset_xy);
+
+        // Depth thresholds are based on ratio of difference to far clip
+        depth_thickness_scale[i] = abs(pc.farDepthValue - d0);
+
+        // Edge detection: large variance between neighbours
+        bool use_point_filter = abs(d0 - d1) > depth_thickness_scale[i] * pc.bilinearThreshold;
+
+        if (i == 0) is_edge = use_point_filter;
+
+        if (pc.bilinearSamplingOffsetMode != 0) {
+            float bl = use_point_filter ? 0.0 : bilinear;
+            sampling_depth[i]  = mix(d0, d1, abs(bl));
+            shadowing_depth[i] = (pc.ignoreEdgePixels != 0 && use_point_filter)
+                                 ? edge_skip : sampling_depth[i];
+        } else {
+            sampling_depth[i] = d0;
+            float edge_depth   = (pc.ignoreEdgePixels != 0) ? edge_skip : d0;
+            float shadow_depth = d0 + abs(d0 - d1) * z_sign;
+            shadowing_depth[i] = use_point_filter ? edge_depth : shadow_depth;
+        }
+
+        sample_dist[i] = pixel_distance + float(WAVE_SIZE * i) * direction;
+
+        // Advance by one full wave-length toward (or away from) the light
+        current_pixel += xy_delta * direction;
+    }
+
+    // ── Early out (per-pixel depth bounds check) ─────────────────────
+
+    if (pc.useEarlyOut != 0
+        && pc.debugOutputWaveIndex   == 0
+        && pc.debugOutputThreadIndex == 0
+        && pc.debugOutputEdgeMask    == 0)
+    {
+        float d = sampling_depth[0];
+        skip_pixel = (d >= pc.depthBounds.y || d <= pc.depthBounds.x);
+    }
+
+    // ── Write perspective-corrected depths to LDS ────────────────────
+
+    for (int i = 0; i < READ_COUNT; i++) {
+        float stored_depth = (shadowing_depth[i] - pc.lightCoordinate.z) / sample_dist[i];
+
+        if (i != 0) {
+            // Samples that overshoot the light: mark as unreachable
+            stored_depth = (sample_dist[i] > 0.0) ? stored_depth : 1e10;
+        }
+
+        DepthData[i * WAVE_SIZE + int(tid)] = stored_depth;
+    }
+
+    barrier();
+
+    // Per-pixel skip after the barrier (all threads must participate in barrier)
+    if (skip_pixel) return;
+
+    // ── Compute shadow ───────────────────────────────────────────────
+
+    float start_depth = sampling_depth[0];
+
+    if (pc.usePrecisionOffset != 0) {
+        start_depth = mix(start_depth, pc.farDepthValue, -1.0 / 65535.0);
+    }
+
+    // Perspective-correct the starting depth
+    start_depth = (start_depth - pc.lightCoordinate.z) / sample_dist[0];
+
+    // Shadow samples start right after this thread's own sample
+    int sample_index = int(tid) + 1;
+
+    vec4  shadow_value = vec4(1.0);
+    float hard_shadow  = 1.0;
+
+    // depth_scale maps the perspective-corrected depth difference into a
+    // [0..1] range where 0 = perfectly matched depth (full shadow) and
+    // 1 = at the surface-thickness boundary (no shadow).
+    float dts = max(depth_thickness_scale[0], 1e-7);
+    float depth_scale = min(sample_dist[0] + direction, 1.0 / max(pc.surfaceThickness, 1e-7))
+                      * sample_dist[0] / dts;
+
+    float scaled_start = start_depth * depth_scale - z_sign;
+
+    // Hard shadow: first few samples produce a full shadow from a single occluder
+    for (int i = 0; i < HARD_SHADOW_SAMPLES; i++) {
+        float depth_delta = abs(scaled_start - DepthData[sample_index + i] * depth_scale);
+        hard_shadow = min(hard_shadow, depth_delta);
+    }
+
+    // Main shadow: averaged into 4 buckets to soften single-pixel noise
+    for (int i = HARD_SHADOW_SAMPLES; i < SAMPLE_COUNT - FADE_OUT_SAMPLES; i++) {
+        float depth_delta = abs(scaled_start - DepthData[sample_index + i] * depth_scale);
+        shadow_value[i & 3] = min(shadow_value[i & 3], depth_delta);
+    }
+
+    // Fade-out: last samples apply a fade to avoid a hard shadow cutoff
+    for (int i = SAMPLE_COUNT - FADE_OUT_SAMPLES; i < SAMPLE_COUNT; i++) {
+        float depth_delta = abs(scaled_start - DepthData[sample_index + i] * depth_scale);
+        float fade_out = float(i + 1 - (SAMPLE_COUNT - FADE_OUT_SAMPLES))
+                       / float(FADE_OUT_SAMPLES + 1) * 0.75;
+        shadow_value[i & 3] = min(shadow_value[i & 3], depth_delta + fade_out);
+    }
+
+    // Contrast remap: 0 = exact match (full shadow), boosted to fill range
+    shadow_value = clamp(shadow_value * pc.shadowContrast + (1.0 - pc.shadowContrast), 0.0, 1.0);
+    hard_shadow  = clamp(hard_shadow  * pc.shadowContrast + (1.0 - pc.shadowContrast), 0.0, 1.0);
+
+    // Average the 4 buckets, then take the min with the hard shadow
+    float result = dot(shadow_value, vec4(0.25));
+    result = min(hard_shadow, result);
+
+    // ── Write output ─────────────────────────────────────────────────
+
+    if (pc.debugOutputEdgeMask != 0)
+        result = is_edge ? 1.0 : 0.0;
+    if (pc.debugOutputThreadIndex != 0)
+        result = float(tid) / float(WAVE_SIZE);
+    if (pc.debugOutputWaveIndex != 0)
+        result = fract(float(gl_WorkGroupID.x) / float(WAVE_SIZE));
+
+    ivec2 writeCoord = ivec2(write_xy);
+    ivec2 screenSize = ivec2(round(1.0 / pc.invDepthTextureSize));
+    if (writeCoord.x >= 0 && writeCoord.x < screenSize.x &&
+        writeCoord.y >= 0 && writeCoord.y < screenSize.y)
+    {
+        imageStore(storageImages[nonuniformEXT(pc.outputImageIndex)],
+                   writeCoord, vec4(result, 0.0, 0.0, 1.0));
+    }
+}

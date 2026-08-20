@@ -1,0 +1,166 @@
+body {
+  z-index: 10;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(0, 0, 0, 0);
+  font-family: "Sometype Mono";
+}
+
+/* ── Stats Panel ─────────────────────────────────── */
+
+#stats {
+  position: absolute;
+  left: 20px;
+  bottom: 20px;
+  width: 220px;
+  display: flex;
+  flex-direction: column;
+  pointer-events: none;
+}
+
+#level-label {
+  font-size: 14dp;
+  color: rgba(255, 255, 255, 240);
+  font-effect: glow(2px black);
+  margin-bottom: 4px;
+}
+
+/* ── HP Bar ──────────────────────────────────────── */
+
+#hp-container {
+  position: relative;
+  width: 100%;
+  height: 20px;
+  background-color: rgba(60, 10, 10, 200);
+  margin-bottom: 4px;
+}
+
+#hp-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 100%;
+  background-color: rgb(200, 40, 40);
+}
+
+#hp-text {
+  position: relative;
+  width: 100%;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11dp;
+  color: rgba(255, 255, 255, 255);
+  font-effect: glow(1px black);
+  margin-bottom: 4px;
+}
+
+/* ── Mana Bar ────────────────────────────────────── */
+
+#mana-container {
+  position: relative;
+  width: 100%;
+  height: 20px;
+  background-color: rgba(10, 20, 60, 200);
+  margin-bottom: 4px;
+}
+
+#mana-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 100%;
+  background-color: rgb(40, 80, 200);
+}
+
+#mana-text {
+  position: relative;
+  width: 100%;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11dp;
+  color: rgba(255, 255, 255, 255);
+  font-effect: glow(1px black);
+  margin-bottom: 4px;
+}
+
+/* ── XP Bar ──────────────────────────────────────── */
+
+#xp-container {
+  position: relative;
+  width: 100%;
+  height: 10px;
+  background-color: rgba(40, 40, 10, 200);
+}
+
+#xp-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 100%;
+  background-color: rgb(180, 180, 40);
+}
+
+/* ── Damage Numbers ──────────────────────────────── */
+
+#damage-numbers {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.dmg-num {
+  position: absolute;
+  font-size: 20dp;
+  font-weight: bold;
+  font-effect: glow(2px black);
+  pointer-events: none;
+}
+
+/* ── Enemy Health Bars ───────────────────────────── */
+
+#enemy-health-bars {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.ehp-wrap {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  pointer-events: none;
+}
+
+.ehp-bg {
+  position: relative;
+  width: 60px;
+  height: 4px;
+  background-color: rgba(60, 10, 10, 200);
+  border-radius: 2px;
+  overflow: hidden;
+  margin-bottom: 2px;
+  pointer-events: none;
+}
+
+.ehp-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 100%;
+  background-color: rgb(200, 120, 40);
+  pointer-events: none;
+}
+

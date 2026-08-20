@@ -1,0 +1,93 @@
+#version 460
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_nonuniform_qualifier : require
+#extension GL_ARB_shading_language_include : enable
+
+#include "../../includes/globalset.shader"
+
+layout(push_constant) uniform PushConstants {
+    uint srcIndex;
+    uint dstIndex;
+    uint srcWidth;
+    uint srcHeight;
+    uint dstWidth;
+    uint dstHeight;
+    float threshold;
+    float softKnee;
+    uint isPrefilter;
+};
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+void main() {
+    ivec2 dstCoord = ivec2(gl_GlobalInvocationID.xy);
+
+    if (dstCoord.x >= int(dstWidth) || dstCoord.y >= int(dstHeight)) {
+        return;
+    }
+
+    // Map destination texel center to source UV
+    vec2 uv = (vec2(dstCoord) + 0.5) / vec2(dstWidth, dstHeight);
+    vec2 texelSize = vec2(1.0) / vec2(srcWidth, srcHeight);
+
+    vec3 color;
+
+    if (isPrefilter == 1u) {
+        // ── Prefilter (mip 0): bilinear sample + soft-knee threshold ──
+        color = textureLod(
+            sampler2D(textures[nonuniformEXT(srcIndex)],
+                      samplers[SAMPLER_CLAMP_LINEAR]),
+            uv, 0).rgb;
+
+        float brightness = max(color.r, max(color.g, color.b));
+        float knee = threshold * softKnee;
+        float soft = brightness - threshold + knee;
+        soft = clamp(soft, 0.0, 2.0 * knee);
+        soft = soft * soft / (4.0 * knee + 1e-5);
+        float contribution = max(soft, brightness - threshold)
+                           / max(brightness, 1e-5);
+        color *= max(contribution, 0.0);
+    } else {
+        // ── 13-tap Kawase downsample (Jimenez 2014 / Bjørge) ──────────
+        //
+        //   a . b . c       Outer ring: a,b,c,d,e,f,g,h,i
+        //   . j . k .       Inner ring: j,k,l,m
+        //   d . e . f       e = center
+        //   . l . m .
+        //   g . h . i
+        //
+        // Weights: e×0.125  (a+c+g+i)×0.03125  (b+d+f+h)×0.0625  (j+k+l+m)×0.125
+        // Total = 0.125 + 0.125 + 0.25 + 0.5 = 1.0
+
+        #define S(off) textureLod( \
+            sampler2D(textures[nonuniformEXT(srcIndex)], \
+                      samplers[SAMPLER_CLAMP_LINEAR]), \
+            uv + (off) * texelSize, 0).rgb
+
+        vec3 a = S(vec2(-2.0, -2.0));
+        vec3 b = S(vec2( 0.0, -2.0));
+        vec3 c = S(vec2( 2.0, -2.0));
+        vec3 d = S(vec2(-2.0,  0.0));
+        vec3 e = S(vec2( 0.0,  0.0));
+        vec3 f = S(vec2( 2.0,  0.0));
+        vec3 g = S(vec2(-2.0,  2.0));
+        vec3 h = S(vec2( 0.0,  2.0));
+        vec3 i = S(vec2( 2.0,  2.0));
+
+        vec3 j = S(vec2(-1.0, -1.0));
+        vec3 k = S(vec2( 1.0, -1.0));
+        vec3 l = S(vec2(-1.0,  1.0));
+        vec3 m = S(vec2( 1.0,  1.0));
+
+        #undef S
+
+        color  = e * 0.125;
+        color += (a + c + g + i) * 0.03125;
+        color += (b + d + f + h) * 0.0625;
+        color += (j + k + l + m) * 0.125;
+    }
+
+    imageStore(storageImages[nonuniformEXT(dstIndex)], dstCoord,
+               vec4(color, 1.0));
+}

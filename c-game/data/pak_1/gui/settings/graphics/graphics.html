@@ -1,0 +1,149 @@
+<html>
+
+<head>
+    <link type="text/rcss" href="../../milligram.css" />
+    <link type="text/rcss" href="../settings.css" />
+    <script src="graphics.lua"></script>
+    <script src="../../global.lua"></script>
+
+</head>
+
+<body id="graphicsSettings" onkeydown="graphicsSettingsKeyDown(event)" onload="documentInit(element)">
+    <div class="main">
+        <div class="top">
+            <span>Graphics</span>
+        </div>
+
+        <div class="middle">
+            <div class="buttonContainer" data-model="graphics">
+
+                <button id="first" class="option" autofocus>
+                    <div class="label">FSR3</div>
+                    <div class="widget">
+                        <div class="slider">
+                            <p class="leftarrow" style="pointer-events:auto;" onclick="upscalerPrev()">&#xe806;</p>
+                            <p onclick="upscalerNext()">{{upscalerLabel}}</p>
+                            <p class="rightarrow" style="pointer-events:auto;" onclick="upscalerNext()">&#xe808;</p>
+                        </div>
+                    </div>
+                </button>
+
+                <!-- <div style="padding:4dp 0 8dp 0; color:#bbb; font-size:12dp; line-height:16dp;">
+                    {{upscalePolicyLabel}}
+                </div> -->
+
+
+                <button class="option" id="toggleTaa" onclick="toggleTaa()">
+                    <div class="label">TAA</div>
+                    <div class="widget">
+                        <div class="slider">
+                            <p class="leftarrow">&#xe806;</p>
+                            <p>{{taaLabel}}</p>
+                            <p class="rightarrow">&#xe808;</p>
+                        </div>
+                    </div>
+                </button>
+
+                <!-- <div style="padding:4dp 0 8dp 0; color:#bbb; font-size:12dp; line-height:16dp;">
+                    {{aaPolicyLabel}}
+                </div> -->
+
+                <button class="option">
+                    <div class="label">CAS — Sharpening ({{format(casStrengthPercent,0)}}%)</div>
+                    <div class="widget">
+                        <div class="slider">
+                            <p class="leftarrow">&#xe806;</p>
+                            <p class="rightarrow">&#xe808;</p>
+                            <input type="range" min="0" max="100" step="1" data-value="casStrengthPercent" style="tab-index:none;" onchange="aaCasStrengthChange()" />
+                        </div>
+                    </div>
+                </button>
+
+                <button class="option" data-class-disabled="renderScaleDisabled">
+                    <div class="label">Resolution Scale ({{format(renderScalePercent,0)}}%)</div>
+                    <div class="widget">
+                        <div class="slider">
+                            <p class="leftarrow">&#xe806;</p>
+                            <p class="rightarrow">&#xe808;</p>
+                            <input type="range" min="50" max="200" step="10" data-value="renderScalePercent" data-class-disabled="renderScaleDisabled" style="tab-index:none;" onchange="renderScaleChange()" />
+                        </div>
+                    </div>
+                </button>
+
+                <button class="option" id="toggleShadows" onclick="toggleShadows()">
+                    <div class="label">Shadows</div>
+                    <div class="widget">
+                        <div class="slider">
+                            <p class="leftarrow">&#xe806;</p>
+                            <p>{{shadowsLabel}}</p>
+                            <p class="rightarrow">&#xe808;</p>
+                        </div>
+                    </div>
+                </button>
+
+                <button class="option" id="toggleContactShadow" onclick="toggleContactShadow()">
+                    <div class="label">Contact Shadows</div>
+                    <div class="widget">
+                        <div class="slider">
+                            <p class="leftarrow">&#xe806;</p>
+                            <p>{{contactShadowLabel}}</p>
+                            <p class="rightarrow">&#xe808;</p>
+                        </div>
+                    </div>
+                </button>
+
+                <button class="option" id="toggleGtao" onclick="toggleGtao()">
+                    <div class="label">Ambient Occlusion</div>
+                    <div class="widget">
+                        <div class="slider">
+                            <p class="leftarrow">&#xe806;</p>
+                            <p>{{gtaoLabel}}</p>
+                            <p class="rightarrow">&#xe808;</p>
+                        </div>
+                    </div>
+                </button>
+
+                <button class="option" id="toggleSsr" onclick="toggleSsr()">
+                    <div class="label">Reflections</div>
+                    <div class="widget">
+                        <div class="slider">
+                            <p class="leftarrow">&#xe806;</p>
+                            <p>{{ssrLabel}}</p>
+                            <p class="rightarrow">&#xe808;</p>
+                        </div>
+                    </div>
+                </button>
+
+
+                <button class="option" id="toggleBloom" onclick="toggleBloom()">
+                    <div class="label">Bloom</div>
+                    <div class="widget">
+                        <div class="slider">
+                            <p class="leftarrow">&#xe806;</p>
+                            <p>{{bloomLabel}}</p>
+                            <p class="rightarrow">&#xe808;</p>
+                        </div>
+                    </div>
+                </button>
+
+                <button class="option" id="toggleFog" onclick="toggleFog()">
+                    <div class="label">Fog</div>
+                    <div class="widget">
+                        <div class="slider">
+                            <p class="leftarrow">&#xe806;</p>
+                            <p>{{fogLabel}}</p>
+                            <p class="rightarrow">&#xe808;</p>
+                        </div>
+                    </div>
+                </button>
+
+                <div style="flex:1;"></div>
+                <button id="last" onclick="graphicsClose()">
+                    <div>BACK</div>
+                </button>
+            </div>
+        </div>
+    </div>
+</body>
+
+</html>

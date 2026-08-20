@@ -1,0 +1,27 @@
+#pragma once
+
+#include "ecs/system/System.h"
+#include "enemy/Enemy.h"
+
+typedef struct Entity Entity;
+
+extern struct System enemySystem;
+
+// Create an Enemy component on the given entity with default stats
+Enemy* enemyCreate(Entity* entity,
+                    float aggroRange,
+                    float attackRange,
+                    float loseTargetRange,
+                    float attackDamage,
+                    u32   attackDamageType,
+                    float attackCooldown,
+                    float moveSpeed,
+                    float retreatThreshold);
+
+// Add a patrol point (world-space position)
+void enemyAddPatrolPoint(Enemy* enemy, vec3 position);
+
+// Set the enemy's base rotation from glTF loader
+void enemySetBaseRot(Enemy* enemy, versor baseRot);
+
+//

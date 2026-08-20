@@ -1,0 +1,99 @@
+#version 450
+#extension GL_EXT_buffer_reference : enable
+#extension GL_EXT_nonuniform_qualifier : enable
+#extension GL_ARB_shading_language_include : enable
+#extension GL_ARB_gpu_shader_int64 : enable
+
+#include "../../includes/globalset.shader"
+
+#define GROUP_DIM 8
+#define BLUR_RADIUS 4
+// Cache must hold the local group plus the "apron" (neighbors)
+#define CACHE_DIM (GROUP_DIM + 2 * BLUR_RADIUS)
+
+layout(local_size_x = GROUP_DIM, local_size_y = GROUP_DIM, local_size_z = 1) in;
+
+layout(push_constant) uniform Constants {
+    vec2 TextureSize;
+    int imageInput;
+    int imageOutput;
+    
+    // Controls edge preservation. 
+    // Small value (0.01 - 0.1) = Keep sharp details. 
+    // Large value (1.0+) = Act like standard blur.
+    float RangeSigma; 
+} pc;
+
+shared float g_Cache[CACHE_DIM][CACHE_DIM];
+
+void main() {
+    // ------------------------------------------------------------------
+    // 1. Load into Shared Memory (Identical to before)
+    //    We load a tile of (8+16)x(8+16) pixels to handle the blur radius
+    // ------------------------------------------------------------------
+    ivec2 centerBase = ivec2(gl_WorkGroupID.xy * GROUP_DIM) - ivec2(BLUR_RADIUS);
+    uint threadIndex = gl_LocalInvocationID.y * GROUP_DIM + gl_LocalInvocationID.x;
+    uint totalCachePixels = CACHE_DIM * CACHE_DIM;
+    uint groupSize = GROUP_DIM * GROUP_DIM;
+    
+    for (uint i = threadIndex; i < totalCachePixels; i += groupSize) {
+        int cacheX = int(i % CACHE_DIM);
+        int cacheY = int(i / CACHE_DIM);
+        ivec2 pixelPos = centerBase + ivec2(cacheX, cacheY);
+        
+        // Clamp to screen edges
+        pixelPos = clamp(pixelPos, ivec2(0), ivec2(pc.TextureSize) - 1);
+        
+        g_Cache[cacheY][cacheX] = texelFetch(sampler2D(textures[pc.imageInput], samplers[SAMPLER_LINEAR]), pixelPos, 0).r;
+    }
+
+    barrier(); // Wait for cache to fill
+
+    // ------------------------------------------------------------------
+    // 2. Perform 2D Bilateral Blur
+    // ------------------------------------------------------------------
+    if (gl_GlobalInvocationID.x < uint(pc.TextureSize.x) && gl_GlobalInvocationID.y < uint(pc.TextureSize.y)) {
+        
+        // Coordinates inside shared memory
+        ivec2 localPos = ivec2(gl_LocalInvocationID.xy) + ivec2(BLUR_RADIUS);
+
+        float centerVal = g_Cache[localPos.y][localPos.x];
+        float result = 0.0;
+        float totalWeight = 0.0;
+
+        // Precompute constants
+        float sigmaSpatial = max(float(BLUR_RADIUS) / 2.0, 0.0001);
+        float kSpatial = 2.0 * sigmaSpatial * sigmaSpatial;
+
+        float sigmaRange = max(pc.RangeSigma, 0.00001);
+        float kRange = 2.0 * sigmaRange * sigmaRange;
+
+        // Full 2D Loop
+        for (int dy = -BLUR_RADIUS; dy <= BLUR_RADIUS; ++dy) {
+            for (int dx = -BLUR_RADIUS; dx <= BLUR_RADIUS; ++dx) {
+                
+                ivec2 samplePos = localPos + ivec2(dx, dy);
+                float sampleVal = g_Cache[samplePos.y][samplePos.x];
+
+                // A. Spatial Weight: Distance from center
+                float distSq = float(dx*dx + dy*dy);
+                float wSpatial = exp(-distSq / kSpatial);
+
+                // B. Range Weight: Difference in height
+                float diff = centerVal - sampleVal;
+                float wRange = exp(-(diff * diff) / kRange);
+
+                float weight = wSpatial * wRange;
+
+                result += sampleVal * weight;
+                totalWeight += weight;
+            }
+        }
+
+        if (totalWeight > 0.0) {
+            result /= totalWeight;
+        }
+
+        imageStore(storageImages[pc.imageOutput], ivec2(gl_GlobalInvocationID.xy), vec4(result));
+    }
+}

@@ -1,0 +1,296 @@
+Screen Space Shadows
+Graham Aldridge
+R&D Lead, Sony Bend Studio
+graham.aldridge@sony.com
+
+Today
+
+I’ll be talking about Screen Space Shadows
+
+A high-level implementation overview
+How they are implemented in a number of Sony titles
+
+Super Quick:
+What are Screen Space
+Shadows?
+(Sometimes called Contact Shadows)
+
+• Like SSAO, we start with a Depth Texture
+• Somehow extract micro-shadow detail from this Depth
+Texture
+• Use this shadow as a complement to traditional shadow
+rendering
+
+Motivation
+
+Why would we want to use Screen Space Shadows?
+
+I’ll also be describing a simple technique that can utilize Screen Space Shadows …
+
+To transform in-game materials from something quite flat, to something far more compelling …
+
+Not just adding micro shadow detail, they can also greatly improve distant shadow detail …
+
+The majority of distant tree shadows here are screen space shadows.
+
+Without them, the scene looks much flatter and less detailed
+
+Zooming in demonstrates how screen
+space shadows can complement
+shadow maps,
+Capturing small details that would be
+exceedingly difficult to capture with
+traditional, non-ray traced methods.
+
+How-to:
+Casting Shadows in Screen
+Space
+Let’s cover the basics first:
+How to cast a ray in screen space
+
+World Space:
+
+Screen Space:
+
+Standard Projection
+
+To cast a shadow, we linearly interpolate from
+arbitrary points in space towards the light source
+(shadow ray).
+Interpolating towards the light source in projected 2D
+coordinates (Screen Space) will also form a straight
+line.
+Values written to the depth buffer use the same projection as
+2D screen coordinates.
+Meaning that values in the depth buffer also interpolate
+linearly along a screen space ray, just like the 2D coordinates do.
+Consider what happens when the Light moves offscreen
+Shadow rays interpolating towards the light’s
+projected 2D coordinate still form a straight line,
+even when the light is offscreen.
+As the light approaches the camera plane (w = 0),
+the 2D coordinates will approach +/- infinity.
+Because the 2D coordinate is very large, the screen
+space rays become highly parallel.
+As the light crosses the camera plane, w becomes negative.
+The projected coordinate flips and the now reappears on the
+opposite side of the screen. We have to account for this:
+When w is negative, screen space rays now diverge from the
+projected 2D coordinate, rather than converging towards it.
+
+Knowing how to sample,
+Shadowing becomes quite
+simple
+Here’s an example of how to compute a shadow
+
+Screen Space
+
+Depth Buffer Values
+
+• Given a starting pixel:
+
+• We want to find sample locations using the projected light
+coordinate
+•
+•
+
+•
+
+Projected Light
+Coordinate is far offscreen
+(Very large
+sample count)
+
+In this case, the Light Coordinate is far offscreen
+
+In 2D screen space and Depth, linearly interpolate towards the projected light coordinate
+
+Or if the light’s w value was negative, then interpolate away from that coordinate
+
+• Read the depth buffer at interpolated sample locations
+•
+
+•
+
+Perform some kind of comparison between your interpolated depth, and sampled depth
+
+Generate a shadow term from these comparisons (e.g., make assumptions about
+sample ‘thickness’)
+
+• However, a number of problems arise
+• Disocclusion artefacts can be quite significant
+
+• This is a fundamental limitation of Screen Space Shadows
+• This is why they cannot replace shadow maps, only complement them
+
+• Also problematic is under-sampling and depth buffer aliasing
+• To avoid projecting aliasing, individual samples should not fully shadow
+
+• The technique needs lots of samples
+
+• Either brute-force it, or do something complicated?
+
+Limited sample count
+
+It’s
+If we
+tempting
+sample to
+every
+think
+pixel,
+a starting
+do anybias
+problems
+may fixoccur?
+this,
+but in practice it didn’t work all that well – and
+suppressed legitimate detail
+Given a starting pixel we want to shadow,
+Consider the following light direction
+Our solution was more complicated:
+For every sample, perform a manual bilinear filter –
+with
+a threshold
+test
+to detect
+legitimate
+edges
+It quickly
+becomes
+apparent
+that
+sampling
+every
+pixel causes significant aliasing
+This jump could represent a dramatic change in
+depth
+
+Here is an example of the artefacts
+Zooming in, they can get quite severe
+And here is with the manual, edge-aware bilinear
+filter
+
+So,
+This all seems a little
+expensive?
+It is, until a key observation is made…
+
+Returning to the single pixel example:
+Things get interesting if we consider the neighbour
+pixel
+The two rays are very similar – targeting the same
+point
+
+If we are willing to shift the ray origin within the pixel,
+the rays can be made to align perfectly in 2D Screen
+Space
+This means that these neighbours can now potentially
+share their samples (e.g., through LDS/groupshared)
+The next step is to extrapolate
+
+How to map samples to GPU compute wavefronts?
+Rather than using a traditional 8x8x1 wavefront
+Samples are instead mapped to one-dimensional
+64x1x1 wavefronts, where all threads correspond
+to the same ray
+Each thread performs one bilinear edge detect and
+blend, storing the result in LDS
+Each thread also reads and stores at least one
+extended sample, based on the desired shadow
+sample count
+Once stored, it’s then a matter of iterating the
+samples
+
+Returning to the depth buffer example:
+Plotting out some sample directions, all rays can be
+seen converging to the same point
+Therefor, a simple division transform of the stored
+data can have all rays become parallel
+Computing the shadow means loading the
+subsequent sample depths, and finding the closest
+value within a threshold.
+This is very simple computationally, requiring just
+two instructions per sample.
+
+Here is a visualization of how wavefronts are
+aligned to a projected light coordinate
+Close to the light coordinate, some pixels are
+written multiple times by overlapping wavefronts.
+In practice, this is neither visually noticeable or a
+performance concern.
+Other than this overlap, the effect is temporally
+stable – as it does not rely on dithering or random
+sampling.
+
+This one-dimensional mapping has proven very
+useful for a range of graphics problems beyond
+this technique.
+We have successfully used this to accelerate effects
+ranging from Cloud Rendering, Terrain Shadowing
+to Bloom - and experimentally for techniques like
+God Rays and Voxel Light Transport.
+
+Days Gone (PS4) was the first title to use this technique for Sun Light shadows
+
+The ground here is a mostly a flat material
+
+How does this material extract micro shadow detail?
+
+This is done with a technique we internally call “Depth Bias”
+
+And it couldn’t be simpler…
+
+Along side regular material GBuffer exports, such as Normal, Albedo and Roughness
+
+All materials also export a high-frequency displacement term (“Depth Bias”)
+
+This term represents high-frequency surface depth variance of approximately +/- 8cm
+
+This displacement term is stored in 12 bits of the GBuffer
+
+The Depth Texture used during rendering stored Resolved Depth plus this Depth Bias term
+
+This didn’t just affect shadows - from AO to decal blending, snow, puddles and water effects
+
+Any rendering system that reconstructed position from depth gained depth bias effects
+
+Screen Space Shadow:
+Compute Shader
+Performance
+So how much does it cost to generate the shadow?
+
+Setup for a 60 Sample Shadow (shadows are 60
+pixels long)
+The compiled Compute Shader is less than 300
+(200 ALU) instructions unrolled, with 4 image reads
+used to perform two manual bilinear samples per
+thread.
+Breakdown:
+~ 120 instructions to read depth values and setup
+LDS
+~ 150 instructions to read and accumulate samples
+- 60 instructions for LDS load/wait
+- 60 multiply-add, 30 min3
+Average of less than 5 instructions per shadow
+sample.
+
+PS5
+1440p resolution
+60 sample shadow
+full-screen
+coverage
+
+0.19ms
+
+± 0.01
+
+64 thread wavefront, wave32, with scheduler and occupancy tweaks
+
+Final Thought
+Click to add Text
+
+www.bendstudio.com/siggraph
+download the code
+
+
