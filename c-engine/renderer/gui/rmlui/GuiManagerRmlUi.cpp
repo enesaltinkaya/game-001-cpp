@@ -28,8 +28,7 @@ void GuiManagerRmlUi::added() {
     rmlParams = RmlParams{
         .window =
             {
-                .sdlWindowHandle  = window.sdlWindowHandle,
-                .glfwWindowHandle = window.glfwWindowHandle,
+                .sdlWindowHandle = window.sdlWindowHandle,
                 .windowWidth      = window.width,
                 .windowHeight     = window.height,
                 .arrowCursor      = windowSystemGetArrowCursor(),

@@ -455,7 +455,32 @@ static void createBrdfLut(void) {
 static void createDitherNoiseTexture(void) {
     const u32 pixelCount = BLUE_NOISE_SIZE * BLUE_NOISE_SIZE;
     std::vector<u8> pixels(pixelCount);
-    generateDitherNoise(pixels.data(), BLUE_NOISE_SIZE);
+
+    // Cache the generated texture: generation is deterministic, and rebuilding
+    // it every boot is the expensive part of IBL init in Debug builds.
+    char cachePath[1152] = {};
+    snprintf(cachePath, sizeof(cachePath), "%scache%sibl.bin", utils::platform.dataDirectory, utils::platform.seperator);
+
+    char cached = 0;
+    if (utils::fileExists(cachePath)) {
+        u32 fileSize   = 0;
+        char* fileData = utils::fileRead3(cachePath, &fileSize);
+        if (fileSize == pixelCount) {
+            memcpy(pixels.data(), fileData, pixelCount);
+            cached = 1;
+            utils::info("vulkanIbl: loaded dither noise cache %s", cachePath);
+        } else {
+            utils::warn("vulkanIbl: dither noise cache size mismatch (%u != %u), regenerating", fileSize, pixelCount);
+        }
+        free(fileData);
+    }
+
+    if (!cached) {
+        generateDitherNoise(pixels.data(), BLUE_NOISE_SIZE);
+        utils::createDirectory(cachePath);  // creates the data/cache folder if missing
+        utils::fileWriteBinary(cachePath, pixels.data(), pixelCount);
+        utils::info("vulkanIbl: generated dither noise, cached to %s", cachePath);
+    }
 
     ibl.blueNoise =
         vulkanCreateImage(.name   = "IBL Blue Noise",
@@ -928,6 +953,13 @@ static void generateDitherNoise(u8* pixels, u32 size) {
     memset(binary.data(), 0, n);
     memset(energy.data(), 0, n * sizeof(float));
 
+    // Hold raw pointers for the hot loops: at -O0 (Debug), std::vector::operator[]
+    // is emitted as an out-of-line call, which makes these O(n^2) scans ~5x slower
+    // than plain pointer indexing (the C version used raw memoryAlloc pointers).
+    u8* b        = binary.data();
+    u32* r       = ranking.data();
+    float* e     = energy.data();
+
     u32 seedCount = n / 10, placed = 0;
     for (u32 i = 0; placed < seedCount && i < n * 4; i++) {
         u32 v = i * 0x8da6b343u ^ 0xcb1ab31fu;
@@ -935,8 +967,8 @@ static void generateDitherNoise(u8* pixels, u32 size) {
         v *= 0x85ebca6bu;
         v ^= v >> 16;
         u32 idx = v % n;
-        if (!binary[idx]) {
-            bnToggle(energy.data(), binary.data(), size, idx, 1);
+        if (!b[idx]) {
+            bnToggle(e, b, size, idx, 1);
             placed++;
         }
     }
@@ -946,14 +978,14 @@ static void generateDitherNoise(u8* pixels, u32 size) {
         float maxE = -1.0f;
         u32 best   = 0;
         for (u32 i = 0; i < n; i++) {
-            if (binary[i] && energy[i] > maxE) {
-                maxE = energy[i];
+            if (b[i] && e[i] > maxE) {
+                maxE = e[i];
                 best = i;
             }
         }
         rank--;
-        ranking[best] = rank;
-        bnToggle(energy.data(), binary.data(), size, best, 0);
+        r[best] = rank;
+        bnToggle(e, b, size, best, 0);
     }
 
     rank = placed;
@@ -961,16 +993,16 @@ static void generateDitherNoise(u8* pixels, u32 size) {
         float minE = 1e30f;
         u32 best   = 0;
         for (u32 i = 0; i < n; i++) {
-            if (!binary[i] && energy[i] < minE) {
-                minE = energy[i];
+            if (!b[i] && e[i] < minE) {
+                minE = e[i];
                 best = i;
             }
         }
-        ranking[best] = rank;
-        bnToggle(energy.data(), binary.data(), size, best, 1);
+        r[best] = rank;
+        bnToggle(e, b, size, best, 1);
         rank++;
     }
 
-    for (u32 i = 0; i < n; i++) pixels[i] = (u8)((ranking[i] * 255u) / (n - 1));
+    for (u32 i = 0; i < n; i++) pixels[i] = (u8)((r[i] * 255u) / (n - 1));
 }
 }  // namespace engine

@@ -33,35 +33,15 @@ struct WindowBackendApi {
     SetCursorFn (*getSetCursorFn)(void) = nullptr;
 };
 
-extern WindowBackendApi glfwWindowBackendApi;
 extern WindowBackendApi sdlWindowBackendApi;
-#ifdef __linux__
-extern WindowBackendApi x11WindowBackendApi;
-#endif
 
 static WindowBackendApi* activeBackend;
 
 static WindowBackendApi* windowSystemSelectBackend(void) {
     const char* env = getenv("ENGINE_WINDOW_BACKEND");
-    if (env && *env) {
-        if (utils::strequals(env, "sdl") || utils::strequals(env, "SDL")) {
-            return &sdlWindowBackendApi;
-        }
-        if (utils::strequals(env, "glfw") || utils::strequals(env, "GLFW")) {
-            return &glfwWindowBackendApi;
-        }
-#ifdef __linux__
-        if (utils::strequals(env, "x11") || utils::strequals(env, "X11")) {
-            return &x11WindowBackendApi;
-        }
-#endif
-        utils::warn("windowSystem: unknown ENGINE_WINDOW_BACKEND='%s', falling back to sdl", env);
+    if (env && *env && !utils::strequals(env, "sdl") && !utils::strequals(env, "SDL")) {
+        utils::warn("windowSystem: unknown ENGINE_WINDOW_BACKEND='%s' (only 'sdl' is available), using sdl", env);
     }
-
-    // SDL is the safest default on Linux/Wayland/XWayland: its relative mouse
-    // mode hides the cursor for drag-look and restores the original cursor
-    // position when relative mode is disabled. The X11 backend recenters the
-    // pointer while hidden, which can leak through on some compositors.
     return &sdlWindowBackendApi;
 }
 

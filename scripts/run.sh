@@ -42,7 +42,6 @@ if [[ $1 == "play" ]]; then
     fi
 fi
 
-# export ENGINE_WINDOW_BACKEND=sdl
 # export VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/nvidia_icd.json
 export VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/radeon_icd.json
 "$ROOT/build/c-game/c-game"

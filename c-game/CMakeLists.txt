@@ -22,7 +22,6 @@ target_link_libraries(c-game PRIVATE
     ${thirdparty}/zstd/git/${platform_dir}/lib/libzstd.a
 
     # render
-    ${thirdparty}/glfw/git/${platform_dir}/src/libglfw3.a
     ${thirdparty}/sdl/git/${platform_dir}/libSDL3.a
     ${thirdparty}/stb/git/${platform_dir}/libstb.a
     ${thirdparty}/volk/git/${platform_dir}/libvolk.a
@@ -74,6 +73,6 @@ if (WIN32)
     target_link_libraries(c-game PRIVATE -static pthread)
     target_include_directories(c-game PUBLIC /home/enes/Sdks/VulkanSDK-win/1.4.313.0/Include/)
 elseif (LINUX)
-    target_link_libraries(c-game PRIVATE stdc++ pthread dl m bsd X11 Xi Xcursor)
+    target_link_libraries(c-game PRIVATE stdc++ pthread dl m bsd)
     target_include_directories(c-game PUBLIC /home/enes/Sdks/VulkanSDK-linux/1.4.313.0/x86_64/include/)
 endif ()

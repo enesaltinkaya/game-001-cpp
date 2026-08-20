@@ -4,12 +4,10 @@
 #include <vector>
 #include "shared/InputEventShared.h"
 
-struct GLFWwindow;
 struct SDL_Window;
 
 namespace engine {
 struct Window {
-    ::GLFWwindow* glfwWindowHandle;
     ::SDL_Window* sdlWindowHandle;
 
     int width;
