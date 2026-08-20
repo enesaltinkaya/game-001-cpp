@@ -1,5 +1,6 @@
 #pragma once
 
+namespace utils {
 void sqliteInit(const char* directory);
 void sqliteDestroy(void);
 
@@ -21,3 +22,4 @@ bool sqliteTableExists(const char* tableName);
 bool sqliteStep(void* statement);
 
 int sqliteCount(const char* query);
+}  // namespace utils

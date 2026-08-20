@@ -4,6 +4,7 @@
 
 #define UPS 60.
 
+namespace utils {
 static void calculateFps(void);
 static double engineStartTime;
 Timer timer;
@@ -92,3 +93,4 @@ void calculateFps(void) {
         fpsTotal    = 0;
     }
 }
+}  // namespace utils

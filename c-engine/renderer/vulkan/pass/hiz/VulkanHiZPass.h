@@ -2,9 +2,20 @@
 
 #include "ecs/system/System.h"
 
+namespace engine {
 struct VulkanImage;
 
-extern System vulkanHiZPass;
+class VulkanHiZPass : public System {
+public:
+    VulkanHiZPass();
+    void added() override;
+    void removed() override;
+    void preUpdate() override;
+    void update() override;
+    void postUpdate() override;
+};
+
+extern VulkanHiZPass vulkanHiZPass;
 
 /// Returns current frame's Hi-Z image (for SSR, culling, etc.)
 struct VulkanImage* vulkanHiZGetCurrentImage(void);
@@ -20,3 +31,4 @@ u32 vulkanHiZGetMipSampledIndex(int mip);
 
 /// Returns the storage pool index for a specific mip level of the current frame's Hi-Z
 u32 vulkanHiZGetMipStorageIndex(int mip);
+}  // namespace engine

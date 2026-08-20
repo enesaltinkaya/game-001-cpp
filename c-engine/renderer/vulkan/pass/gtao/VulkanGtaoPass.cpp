@@ -1,4 +1,5 @@
 #include "VulkanGtaoPass.h"
+#include "VulkanGtaoPass.h"
 #include "ecs/Ecs.h"
 #include "ecs/system/System.h"
 #include "ecs/system/camera/CameraComponent.h"
@@ -13,23 +14,11 @@
 #include "renderer/vulkan/resources/VulkanFrameResources.h"
 #include "renderer/vulkan/resources/VulkanResourceManager.h"
 
-static void added(void);
-static void preUpdate(void);
-static void update(void);
-static void removed(void);
+namespace engine {
 
-System vulkanGtaoPass = {
-    .name                = "gtao",
-    .added               = added,
-    .removed             = removed,
-    .preUpdate           = preUpdate,
-    .update              = update,
-    .postUpdate          = nullptr,
-    .cpuElapsedLastFrame = 0.0,
-    .cpuElapsed          = 0.0,
-    .gpuElapsed          = 0.0,
-    .priority            = 0,
-};
+VulkanGtaoPass vulkanGtaoPass;
+
+VulkanGtaoPass::VulkanGtaoPass() : System("gtao") {}
 
 /* ── Push constants (must match GLSL) ────────────────────────────── */
 
@@ -114,7 +103,7 @@ static void destroyHistory(void) {
     for (int i = 0; i < 2; ++i) {
         if (gtaoHistoryImages[i].img) {
             vulkanDestroyImage(&gtaoHistoryImages[i], NULL);
-            gtaoHistoryImages[i] = VulkanImage{0};
+            gtaoHistoryImages[i] = VulkanImage{};
         }
     }
 
@@ -149,11 +138,11 @@ static void ensureHistory(u32 w, u32 h) {
 static void swapchainCreated(void*) {
     if (gtaoFilteredImage.img) {
         vulkanDestroyImage(&gtaoFilteredImage, NULL);
-        gtaoFilteredImage = VulkanImage{0};
+        gtaoFilteredImage = VulkanImage{};
     }
     if (gtaoRawImage.img) {
         vulkanDestroyImage(&gtaoRawImage, NULL);
-        gtaoRawImage = VulkanImage{0};
+        gtaoRawImage = VulkanImage{};
     }
     destroyHistory();
 }
@@ -186,6 +175,7 @@ static void ensureImages(void) {
 
 static const VkMemoryBarrier2 computeBarrier = {
     .sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
+    .pNext         = nullptr,
     .srcStageMask  = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
     .srcAccessMask = VK_ACCESS_2_SHADER_WRITE_BIT,
     .dstStageMask  = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
@@ -193,15 +183,21 @@ static const VkMemoryBarrier2 computeBarrier = {
 };
 
 static const VkDependencyInfo computeDepInfo = {
-    .sType              = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-    .memoryBarrierCount = 1,
-    .pMemoryBarriers    = &computeBarrier,
+    .sType                    = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+    .pNext                    = nullptr,
+    .dependencyFlags          = 0,
+    .memoryBarrierCount       = 1,
+    .pMemoryBarriers          = &computeBarrier,
+    .bufferMemoryBarrierCount = 0,
+    .pBufferMemoryBarriers    = nullptr,
+    .imageMemoryBarrierCount  = 0,
+    .pImageMemoryBarriers     = nullptr,
 };
 
 /* ── Pass callbacks ──────────────────────────────────────────────── */
 
-static void added(void) {
-    signalSubscribe("swapchainCreated", swapchainCreated);
+void VulkanGtaoPass::added() {
+    utils::signalSubscribe("swapchainCreated", swapchainCreated);
 
     gtaoPipe     = vulkanCreatePipe(.name = "gtao", .comp = "shaders/pass/gtao/spv/gtao.comp.spv");
     spatialPipe  = vulkanCreatePipe(.name = "gtao_spatial",
@@ -215,13 +211,13 @@ static void added(void) {
     }
 }
 
-static void preUpdate(void) {
+void VulkanGtaoPass::preUpdate() {
     vulkanResetProfile(vulkan.currentCmd, &gtaoPipe.profile, 0);
     vulkanResetProfile(vulkan.currentCmd, &spatialPipe.profile, 0);
     vulkanResetProfile(vulkan.currentCmd, &temporalPipe.profile, 0);
 }
 
-static void update(void) {
+void VulkanGtaoPass::update() {
     if (vulkan.skipFrame) {
         return;
     }
@@ -409,14 +405,14 @@ static void update(void) {
     vulkanGtaoPass.gpuElapsed = totalGpuTime;
 }
 
-static void removed(void) {
+void VulkanGtaoPass::removed() {
     if (gtaoFilteredImage.img) {
         vulkanDestroyImage(&gtaoFilteredImage, NULL);
-        gtaoFilteredImage = VulkanImage{0};
+        gtaoFilteredImage = VulkanImage{};
     }
     if (gtaoRawImage.img) {
         vulkanDestroyImage(&gtaoRawImage, NULL);
-        gtaoRawImage = VulkanImage{0};
+        gtaoRawImage = VulkanImage{};
     }
     destroyHistory();
 
@@ -432,7 +428,7 @@ void vulkanGtaoPassSetDisabled(char disabled) {
     if (disabled) {
         gtaoHistoryValid = 0;
     }
-    info("GTAO: %s", disabled ? "disabled" : "enabled");
+    utils::info("GTAO: %s", disabled ? "disabled" : "enabled");
 }
 
 char vulkanGtaoPassIsDisabled(void) {
@@ -441,9 +437,10 @@ char vulkanGtaoPassIsDisabled(void) {
 
 void vulkanGtaoPassSetStrength(float strength) {
     gtaoStrength = strength;
-    info("GTAO strength: %.2f", (double)strength);
+    utils::info("GTAO strength: %.2f", (double)strength);
 }
 
 float vulkanGtaoPassGetStrength(void) {
     return gtaoStrength;
 }
+}  // namespace engine

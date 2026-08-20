@@ -1,9 +1,11 @@
 #pragma once
 
 
+namespace engine {
 extern volatile char engineRunning;
 
-struct System;
-void engineSetGameSystem(struct System* system);
+class System;
+void engineSetGameSystem(System* system);
 void engineStart(void);
 void engineStop(void);
+}  // namespace engine

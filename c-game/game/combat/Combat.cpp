@@ -1,3 +1,4 @@
+#include "Combat.h"
 #include "combat/Combat.h"
 #include "combat/AttackHitbox.h"
 #include "character/CharacterSystem.h"
@@ -8,34 +9,23 @@
 #include "ecs/system/scene/SceneSystem.h"
 #include "ecs/system/transform/TransformComponent.h"
 #include "ecs/system/physics/PhysicsSystem.h"
-#include "container/Array.h"
+#include <vector>
 #include "timer/Timer.h"
 
-static void added(void);
-static void removed(void);
-static void update(void);
+namespace game {
 
-System combatSystem = {
-    .name                = "combat",
-    .added               = added,
-    .removed             = removed,
-    .preUpdate           = nullptr,
-    .update              = update,
-    .postUpdate          = nullptr,
-    .cpuElapsedLastFrame = 0.0,
-    .cpuElapsed          = 0.0,
-    .gpuElapsed          = 0.0,
-    .priority            = 1500,
-};
+CombatSystem combatSystem;
 
-static Scene* gPlayerScene;
+CombatSystem::CombatSystem() : engine::System("combat") {}
+
+static engine::Scene* gPlayerScene;
 static u32    gPlayerEntityId;
 
-static Entity* findEntityById(u32 entityId) {
-    u32 numScenes = arraySize(ecs.scenes);
+static engine::Entity* findEntityById(u32 entityId) {
+    u32 numScenes = static_cast<i32>(engine::ecs.scenes.size());
     for (u32 si = 0; si < numScenes; si++) {
-        Scene* scene = ecs.scenes[si];
-        Entity* e = getEntity(scene, entityId);
+        engine::Scene* scene = engine::ecs.scenes[si];
+        engine::Entity* e = engine::getEntity(scene, entityId);
         if (e) return e;
     }
     return nullptr;
@@ -52,10 +42,10 @@ static void processHit(AttackHitbox* hb, const JoltOverlapHit* hit, vec3 center)
     u32 hitEntityId = static_cast<u32>(hit->userData);
     if (hitEntityId == 0) return;
 
-    u32 numScenes = arraySize(ecs.scenes);
+    u32 numScenes = static_cast<i32>(engine::ecs.scenes.size());
     for (u32 si = 0; si < numScenes; si++) {
-        Scene* hitScene = ecs.scenes[si];
-        Entity* target = getEntity(hitScene, hitEntityId);
+        engine::Scene* hitScene = engine::ecs.scenes[si];
+        engine::Entity* target = engine::getEntity(hitScene, hitEntityId);
         if (!target) continue;
         if (target->id == hb->ownerEntityId && target->scene == hb->ownerScene) continue;
         if (!getComponent(hitScene, CharacterStats, hitEntityId)) continue;
@@ -64,7 +54,7 @@ static void processHit(AttackHitbox* hb, const JoltOverlapHit* hit, vec3 center)
             getComponent(hitScene, Enemy, hitEntityId)) continue;
         if (!canHit(hb, hitEntityId)) continue;
 
-        debug("combat: hit entity '%s' (id %u) with %.1f damage at (%.1f,%.1f,%.1f)",
+        utils::debug("combat: hit entity '%s' (id %u) with %.1f damage at (%.1f,%.1f,%.1f)",
               target->name, target->id, hb->damage,
               center[0], center[1], center[2]);
         applyDamage(target, hb->damage, hb->damageType);
@@ -78,7 +68,7 @@ static u8 canHit(AttackHitbox* hitbox, u32 entityId) {
         if (hitbox->recentHits[i].entityId == entityId) {
             // cooldown == 0 means "never again" (projectiles like fireball)
             if (hitbox->hitCooldown == 0.0f) return 0;
-            if (timer.timeSinceStartSeconds - hitbox->recentHits[i].hitTime < hitbox->hitCooldown) {
+            if (utils::timer.timeSinceStartSeconds - hitbox->recentHits[i].hitTime < hitbox->hitCooldown) {
                 return 0;
             }
             // cooldown expired — allow hit (time updated in markHit)
@@ -92,33 +82,33 @@ static void markHit(AttackHitbox* hitbox, u32 entityId) {
     // Update existing entry first
     for (u32 i = 0; i < hitbox->recentHitCount; i++) {
         if (hitbox->recentHits[i].entityId == entityId) {
-            hitbox->recentHits[i].hitTime = static_cast<float>(timer.timeSinceStartSeconds);
+            hitbox->recentHits[i].hitTime = static_cast<float>(utils::timer.timeSinceStartSeconds);
             return;
         }
     }
     // Add new entry
     if (hitbox->recentHitCount < ATTACK_HITBOX_MAX_RECENT) {
         hitbox->recentHits[hitbox->recentHitCount].entityId = entityId;
-        hitbox->recentHits[hitbox->recentHitCount].hitTime = static_cast<float>(timer.timeSinceStartSeconds);
+        hitbox->recentHits[hitbox->recentHitCount].hitTime = static_cast<float>(utils::timer.timeSinceStartSeconds);
         hitbox->recentHitCount++;
     }
 }
 
-void update(void) {
-    u32 numScenes = arraySize(ecs.scenes);
+void CombatSystem::update() {
+    u32 numScenes = static_cast<i32>(engine::ecs.scenes.size());
     for (u32 si = 0; si < numScenes; si++) {
-        Scene* scene = ecs.scenes[si];
+        engine::Scene* scene = engine::ecs.scenes[si];
         if (!scene || !scene->ready) continue;
 
-        SparseSet* hitboxes = getComponents(scene, AttackHitbox);
+        utils::SparseSet* hitboxes = getComponents(scene, AttackHitbox);
         if (!hitboxes || hitboxes->size == 0) continue;
 
         for (u32 i = 0; i < hitboxes->size; i++) {
-            u32 entityId = ssGetValueByIndex(hitboxes, i);
-            AttackHitbox* hb = (AttackHitbox*)ssGetDataByIndex(hitboxes, i);
+            u32 entityId = utils::ssGetValueByIndex(hitboxes, i);
+            AttackHitbox* hb = (AttackHitbox*)utils::ssGetDataByIndex(hitboxes, i);
             if (!hb) continue;
 
-            Transform* t = getComponent(scene, Transform, entityId);
+            engine::Transform* t = getComponent(scene, engine::Transform, entityId);
             if (!t) continue;
 
             vec3 center;
@@ -127,16 +117,16 @@ void update(void) {
             JoltOverlapHit hits[16];
             u32 hitCount = joltSphereOverlap(center, hb->radius, hits, 16);
             if (hitCount > 0) {
-                debug("combat: hitbox at (%.1f,%.1f,%.1f) radius %.2f found %u overlaps", center[0], center[1], center[2], hb->radius, hitCount);
+                utils::debug("combat: hitbox at (%.1f,%.1f,%.1f) radius %.2f found %u overlaps", center[0], center[1], center[2], hb->radius, hitCount);
             }
 
             for (u32 h = 0; h < hitCount; h++) {
-                debug("combat: overlap[%u] userData=%lu bodyId=%u", h, (unsigned long)hits[h].userData, hits[h].bodyId);
+                utils::debug("combat: overlap[%u] userData=%lu bodyId=%u", h, (unsigned long)hits[h].userData, hits[h].bodyId);
                 processHit(hb, &hits[h], center);
             }
 
             if (hb->once) {
-                F_sceneRemoveComponent(scene, entityId, &AttackHitbox_id);
+                engine::F_sceneRemoveComponent(scene, entityId, &AttackHitbox_id);
             }
 
             // Clean up entries that no longer exist (entity destroyed)
@@ -153,14 +143,14 @@ void update(void) {
     }
 }
 
-Entity* combatCreateHitbox(Entity* parent, float radius, float damage, u32 damageType, u32 ownerEntityId, u8 once, float hitCooldown) {
+engine::Entity* combatCreateHitbox(engine::Entity* parent, float radius, float damage, u32 damageType, u32 ownerEntityId, u8 once, float hitCooldown) {
     if (!parent) return nullptr;
 
-    Scene* scene = parent->scene;
-    Entity* entity = createEntity(scene, "hitbox");
+    engine::Scene* scene = parent->scene;
+    engine::Entity* entity = engine::createEntity(scene, "hitbox");
 
-    Transform* parentT = getComponent(scene, Transform, parent->id);
-    Transform* t = createComponent(scene, Transform, entity->id);
+    engine::Transform* parentT = getComponent(scene, engine::Transform, parent->id);
+    engine::Transform* t = createComponent(scene, engine::Transform, entity->id);
     if (parentT) {
         glm_vec3_copy(parentT->pos, t->pos);
         glm_quat_copy(parentT->rot, t->rot);
@@ -182,20 +172,21 @@ Entity* combatCreateHitbox(Entity* parent, float radius, float damage, u32 damag
     return entity;
 }
 
-void combatSetPlayerEntity(Scene* scene, u32 entityId) {
+void combatSetPlayerEntity(engine::Scene* scene, u32 entityId) {
     gPlayerScene = scene;
     gPlayerEntityId = entityId;
 }
 
-Entity* combatGetPlayerEntity(void) {
+engine::Entity* combatGetPlayerEntity(void) {
     if (!gPlayerScene) return nullptr;
-    return getEntity(gPlayerScene, gPlayerEntityId);
+    return engine::getEntity(gPlayerScene, gPlayerEntityId);
 }
 
-void added(void) {
+void CombatSystem::added() {
 }
 
-void removed(void) {
+void CombatSystem::removed() {
     gPlayerScene = nullptr;
     gPlayerEntityId = 0;
 }
+}  // namespace game

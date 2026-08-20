@@ -2,4 +2,16 @@
 
 #include "ecs/system/System.h"
 
-extern System vulkanCompositePass;
+namespace engine {
+class VulkanCompositePass : public System {
+public:
+    VulkanCompositePass();
+    void added() override;
+    void removed() override;
+    void preUpdate() override;
+    void update() override;
+    void postUpdate() override;
+};
+
+extern VulkanCompositePass vulkanCompositePass;
+}  // namespace engine

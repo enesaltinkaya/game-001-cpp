@@ -2,34 +2,35 @@
 
 #include "container/SparseSet/SparseSet.h"
 #include "json/Json.h"
-#include "container/Map.h"
+#include <unordered_map>
 
+namespace engine {
 struct Entity {
-    u32 id;
-    struct Scene* scene;
-    struct Entity* parent;
-    Array(struct Entity*) children;
-    const char* name; // optional, nullptr if unnamed. owned copy.
+    u32 id = 0;
+    struct Scene* scene = nullptr;
+    struct Entity* parent = nullptr;
+    std::vector<struct Entity*> children = {};
+    const char* name = nullptr; // optional, nullptr if unnamed. owned copy.
 };
 
 struct Scene {
     void* backendScene;
-    String name;  // also stores source path (e.g. "models/terrain/foo.dat") for sidecar loading
-    Map(u32, Json*) extras;
+    utils::String name;  // also stores source path (e.g. "models/terrain/foo.dat") for sidecar loading
+    std::unordered_map<u32, Json*> extras;
 
-    Array(SparseSet*) components;
+    std::vector<utils::SparseSet*> components;
 
     // for adding new entities
     u32 entityCounter;
-    Array(u32) entityFreeList;
+    std::vector<u32> entityFreeList;
 
     // all entities in this scene (stable heap pointers)
-    Array(Entity*) entities;
-    Map(u32, Entity*) entityMap; // id -> Entity* for O(1) lookup
+    std::vector<Entity*> entities;
+    std::unordered_map<u32, Entity*> entityMap; // id -> Entity* for O(1) lookup
 
     // for transform updates
-    Map(u32, double) activeEntities;
-    Array(u32) activeEntityRemoveList;
+    std::unordered_map<u32, double> activeEntities;
+    std::vector<u32> activeEntityRemoveList;
 
 
     vec3 aabbMin;
@@ -54,3 +55,4 @@ struct Scene {
     void* loadCallbackUserData;
 };
 
+}  // namespace engine

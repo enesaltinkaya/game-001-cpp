@@ -2,6 +2,7 @@
 #include "Utils.h"
 #include "../command/VulkanCommand.h"
 
+namespace engine {
 void vulkanBarrier(struct VulkanCommand* cmd, enum ExecutionBarrierType barrierType) {
     VkMemoryBarrier2 memoryBarrier = {};
     memoryBarrier.sType            = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2;
@@ -128,7 +129,7 @@ void vulkanBarrier(struct VulkanCommand* cmd, enum ExecutionBarrierType barrierT
 
         default:
             // Or assert, log an error, etc.
-            terminate("Unsupported barrier type!");
+            utils::terminate("Unsupported barrier type!");
     }
 
     VkDependencyInfo dependencyInfo   = {};
@@ -138,3 +139,4 @@ void vulkanBarrier(struct VulkanCommand* cmd, enum ExecutionBarrierType barrierT
 
     vkCmdPipelineBarrier2(cmd->cmd, &dependencyInfo);
 }
+}  // namespace engine

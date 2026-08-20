@@ -10,6 +10,7 @@
 #include "datamanager/DataManager.h"
 #include "renderer/vulkan/resources/VulkanBuffer.h"
 
+namespace engine {
 static VkShaderModule vulkanCreateShader(const char* path);
 static void vulkanDestroyShader(VkShaderModule shader);
 static void createGraphicsPipe(VulkanPipe* pipe, VulkanPipeInfo pipeInfo);
@@ -68,25 +69,25 @@ void vulkanPush(VulkanCommand* cmd, VulkanPipe* pipe, u32 size, void* pc) {
 ////////////////////////////
 void createComputePipe(VulkanPipe* pipe, VulkanPipeInfo info) {
     pipe->isCompute                         = 1;
-    Array(VkDescriptorSetLayout) setLayouts = {};
+    std::vector<VkDescriptorSetLayout> setLayouts = {};
 
     if (info.set0_reserved) {
-        arrayPut(setLayouts, info.set0_reserved->layout);
+        setLayouts.push_back(info.set0_reserved->layout);
     } else {
-        arrayPut(setLayouts, vulkanResources.globalSet0[0].layout);
+        setLayouts.push_back(vulkanResources.globalSet0[0].layout);
     }
 
     if (info.set1) {
-        arrayPut(setLayouts, info.set1->layout);
+        setLayouts.push_back(info.set1->layout);
     }
     if (info.set2) {
-        arrayPut(setLayouts, info.set2->layout);
+        setLayouts.push_back(info.set2->layout);
     }
     if (info.set3) {
-        arrayPut(setLayouts, info.set3->layout);
+        setLayouts.push_back(info.set3->layout);
     }
     if (info.set4) {
-        arrayPut(setLayouts, info.set4->layout);
+        setLayouts.push_back(info.set4->layout);
     }
 
     VkPushConstantRange pc = {};
@@ -96,8 +97,8 @@ void createComputePipe(VulkanPipe* pipe, VulkanPipeInfo info) {
 
     VkPipelineLayoutCreateInfo layoutInfo = {};
     layoutInfo.sType                      = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    layoutInfo.setLayoutCount             = arraySize(setLayouts);
-    layoutInfo.pSetLayouts                = setLayouts;
+    layoutInfo.setLayoutCount             = static_cast<i32>(setLayouts.size());
+    layoutInfo.pSetLayouts                = setLayouts.data();
     layoutInfo.pushConstantRangeCount     = 1;
     layoutInfo.pPushConstantRanges        = &pc;
     vkCreatePipelineLayout(vulkan.device, &layoutInfo, nullptr, &pipe->layout);
@@ -121,45 +122,44 @@ void createComputePipe(VulkanPipe* pipe, VulkanPipeInfo info) {
         vkCreateComputePipelines(vulkan.device, nullptr, 1, &pipelineCreateInfo, nullptr, &pipe->pipe),
         "vkCreateComputePipelines");
 
-    if (isDebug() && info.name) {
+    if (utils::isDebug() && info.name) {
         vulkanUtilsSetName((u64)pipe->pipe,
                            VK_OBJECT_TYPE_PIPELINE,
-                           strtmp("%s%s", "pipeline ", info.name));
+                           utils::strtmp("%s%s", "pipeline ", info.name));
         vulkanUtilsSetName((u64)pipe->layout,
                            VK_OBJECT_TYPE_PIPELINE_LAYOUT,
-                           strtmp("%s%s", "pipelineLayout ", info.name));
+                           utils::strtmp("%s%s", "pipelineLayout ", info.name));
     }
 
     vulkanDestroyShader(shaderStage.module);
-    arrayFree(setLayouts);
 }
 
 void createGraphicsPipe(VulkanPipe* pipe, VulkanPipeInfo info) {
-    Array(VkDescriptorSetLayout) setLayouts = {};
-    arrayPut(setLayouts, vulkanResources.globalSet0[0].layout);
+    std::vector<VkDescriptorSetLayout> setLayouts = {};
+    setLayouts.push_back(vulkanResources.globalSet0[0].layout);
 
 if (info.clearColor1Enabled) {
         pipe->clearColor1Enabled = true;
-        pipe->clearColor1        = VkClearValue{.color = {info.clearColor1[0],
+        pipe->clearColor1        = VkClearValue{.color = {{info.clearColor1[0],
                                                           info.clearColor1[1],
                                                           info.clearColor1[2],
-                                                          info.clearColor1[3]}};
+                                                          info.clearColor1[3]}}};
     }
 
     if (info.clearColor2Enabled) {
         pipe->clearColor2Enabled = true;
-        pipe->clearColor2        = VkClearValue{.color = {info.clearColor2[0],
+        pipe->clearColor2        = VkClearValue{.color = {{info.clearColor2[0],
                                                           info.clearColor2[1],
                                                           info.clearColor2[2],
-                                                          info.clearColor2[3]}};
+                                                          info.clearColor2[3]}}};
     }
 
     if (info.clearColor3Enabled) {
         pipe->clearColor3Enabled = true;
-        pipe->clearColor3        = VkClearValue{.color = {info.clearColor3[0],
+        pipe->clearColor3        = VkClearValue{.color = {{info.clearColor3[0],
                                                           info.clearColor3[1],
                                                           info.clearColor3[2],
-                                                          info.clearColor3[3]}};
+                                                          info.clearColor3[3]}}};
     }
 
     if (info.clearDepthEnabled) {
@@ -168,16 +168,16 @@ if (info.clearColor1Enabled) {
     }
 
     if (info.set1) {
-        arrayPut(setLayouts, info.set1->layout);
+        setLayouts.push_back(info.set1->layout);
     }
     if (info.set2) {
-        arrayPut(setLayouts, info.set2->layout);
+        setLayouts.push_back(info.set2->layout);
     }
     if (info.set3) {
-        arrayPut(setLayouts, info.set3->layout);
+        setLayouts.push_back(info.set3->layout);
     }
     if (info.set4) {
-        arrayPut(setLayouts, info.set4->layout);
+        setLayouts.push_back(info.set4->layout);
     }
 
     VkPushConstantRange pc = {};
@@ -187,8 +187,8 @@ if (info.clearColor1Enabled) {
 
     VkPipelineLayoutCreateInfo layoutInfo = {};
     layoutInfo.sType                      = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    layoutInfo.setLayoutCount             = arraySize(setLayouts);
-    layoutInfo.pSetLayouts                = setLayouts;
+    layoutInfo.setLayoutCount             = static_cast<i32>(setLayouts.size());
+    layoutInfo.pSetLayouts                = setLayouts.data();
     layoutInfo.pushConstantRangeCount     = 1;
     layoutInfo.pPushConstantRanges        = &pc;
     vkCreatePipelineLayout(vulkan.device, &layoutInfo, nullptr, &pipe->layout);
@@ -352,7 +352,7 @@ if (info.clearColor1Enabled) {
     dynamic.dynamicStateCount                = 2;
     dynamic.flags                            = 0;
 
-    Array(VkPipelineShaderStageCreateInfo) shaders = {};
+    std::vector<VkPipelineShaderStageCreateInfo> shaders = {};
     if (info.vs) {
         VkShaderModule module                       = vulkanCreateShader(info.vs);
         VkPipelineShaderStageCreateInfo shaderStage = {};
@@ -360,7 +360,7 @@ if (info.clearColor1Enabled) {
         shaderStage.stage  = VK_SHADER_STAGE_VERTEX_BIT;
         shaderStage.module = module;
         shaderStage.pName  = "main";
-        arrayPut(shaders, shaderStage);
+        shaders.push_back(shaderStage);
     }
 
     if (info.fs) {
@@ -370,7 +370,7 @@ if (info.clearColor1Enabled) {
         shaderStage.stage  = VK_SHADER_STAGE_FRAGMENT_BIT;
         shaderStage.module = module;
         shaderStage.pName  = "main";
-        arrayPut(shaders, shaderStage);
+        shaders.push_back(shaderStage);
     }
 
     if (info.tsc) {
@@ -380,7 +380,7 @@ if (info.clearColor1Enabled) {
         shaderStage.stage  = VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT;
         shaderStage.module = module;
         shaderStage.pName  = "main";
-        arrayPut(shaders, shaderStage);
+        shaders.push_back(shaderStage);
     }
 
     if (info.tes) {
@@ -390,40 +390,40 @@ if (info.clearColor1Enabled) {
         shaderStage.stage  = VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT;
         shaderStage.module = module;
         shaderStage.pName  = "main";
-        arrayPut(shaders, shaderStage);
+        shaders.push_back(shaderStage);
     }
 
     VkPipelineVertexInputStateCreateInfo vertexInput = {};
     vertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-    Array(VkVertexInputAttributeDescription) inputAttributes = {};
-    Array(VkVertexInputBindingDescription) inputBindings     = {};
+    std::vector<VkVertexInputAttributeDescription> inputAttributes = {};
+    std::vector<VkVertexInputBindingDescription> inputBindings     = {};
 
     if (info.vertexAttributeCount > 0 && info.vertexAttributes) {
         for (u32 i = 0; i < info.vertexAttributeCount; i++) {
-            arrayPut(inputAttributes, info.vertexAttributes[i]);
+            inputAttributes.push_back(info.vertexAttributes[i]);
         }
         for (u32 i = 0; i < info.vertexBindingCount; i++) {
-            arrayPut(inputBindings, info.vertexBindings[i]);
+            inputBindings.push_back(info.vertexBindings[i]);
         }
     } else {
         if (info.in1bind.stride) {
-            arrayPut(inputBindings, info.in1bind);
+            inputBindings.push_back(info.in1bind);
         }
         if (info.in1attr.format) {
-            arrayPut(inputAttributes, info.in1attr);
+            inputAttributes.push_back(info.in1attr);
         }
         if (info.in2bind.stride) {
-            arrayPut(inputBindings, info.in2bind);
+            inputBindings.push_back(info.in2bind);
         }
         if (info.in2attr.format) {
-            arrayPut(inputAttributes, info.in2attr);
+            inputAttributes.push_back(info.in2attr);
         }
     }
 
-    vertexInput.pVertexAttributeDescriptions    = inputAttributes;
-    vertexInput.vertexAttributeDescriptionCount = arraySize(inputAttributes);
-    vertexInput.pVertexBindingDescriptions      = inputBindings;
-    vertexInput.vertexBindingDescriptionCount   = arraySize(inputBindings);
+    vertexInput.pVertexAttributeDescriptions    = inputAttributes.data();
+    vertexInput.vertexAttributeDescriptionCount = static_cast<i32>(inputAttributes.size());
+    vertexInput.pVertexBindingDescriptions      = inputBindings.data();
+    vertexInput.vertexBindingDescriptionCount   = static_cast<i32>(inputBindings.size());
 
     VkPipelineTessellationStateCreateInfo tess = {};
     tess.sType              = VK_STRUCTURE_TYPE_PIPELINE_TESSELLATION_STATE_CREATE_INFO;
@@ -444,43 +444,39 @@ if (info.clearColor1Enabled) {
     pipelineCreateInfo.pViewportState      = &viewport;
     pipelineCreateInfo.pDepthStencilState  = &depth;
     pipelineCreateInfo.pDynamicState       = &dynamic;
-    pipelineCreateInfo.pStages             = shaders;
-    pipelineCreateInfo.stageCount          = arraySize(shaders);
+    pipelineCreateInfo.pStages             = shaders.data();
+    pipelineCreateInfo.stageCount          = static_cast<i32>(shaders.size());
     pipelineCreateInfo.pVertexInputState   = &vertexInput;
     pipelineCreateInfo.pTessellationState  = &tess;
     VK_CHECK(
         vkCreateGraphicsPipelines(vulkan.device, nullptr, 1, &pipelineCreateInfo, nullptr, &pipe->pipe),
         "vkCreateGraphicsPipelines");
 
-    if (isDebug()) {
+    if (utils::isDebug()) {
         vulkanUtilsSetName((u64)pipe->pipe,
                            VK_OBJECT_TYPE_PIPELINE,
-                           strtmp("%s%s", "pipeline ", info.name));
+                           utils::strtmp("%s%s", "pipeline ", info.name));
         vulkanUtilsSetName((u64)pipe->layout,
                            VK_OBJECT_TYPE_PIPELINE_LAYOUT,
-                           strtmp("%s%s", "pipelineLayout ", info.name));
+                           utils::strtmp("%s%s", "pipelineLayout ", info.name));
     }
 
-    foreachptr(VkPipelineShaderStageCreateInfo * shaderStage, shaders) {
-        vulkanDestroyShader(shaderStage->module);
+    for (VkPipelineShaderStageCreateInfo& shaderStage : shaders) {
+        vulkanDestroyShader(shaderStage.module);
     }
 
-    arrayFree(setLayouts);
-    arrayFree(shaders);
-    arrayFree(inputAttributes);
-    arrayFree(inputBindings);
 }
 
 VkShaderModule vulkanCreateShader(const char* path) {
     const char* ppath;
 
-    if (strContains(path, "/spv/")) {
-        ppath = strtmp("%s.%s", path, isDebug() ? "debug" : "release");
+    if (utils::strContains(path, "/spv/")) {
+        ppath = utils::strtmp("%s.%s", path, utils::isDebug() ? "debug" : "release");
     } else {
         ppath = path;
     }
 
-    String fileContents                       = dataManagerRead(ppath);
+    utils::String fileContents                       = utils::dataManagerRead(ppath);
     VkShaderModule module                     = {};
     VkShaderModuleCreateInfo moduleCreateInfo = {};
     moduleCreateInfo.sType                    = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
@@ -488,12 +484,12 @@ VkShaderModule vulkanCreateShader(const char* path) {
     moduleCreateInfo.pCode                     = static_cast<const uint32_t*>((void*)fileContents.data);
     VK_CHECK(vkCreateShaderModule(vulkan.device, &moduleCreateInfo, nullptr, &module),
              "vkCreateShaderModule");
-    stringDestroy(&fileContents);
+    utils::stringDestroy(&fileContents);
 
-    if (isDebug()) {
+    if (utils::isDebug()) {
         vulkanUtilsSetName((u64)module,
                            VK_OBJECT_TYPE_SHADER_MODULE,
-                           strtmp("%s%s", "shader ", path));
+                           utils::strtmp("%s%s", "shader ", path));
     }
     return module;
 }
@@ -593,7 +589,7 @@ void r_vulkanBeginRender(VulkanBeginRenderInfo beginRenderInfo) {
     VkRenderingAttachmentInfo depthAttachmentInfo = {};
     if (beginRenderInfo.depth) {
         depthAttachmentInfo.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
-        if (beginRenderInfo.depthLayer > 0 && beginRenderInfo.depth->views) {
+        if (beginRenderInfo.depthLayer > 0 && !beginRenderInfo.depth->views.empty()) {
             depthAttachmentInfo.imageView =
                 beginRenderInfo.depth->views[beginRenderInfo.depthLayer - 1];
             depthAttachmentInfo.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
@@ -614,15 +610,18 @@ void r_vulkanBeginRender(VulkanBeginRenderInfo beginRenderInfo) {
 
     VkRenderingInfo renderInfo = {
         .sType                = VK_STRUCTURE_TYPE_RENDERING_INFO_KHR,
-        .renderArea           = {.extent = {width, height}},
+        .pNext                = nullptr,
+        .flags                = 0,
+        .renderArea           = {.offset = {0, 0}, .extent = {width, height}},
         .layerCount           = 1,
+        .viewMask             = 0,
         .colorAttachmentCount = static_cast<uint32_t>(colorAttachmentCount),
         .pColorAttachments    = colorAttachmentInfos,
-        .pDepthAttachment     = beginRenderInfo.depth ? &depthAttachmentInfo : 0,
-        // .pStencilAttachment   = depthImage ? &depthAttachmentInfo : 0,
+        .pDepthAttachment     = beginRenderInfo.depth ? &depthAttachmentInfo : nullptr,
+        .pStencilAttachment   = nullptr,
     };
 
-    if (isDebug()) {
+    if (utils::isDebug()) {
         vulkanLabelBegin(beginRenderInfo.cmd, beginRenderInfo.pipe->name);
     }
     // Central layout guarantee: depth attachments must be in
@@ -643,7 +642,7 @@ void r_vulkanBeginRender(VulkanBeginRenderInfo beginRenderInfo) {
 
 void vulkanEndRender(VulkanCommand* cmd) {
     vkCmdEndRendering(cmd->cmd);
-    if (isDebug()) {
+    if (utils::isDebug()) {
         vulkanLabelEnd(cmd);
     }
 }
@@ -711,11 +710,11 @@ void vulkanBindVertex(VulkanCommand* cmd,
 }
 
 void vulkanDispatch(VulkanCommand* cmd, VulkanPipe* pipe, int x, int y, int z) {
-    if (isDebug()) {
+    if (utils::isDebug()) {
         vulkanLabelBeginColor(cmd, pipe->name, 1.0f, 1.0f, 0.0f, 1.0f);
     }
     vkCmdDispatch(cmd->cmd, x, y, z);
-    if (isDebug()) {
+    if (utils::isDebug()) {
         vulkanLabelEnd(cmd);
     }
 }
@@ -724,11 +723,11 @@ void vulkanDispatchIndirect(VulkanCommand* cmd,
                             VulkanPipe* pipe,
                             VulkanBuffer* buffer,
                             u64 offset) {
-    if (isDebug()) {
+    if (utils::isDebug()) {
         vulkanLabelBeginColor(cmd, pipe->name, 1.0f, 1.0f, 0.0f, 1.0f);
     }
     vkCmdDispatchIndirect(cmd->cmd, buffer->buf, offset);
-    if (isDebug()) {
+    if (utils::isDebug()) {
         vulkanLabelEnd(cmd);
     }
 }
@@ -752,3 +751,4 @@ void vulkanScissor(VulkanCommand* cmd, int x, int y, int w, int h) {
     rect2D.extent.height = h;
     vkCmdSetScissor(cmd->cmd, 0, 1, &rect2D);
 }
+}  // namespace engine

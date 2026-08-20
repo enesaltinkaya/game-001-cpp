@@ -4,6 +4,7 @@
 #include "renderer/vulkan/resources/VulkanBuffer.h"
 #include "renderer/vulkan/resources/VulkanImage.h"
 
+namespace engine {
 typedef struct VulkanImage VulkanImage;
 
 void vulkanUtilsSetName(u64 objectHandle, VkObjectType type, const char* name);
@@ -36,3 +37,4 @@ void* initRenderDocAPI(void);
 void captureFrameRenderDoc(void);
 #endif
 #endif
+}  // namespace engine

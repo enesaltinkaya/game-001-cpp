@@ -6,27 +6,18 @@
 #include "lua/git/lua.h"
 #include "lua/git/lualib.h"
 
-static i32 luacHoverSound(void* luaState);
-static i32 luacClickSound(void* luaState);
-static i32 luacExit(void* luaState);
+namespace engine {
+static i32 luacHoverSound(void*);
+static i32 luacClickSound(void*);
+static i32 luacExit(void*);
 
-static void added(void);
 
 static lua_State* luaState;
-System luaSystem = {
-    .name                = "lua",
-    .added               = added,
-    .removed             = nullptr,
-    .preUpdate           = nullptr,
-    .update              = nullptr,
-    .postUpdate          = nullptr,
-    .cpuElapsedLastFrame = 0.0,
-    .cpuElapsed          = 0.0,
-    .gpuElapsed          = 0.0,
-    .priority            = 0,
-};
+LuaSystem luaSystem;
 
-void added(void) {
+LuaSystem::LuaSystem() : System("lua") {}
+
+void LuaSystem::added() {
     luaState = luaL_newstate();
     luaL_openlibs(luaState);
 
@@ -39,12 +30,12 @@ void luaDestroy(void) {
     lua_close(luaState);
 }
 
-i32 luacHoverSound(void* luaState) {
+i32 luacHoverSound(void*) {
     soundPlayHover();
     return 0;
 }
 
-i32 luacClickSound(void* luaState) {
+i32 luacClickSound(void*) {
     soundPlayClick();
     return 0;
 }
@@ -57,15 +48,15 @@ void* luaGetState(void) {
     return luaState;
 }
 
-i32 luacExit(void* luaState) {
+i32 luacExit(void*) {
     engineStop();
     return 0;
 }
 
 void luaLoadFile(const char* path) {
-    struct String buffer = dataManagerRead(path);
+    struct utils::String buffer = utils::dataManagerRead(path);
     if (luaL_loadstring(luaState, buffer.data) || lua_pcall(luaState, 0, 0, 0)) {
-        error("failed to load lua: %s", path);
+        utils::error("failed to load lua: %s", path);
     }
     // stringDestroy(&buffer);
 }
@@ -73,7 +64,8 @@ void luaLoadFile(const char* path) {
 void luaCallFunction(const char* functionName) {
     lua_getglobal(luaState, functionName);
     if (lua_pcall(luaState, 0, 0, 0)) {
-        error("failed to call: %s", functionName);
-        error("%s", lua_tostring(luaState, -1));
+        utils::error("failed to call: %s", functionName);
+        utils::error("%s", lua_tostring(luaState, -1));
     }
 }
+}  // namespace engine

@@ -1,12 +1,12 @@
 #pragma once
 
 #include "ecs/system/scene/SceneSystem.h"
-
-struct Transform;
 #include "ecs/system/System.h"
-
+#include "ecs/system/physics/PhysicsComponent.h"  // IWYU pragma: keep
+#include "ecs/system/transform/TransformComponent.h"  // IWYU pragma: keep
 struct JoltCharacter;
-struct JoltBody;
+namespace game {
+
 
 // ── Player component ────────────────────────────────────────────────────────
 struct Player {
@@ -32,8 +32,18 @@ struct Player {
 REGISTER_COMPONENT(Player);
 
 // ── PlayerSystem ────────────────────────────────────────────────────────────
-extern struct System playerSystem;
-Scene* getPlayerScene(void);
+class PlayerSystem : public engine::System {
+public:
+    PlayerSystem();
+    void added() override;
+    void removed() override;
+    void preUpdate() override;
+    void update() override;
+    void postUpdate() override;
+};
+
+extern PlayerSystem playerSystem;
+engine::Scene* getPlayerScene(void);
 bool playerGetFacingYaw(float* yaw);
 
 // Debug helpers for lightweight GUI/state inspection.
@@ -61,7 +71,8 @@ void playerGetSpawn(vec3 outPos);
 void characterMoveToward(JoltCharacter* character, versor baseRot,
                          float turnSpeed, float moveSpeed,
                          vec3 targetPos, vec3 currentPos,
-                         Transform* transform, bool* isMoving,
-                         Entity* playerEntity,
+                         engine::Transform* transform, bool* isMoving,
+                         engine::Entity* playerEntity,
                          const char* animIdle, const char* animRun, const char* animWalk,
                          bool shiftHold);
+}  // namespace game

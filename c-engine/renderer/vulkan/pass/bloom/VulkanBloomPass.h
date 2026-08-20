@@ -2,7 +2,18 @@
 
 #include "ecs/system/System.h"
 
-extern System vulkanBloomPass;
+namespace engine {
+class VulkanBloomPass : public System {
+public:
+    VulkanBloomPass();
+    void added() override;
+    void removed() override;
+    void preUpdate() override;
+    void update() override;
+    void postUpdate() override;
+};
+
+extern VulkanBloomPass vulkanBloomPass;
 
 /// Returns the sampled pool index of bloom mip 0 (half-res bloom result).
 /// Returns 0 if bloom is not available (first frame, invalid size, etc.).
@@ -13,3 +24,4 @@ float vulkanBloomPassGetStrength(void);
 
 void  vulkanBloomPassSetDisabled(char disabled);
 char  vulkanBloomPassIsDisabled(void);
+}  // namespace engine

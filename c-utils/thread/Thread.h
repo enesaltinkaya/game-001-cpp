@@ -1,10 +1,11 @@
 #pragma once
 #include "pthread.h"
 
+namespace utils {
 struct Thread {
-    pthread_cond_t cond;
+    pthread_cond_t cond = {};
     pthread_mutex_t mutex;
-    pthread_t thread;
+    pthread_t thread = {};
 };
 
 // ThreadPool wrapper for libthpool
@@ -12,10 +13,10 @@ struct ThreadPool {
     void* internal;
 };
 
-#define THREAD_LOCK                                                                       \
-    static Thread thread = {.cond = {}, .mutex = PTHREAD_MUTEX_INITIALIZER, .thread = {}}; \
-    threadLock(&thread)
-#define THREAD_UNLOCK threadUnlock(&thread)
+#define THREAD_LOCK                                                                          \
+    static utils::Thread thread = {.cond = {}, .mutex = PTHREAD_MUTEX_INITIALIZER, .thread = {}}; \
+    utils::threadLock(&thread)
+#define THREAD_UNLOCK utils::threadUnlock(&thread)
 
 Thread* threadNew(FnPtrPtr fn, void* userData);
 void threadJoin(Thread* thread);
@@ -40,3 +41,4 @@ void threadPoolAddWork(ThreadPool* pool, void (*fn)(void*), void* userData);
 void threadPoolWait(ThreadPool* pool);
 
 void threadRaiseTrap(void);
+}  // namespace utils

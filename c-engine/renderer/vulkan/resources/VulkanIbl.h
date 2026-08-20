@@ -3,6 +3,7 @@
 #include "VulkanImage.h"
 #include "renderer/Renderer.h"
 
+namespace engine {
 struct IblSunLight {
     vec3 direction; // normalized direction toward the sun
     vec3 color;     // HDR radiance
@@ -30,3 +31,4 @@ float vulkanIblGetIntensity(void);
 
 // Tonemap mode for IBL rendering.
 void vulkanIblSetTonemapMode(TonemapMode mode);
+}  // namespace engine

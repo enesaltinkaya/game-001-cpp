@@ -1,5 +1,6 @@
 #include "SparseSetSimple.h"
 
+namespace utils {
 SparseSetSimple* ssSimpleNew() {
     return new SparseSetSimple();
 }
@@ -58,4 +59,4 @@ u32 ssSimpleGetValueByIndex(SparseSetSimple* ss, u32 index) {
 
 void ssSimpleClear(SparseSetSimple* ss) {
     ss->size = 0;
-}
+}}  // namespace utils

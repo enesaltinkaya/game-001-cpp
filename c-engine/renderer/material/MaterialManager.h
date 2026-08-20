@@ -1,5 +1,6 @@
 #pragma once
 
+namespace engine {
 typedef struct Material Material;
 
 void createDefaultMaterial();
@@ -9,3 +10,4 @@ Material* createMaterial(const char* name);
 Material* getMaterialByName(const char* name);
 Material* getMaterialById(const u32 id);
 void destroyMaterial(const u32 id);
+}  // namespace engine

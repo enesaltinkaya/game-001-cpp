@@ -1,3 +1,4 @@
+#include "PlayerGui.h"
 #include "Utils.h"
 #include "azgaar/AzgaarWorld.h"
 #include "loadingAzgaar/LoadingAzgaar.h"
@@ -5,22 +6,11 @@
 #include "player/Player.h"
 #include "rmlui/wrapper/src/crmlui.h"
 
-static void added(void);
-static void update(void);
-static void removed(void);
+namespace game {
 
-System playerGui = {
-    .name                = "playerGui",
-    .added               = added,
-    .removed             = removed,
-    .preUpdate           = nullptr,
-    .update              = update,
-    .postUpdate          = nullptr,
-    .cpuElapsedLastFrame = 0.0,
-    .cpuElapsed          = 0.0,
-    .gpuElapsed          = 0.0,
-    .priority            = 0,
-};
+PlayerGui playerGui;
+
+PlayerGui::PlayerGui() : engine::System("playerGui") {}
 
 static void* document;
 static void* model;
@@ -33,7 +23,7 @@ static void worldToMap(const AzgaarWorld* world, float wx, float wz, float* outM
     *outMapY = ((-wz) / static_cast<float>(world->metersPerPixel)) + static_cast<float>(world->heightPx) * 0.5f;
 }
 
-static void added(void) {
+void PlayerGui::added() {
     document = rmlNewDocument("gui/player/player.html");
     model    = rmlCreateModel("player");
     cellText = cellTextBuf;
@@ -47,14 +37,14 @@ static void added(void) {
     rmlShowDocument(document);
 }
 
-static void removed(void) {
+void PlayerGui::removed() {
     rmlUnloadDocument(document);
     rmlUnloadModel(model);
 }
 
-static void update(void) {
+void PlayerGui::update() {
     static double lastShown;
-    double now = millies();
+    double now = utils::millies();
     if (now <= lastShown + 50) return;
 
     vec3 pos;
@@ -81,3 +71,4 @@ static void update(void) {
     lastShown = now;
     rmlUpdateDirtyAll(model);
 }
+}  // namespace game

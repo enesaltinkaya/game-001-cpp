@@ -2,41 +2,37 @@
 #include "Material.h"
 #include "renderer/Renderer.h"
 
-static StrMap(Material*) materialMap;
-static Map(u32, Material*) materialIdMap;
+namespace engine {
+static std::unordered_map<std::string, Material*> materialMap;
+static std::unordered_map<u32, Material*> materialIdMap;
 
 static u32 materialCounter;
-static Thread lock = {.mutex = PTHREAD_MUTEX_INITIALIZER};
+static utils::Thread lock = {.mutex = PTHREAD_MUTEX_INITIALIZER};
 
 Material* createMaterial(const char* name) {
-    threadLock(&lock);
-    if (strmapContainsKey(materialMap, name)) {
-        terminate("material \"%s\" is already initialized!", name);
+    utils::threadLock(&lock);
+    if (materialMap.contains(name)) {
+        utils::terminate("material \"%s\" is already initialized!", name);
     }
 
-    Material* material = static_cast<Material*>(memoryAlloc(sizeof(Material)));
-    *material          = Material{};
+    Material* material = new Material{};
     material->id       = materialCounter;
-    strmapPut(materialMap, name, material);
-    mapPut(materialIdMap, material->id, material);
+    materialMap[name] = material;
+    materialIdMap[material->id] = material;
     materialCounter++;
     // info("created material: %s", name);
-    threadUnlock(&lock);
+    utils::threadUnlock(&lock);
     return material;
 }
 
 Material* getMaterialByName(const char* name) {
-    if (!strmapContainsKey(materialMap, name)) {
-        return nullptr;
-    }
-    return strmapGet(materialMap, name);
+    auto it = materialMap.find(name);
+    return it != materialMap.end() ? it->second : nullptr;
 }
 
 Material* getMaterialById(const u32 id) {
-    if (!mapContainsKey(materialIdMap, id)) {
-        return nullptr;
-    }
-    return mapGet(materialIdMap, id);
+    auto it = materialIdMap.find(id);
+    return it != materialIdMap.end() ? it->second : nullptr;
 }
 
 void createDefaultMaterial() {
@@ -51,11 +47,9 @@ void createDefaultMaterial() {
 }
 
 void cleanupMaterials() {
-    for (i32 i = 0, si = strmapSize(materialMap); i < si; i++) {
-        memoryFree(materialMap[i].value);
+    for (const auto& entry : materialMap) {
+        delete entry.second;
     }
-    mapFree(materialIdMap);
-    strmapFree(materialMap);
 }
 
 void destroyMaterial(const u32 id) {
@@ -63,5 +57,6 @@ void destroyMaterial(const u32 id) {
     material->refCount--;
     if (material->refCount == 0) {
     }
-    warn("destroy material: %u", id);
+    utils::warn("destroy material: %u", id);
 }
+}  // namespace engine

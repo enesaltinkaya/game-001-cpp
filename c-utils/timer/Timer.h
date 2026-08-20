@@ -1,5 +1,6 @@
 #pragma once
 
+namespace utils {
 struct Timer {
     double fps;
     double ups;
@@ -31,3 +32,4 @@ void timerInit(double fpsLimit, bool fpsLimitChecked, bool busyLoop);
 void timerBegin(void);
 void timerUpdate(FnVoid update);
 void timerEnd(void);
+}  // namespace utils

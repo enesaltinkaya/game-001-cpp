@@ -1,3 +1,4 @@
+#include "SettingsAudioGui.h"
 #include "ecs/system/System.h"
 #include "ecs/system/lua/LuaSystem.h"
 #include "ecs/system/sound/SoundSystem.h"
@@ -7,21 +8,11 @@
 #include "settings/Settings.h"
 #include "../SettingsGui.h"
 
-static void added(void);
-static void removed(void);
+namespace game {
 
-System settingsAudioGui = {
-    .name                = "settingsAudioGui",
-    .added               = added,
-    .removed             = removed,
-    .preUpdate           = nullptr,
-    .update              = nullptr,
-    .postUpdate          = nullptr,
-    .cpuElapsedLastFrame = 0.0,
-    .cpuElapsed          = 0.0,
-    .gpuElapsed          = 0.0,
-    .priority            = 0,
-};
+SettingsAudioGui settingsAudioGui;
+
+SettingsAudioGui::SettingsAudioGui() : engine::System("settingsAudioGui") {}
 
 static void* document;
 static void* model;
@@ -31,12 +22,12 @@ static int effectsChange(void* _);
 static int musicChange(void* _);
 static int audioSettingsClose(void* _);
 
-void added(void) {
-    luaRegisterFunction("effectsChange", effectsChange);
-    luaRegisterFunction("musicChange", musicChange);
-    luaRegisterFunction("audioSettingsClose", audioSettingsClose);
-    effects = settingsGetDouble("effects");
-    music   = settingsGetDouble("music");
+void SettingsAudioGui::added() {
+    engine::luaRegisterFunction("effectsChange", effectsChange);
+    engine::luaRegisterFunction("musicChange", musicChange);
+    engine::luaRegisterFunction("audioSettingsClose", audioSettingsClose);
+    effects = utils::settingsGetDouble("effects");
+    music   = utils::settingsGetDouble("music");
 
     document = rmlNewDocument("gui/settings/audio/audio.html");
     model    = rmlCreateModel("audio");
@@ -46,27 +37,27 @@ void added(void) {
     rmlShowDocument(document);
 }
 
-void removed(void) {
+void SettingsAudioGui::removed() {
     rmlUnloadDocument(document);
     rmlUnloadModel(model);
 }
 
 int audioSettingsClose(void* _) {
-    futureTaskAddNoParam(0, settingsGuiShow);
-    guiManagerRemoveGuiNextFrame(&settingsAudioGui);
+    utils::futureTaskAddNoParam(0, settingsGuiShow);
+    engine::guiManagerRemoveGuiNextFrame(&settingsAudioGui);
     return 0;
 }
 
 static void effectsChangeLater(void* _) {
-    settingsSetDouble("effects", effects);
-    soundPlayClick();
-    settingsWrite();
+    utils::settingsSetDouble("effects", effects);
+    engine::soundPlayClick();
+    utils::settingsWrite();
 }
 
 static void musicChangeLater(void* _) {
-    settingsSetDouble("music", music);
-    soundPlayClickOnMusicLevel();
-    settingsWrite();
+    utils::settingsSetDouble("music", music);
+    engine::soundPlayClickOnMusicLevel();
+    utils::settingsWrite();
 }
 
 int effectsChange(void* _) {
@@ -74,17 +65,18 @@ int effectsChange(void* _) {
     // so update settings next frame
     static int key;
     if (key) {
-        futureTaskRemove(key);
+        utils::futureTaskRemove(key);
     }
-    key = futureTaskAdd(50, effectsChangeLater, nullptr);
+    key = utils::futureTaskAdd(50, effectsChangeLater, nullptr);
     return 0;
 }
 
 int musicChange(void* _) {
     static int key;
     if (key) {
-        futureTaskRemove(key);
+        utils::futureTaskRemove(key);
     }
-    key = futureTaskAdd(50, musicChangeLater, nullptr);
+    key = utils::futureTaskAdd(50, musicChangeLater, nullptr);
     return 0;
 }
+}  // namespace game

@@ -1,3 +1,4 @@
+#include "SettingsGraphicsGui.h"
 #include "ecs/system/System.h"
 #include "ecs/system/lua/LuaSystem.h"
 #include "futuretask/FutureTask.h"
@@ -15,8 +16,7 @@
 #include "../SettingsGui.h"
 #include <stdio.h>
 
-static void added(void);
-static void removed(void);
+namespace game {
 static void syncAAUi(void);
 static void persistAASettings(void* _);
 static void queueAAPersist(void);
@@ -24,24 +24,15 @@ static void applyUpscalerModeLater(void* _);
 static void flushPendingTasks(void);
 static void renderScaleApply(void* _);
 
-System settingsGraphicsGui = {
-    .name                = "settingsGraphicsGui",
-    .added               = added,
-    .removed             = removed,
-    .preUpdate           = nullptr,
-    .update              = nullptr,
-    .postUpdate          = nullptr,
-    .cpuElapsedLastFrame = 0.0,
-    .cpuElapsed          = 0.0,
-    .gpuElapsed          = 0.0,
-    .priority            = 0,
-};
+SettingsGraphicsGui settingsGraphicsGui;
+
+SettingsGraphicsGui::SettingsGraphicsGui() : engine::System("settingsGraphicsGui") {}
 
 static void* document;
 static void* model;
 
-static RendererAASettings aaSettings;
-static RendererUpscalerMode upscalerMode;
+static engine::RendererAASettings aaSettings;
+static engine::RendererUpscalerMode upscalerMode;
 static char renderScaleDisabled;
 static float casStrengthPercent;
 static float renderScalePercent;
@@ -96,29 +87,29 @@ static int toggleContactShadow(void* _);
 static int toggleFog(void* _);
 static int toggleTaa(void* _);
 
-void added(void) {
-    luaRegisterFunction("upscalerPrev", upscalerPrev);
-    luaRegisterFunction("upscalerNext", upscalerNext);
-    luaRegisterFunction("aaCasStrengthChange", aaCasStrengthChange);
-    luaRegisterFunction("renderScaleChange", renderScaleChange);
-    luaRegisterFunction("graphicsClose", graphicsClose);
-    luaRegisterFunction("toggleShadows", toggleShadows);
-    luaRegisterFunction("toggleGtao", toggleGtao);
-    luaRegisterFunction("toggleSsr", toggleSsr);
-    luaRegisterFunction("toggleBloom", toggleBloom);
-    luaRegisterFunction("toggleContactShadow", toggleContactShadow);
-    luaRegisterFunction("toggleFog", toggleFog);
-    luaRegisterFunction("toggleTaa", toggleTaa);
+void SettingsGraphicsGui::added() {
+    engine::luaRegisterFunction("upscalerPrev", upscalerPrev);
+    engine::luaRegisterFunction("upscalerNext", upscalerNext);
+    engine::luaRegisterFunction("aaCasStrengthChange", aaCasStrengthChange);
+    engine::luaRegisterFunction("renderScaleChange", renderScaleChange);
+    engine::luaRegisterFunction("graphicsClose", graphicsClose);
+    engine::luaRegisterFunction("toggleShadows", toggleShadows);
+    engine::luaRegisterFunction("toggleGtao", toggleGtao);
+    engine::luaRegisterFunction("toggleSsr", toggleSsr);
+    engine::luaRegisterFunction("toggleBloom", toggleBloom);
+    engine::luaRegisterFunction("toggleContactShadow", toggleContactShadow);
+    engine::luaRegisterFunction("toggleFog", toggleFog);
+    engine::luaRegisterFunction("toggleTaa", toggleTaa);
 
     /* Read live renderer state rather than stale settings values so that
      * changes made via the debug GUI (or elsewhere) are reflected. */
-    aaSettings   = rendererGetAASettings();
-    upscalerMode = rendererGetUpscalerMode();
-    fogMode      = (int)settingsGetDouble("fogMode");
+    aaSettings   = engine::rendererGetAASettings();
+    upscalerMode = engine::rendererGetUpscalerMode();
+    fogMode      = (int)utils::settingsGetDouble("fogMode");
     if (fogMode < 0 || fogMode > 1) fogMode = 1;
     syncAAUi();
 
-    renderScalePercent = rendererGetRenderScale() * 100.0f;
+    renderScalePercent = engine::rendererGetRenderScale() * 100.0f;
 
     document = rmlNewDocument("gui/settings/graphics/graphics.html");
     model    = rmlCreateModel("graphics");
@@ -139,7 +130,7 @@ void added(void) {
     rmlShowDocument(document);
 }
 
-void removed(void) {
+void SettingsGraphicsGui::removed() {
     /* Flush any pending debounced settings before the GUI goes away.
      * The sliders debounce their apply tasks (500ms); the settings menu
      * background is opaque, so the player cannot watch the effect live
@@ -155,8 +146,8 @@ void removed(void) {
 }
 
 static void syncAAUi(void) {
-    renderScaleDisabled   = rendererIsUpscalerEnabled();
-    snprintf(taaLabelText, sizeof(taaLabelText), "%s", rendererIsTAAEnabled() ? "On" : "Off");
+    renderScaleDisabled   = engine::rendererIsUpscalerEnabled();
+    snprintf(taaLabelText, sizeof(taaLabelText), "%s", engine::rendererIsTAAEnabled() ? "On" : "Off");
     taaLabel = taaLabelText;
 
     snprintf(upscalerLabelText, sizeof(upscalerLabelText), "%s", upscalerNames[upscalerMode]);
@@ -170,7 +161,7 @@ static void syncAAUi(void) {
 
     snprintf(upscalePolicyLabelText,
              sizeof(upscalePolicyLabelText),
-             rendererIsUpscalerEnabled()
+             engine::rendererIsUpscalerEnabled()
                  ? "FSR quality mode controls the internal render resolution. Manual resolution "
                    "scale is disabled."
                  : "Manual resolution scale is used only when the upscaler is Off.");
@@ -178,15 +169,15 @@ static void syncAAUi(void) {
 
     casStrengthPercent = aaSettings.casStrength * 100.0f;
 
-    snprintf(shadowsLabelText, sizeof(shadowsLabelText), "%s", vulkanShadowPassIsDisabled() ? "Off" : "On");
+    snprintf(shadowsLabelText, sizeof(shadowsLabelText), "%s", engine::vulkanShadowPassIsDisabled() ? "Off" : "On");
     shadowsLabel = shadowsLabelText;
-    snprintf(gtaoLabelText, sizeof(gtaoLabelText), "%s", vulkanGtaoPassIsDisabled() ? "Off" : "On");
+    snprintf(gtaoLabelText, sizeof(gtaoLabelText), "%s", engine::vulkanGtaoPassIsDisabled() ? "Off" : "On");
     gtaoLabel = gtaoLabelText;
-    snprintf(ssrLabelText, sizeof(ssrLabelText), "%s", vulkanSsrPassIsDisabled() ? "Off" : "On");
+    snprintf(ssrLabelText, sizeof(ssrLabelText), "%s", engine::vulkanSsrPassIsDisabled() ? "Off" : "On");
     ssrLabel = ssrLabelText;
-    snprintf(bloomLabelText, sizeof(bloomLabelText), "%s", vulkanBloomPassIsDisabled() ? "Off" : "On");
+    snprintf(bloomLabelText, sizeof(bloomLabelText), "%s", engine::vulkanBloomPassIsDisabled() ? "Off" : "On");
     bloomLabel = bloomLabelText;
-    snprintf(contactShadowLabelText, sizeof(contactShadowLabelText), "%s", vulkanContactShadowPassIsDisabled() ? "Off" : "On");
+    snprintf(contactShadowLabelText, sizeof(contactShadowLabelText), "%s", engine::vulkanContactShadowPassIsDisabled() ? "Off" : "On");
     contactShadowLabel = contactShadowLabelText;
     snprintf(fogLabelText, sizeof(fogLabelText), "%s", fogModeNames[fogMode]);
     fogLabel = fogLabelText;
@@ -203,13 +194,13 @@ static void persistAASettings(void* _) {
      * back. By the time this task fires, the bound value is up to date. */
     aaSettings.casStrength = casStrengthPercent / 100.0f;
 
-    rendererSetAASettings(aaSettings);
-    aaSettings = rendererGetAASettings();
+    engine::rendererSetAASettings(aaSettings);
+    aaSettings = engine::rendererGetAASettings();
     syncAAUi();
 
-    settingsSetDouble("aaMode", static_cast<double>(AA_OFF));
-    settingsSetDouble("aaCasStrength", static_cast<double>(casStrengthPercent));
-    settingsWrite();
+    utils::settingsSetDouble("aaMode", static_cast<double>(engine::AA_OFF));
+    utils::settingsSetDouble("aaCasStrength", static_cast<double>(casStrengthPercent));
+    utils::settingsWrite();
 
     if (model) {
         rmlUpdateDirtyAll(model);
@@ -218,32 +209,32 @@ static void persistAASettings(void* _) {
 
 static void queueAAPersist(void) {
     if (aaTaskKey != -1) {
-        futureTaskRemove(aaTaskKey);
+        utils::futureTaskRemove(aaTaskKey);
     }
-    aaTaskKey = futureTaskAdd(500, persistAASettings, nullptr);
+    aaTaskKey = utils::futureTaskAdd(500, persistAASettings, nullptr);
 }
 
 static void applyUpscalerModeLater(void* _) {
     upscalerTaskKey = -1;
 
-    RendererUpscalerMode currentMode = rendererGetUpscalerMode();
+    engine::RendererUpscalerMode currentMode = engine::rendererGetUpscalerMode();
     if (currentMode == upscalerMode) {
         return;
     }
 
-    rendererSetUpscalerMode(upscalerMode);
-    rendererSetAASettings(aaSettings);
-    aaSettings   = rendererGetAASettings();
-    upscalerMode = rendererGetUpscalerMode();
+    engine::rendererSetUpscalerMode(upscalerMode);
+    engine::rendererSetAASettings(aaSettings);
+    aaSettings   = engine::rendererGetAASettings();
+    upscalerMode = engine::rendererGetUpscalerMode();
     syncAAUi();
 
-    settingsSetDouble("upscalerMode", static_cast<double>(upscalerMode));
+    utils::settingsSetDouble("upscalerMode", static_cast<double>(upscalerMode));
     /* Enabling the upscaler forces TAA off; persist that so TAA does not
      * silently re-enable itself after a restart. */
-    settingsSetBool("taaEnabled", rendererIsTAAEnabled());
-    settingsWrite();
+    utils::settingsSetBool("taaEnabled", engine::rendererIsTAAEnabled());
+    utils::settingsWrite();
 
-    rendererApplyRenderScale();
+    engine::rendererApplyRenderScale();
     if (model) {
         rmlUpdateDirtyAll(model);
     }
@@ -252,27 +243,27 @@ static void applyUpscalerModeLater(void* _) {
 
 int upscalerPrev(void* _) {
     int cur      = (int)upscalerMode;
-    cur          = (cur + RENDERER_UPSCALER_COUNT - 1) % RENDERER_UPSCALER_COUNT;
-    upscalerMode = static_cast<RendererUpscalerMode>(cur);
+    cur          = (cur + engine::RENDERER_UPSCALER_COUNT - 1) % engine::RENDERER_UPSCALER_COUNT;
+    upscalerMode = static_cast<engine::RendererUpscalerMode>(cur);
     syncAAUi();
     rmlUpdateDirtyAll(model);
     if (upscalerTaskKey != -1) {
-        futureTaskRemove(upscalerTaskKey);
+        utils::futureTaskRemove(upscalerTaskKey);
     }
-    upscalerTaskKey = futureTaskAdd(500, applyUpscalerModeLater, nullptr);
+    upscalerTaskKey = utils::futureTaskAdd(500, applyUpscalerModeLater, nullptr);
     return 0;
 }
 
 int upscalerNext(void* _) {
     int cur      = (int)upscalerMode;
-    cur          = (cur + 1) % RENDERER_UPSCALER_COUNT;
-    upscalerMode = static_cast<RendererUpscalerMode>(cur);
+    cur          = (cur + 1) % engine::RENDERER_UPSCALER_COUNT;
+    upscalerMode = static_cast<engine::RendererUpscalerMode>(cur);
     syncAAUi();
     rmlUpdateDirtyAll(model);
     if (upscalerTaskKey != -1) {
-        futureTaskRemove(upscalerTaskKey);
+        utils::futureTaskRemove(upscalerTaskKey);
     }
-    upscalerTaskKey = futureTaskAdd(500, applyUpscalerModeLater, nullptr);
+    upscalerTaskKey = utils::futureTaskAdd(500, applyUpscalerModeLater, nullptr);
     return 0;
 }
 
@@ -290,19 +281,19 @@ static void renderScaleApply(void* _) {
     renderScaleTaskKey = -1;
 
     float requestedScale = renderScalePercent / 100.0f;
-    float appliedScale   = rendererNormalizeRenderScale(requestedScale);
-    char scaleChanged    = rendererGetRenderScale() != appliedScale;
-    char settingsChanged = settingsGetDouble("renderScale") != static_cast<double>(appliedScale);
+    float appliedScale   = engine::rendererNormalizeRenderScale(requestedScale);
+    char scaleChanged    = engine::rendererGetRenderScale() != appliedScale;
+    char settingsChanged = utils::settingsGetDouble("renderScale") != static_cast<double>(appliedScale);
 
     renderScalePercent = appliedScale * 100.0f;
 
     if (scaleChanged) {
-        rendererSetRenderScale(appliedScale);
-        rendererApplyRenderScale();
+        engine::rendererSetRenderScale(appliedScale);
+        engine::rendererApplyRenderScale();
     }
     if (settingsChanged) {
-        settingsSetDouble("renderScale", static_cast<double>(appliedScale));
-        settingsWrite();
+        utils::settingsSetDouble("renderScale", static_cast<double>(appliedScale));
+        utils::settingsWrite();
     }
     if (model) {
         rmlUpdateDirtyAll(model);
@@ -315,11 +306,11 @@ int renderScaleChange(void* _) {
     }
 
     if (renderScaleTaskKey != -1) {
-        futureTaskRemove(renderScaleTaskKey);
+        utils::futureTaskRemove(renderScaleTaskKey);
     }
     /* Give the bound model value time to update, then debounce expensive
      * render-target recreation until the slider settles. */
-    renderScaleTaskKey = futureTaskAdd(500, renderScaleApply, nullptr);
+    renderScaleTaskKey = utils::futureTaskAdd(500, renderScaleApply, nullptr);
     return 0;
 }
 
@@ -330,68 +321,68 @@ static void flushPendingTasks(void) {
      * recreate the swapchain; AA settings must come after those so they
      * are not reset by the recreate. */
     if (upscalerTaskKey != -1) {
-        futureTaskRemove(upscalerTaskKey);
+        utils::futureTaskRemove(upscalerTaskKey);
         applyUpscalerModeLater(nullptr);
     }
     if (renderScaleTaskKey != -1) {
-        futureTaskRemove(renderScaleTaskKey);
+        utils::futureTaskRemove(renderScaleTaskKey);
         renderScaleApply(nullptr);
     }
     if (aaTaskKey != -1) {
-        futureTaskRemove(aaTaskKey);
+        utils::futureTaskRemove(aaTaskKey);
         persistAASettings(nullptr);
     }
 }
 
 int graphicsClose(void* _) {
-    futureTaskAddNoParam(0, settingsGuiShow);
-    guiManagerRemoveGuiNextFrame(&settingsGraphicsGui);
+    utils::futureTaskAddNoParam(0, settingsGuiShow);
+    engine::guiManagerRemoveGuiNextFrame(&settingsGraphicsGui);
     return 0;
 }
 
 static void syncEffectLabels(void) {
-    snprintf(shadowsLabelText, sizeof(shadowsLabelText), "%s", vulkanShadowPassIsDisabled() ? "Off" : "On");
+    snprintf(shadowsLabelText, sizeof(shadowsLabelText), "%s", engine::vulkanShadowPassIsDisabled() ? "Off" : "On");
     shadowsLabel = shadowsLabelText;
-    snprintf(taaLabelText, sizeof(taaLabelText), "%s", rendererIsTAAEnabled() ? "On" : "Off");
+    snprintf(taaLabelText, sizeof(taaLabelText), "%s", engine::rendererIsTAAEnabled() ? "On" : "Off");
     taaLabel = taaLabelText;
-    snprintf(gtaoLabelText, sizeof(gtaoLabelText), "%s", vulkanGtaoPassIsDisabled() ? "Off" : "On");
+    snprintf(gtaoLabelText, sizeof(gtaoLabelText), "%s", engine::vulkanGtaoPassIsDisabled() ? "Off" : "On");
     gtaoLabel = gtaoLabelText;
-    snprintf(ssrLabelText, sizeof(ssrLabelText), "%s", vulkanSsrPassIsDisabled() ? "Off" : "On");
+    snprintf(ssrLabelText, sizeof(ssrLabelText), "%s", engine::vulkanSsrPassIsDisabled() ? "Off" : "On");
     ssrLabel = ssrLabelText;
-    snprintf(bloomLabelText, sizeof(bloomLabelText), "%s", vulkanBloomPassIsDisabled() ? "Off" : "On");
+    snprintf(bloomLabelText, sizeof(bloomLabelText), "%s", engine::vulkanBloomPassIsDisabled() ? "Off" : "On");
     bloomLabel = bloomLabelText;
-    snprintf(contactShadowLabelText, sizeof(contactShadowLabelText), "%s", vulkanContactShadowPassIsDisabled() ? "Off" : "On");
+    snprintf(contactShadowLabelText, sizeof(contactShadowLabelText), "%s", engine::vulkanContactShadowPassIsDisabled() ? "Off" : "On");
     contactShadowLabel = contactShadowLabelText;
     snprintf(fogLabelText, sizeof(fogLabelText), "%s", fogModeNames[fogMode]);
     fogLabel = fogLabelText;
 }
 
 static void persistEffectSettings(void) {
-    settingsSetBool("shadowsDisabled", vulkanShadowPassIsDisabled());
-    settingsSetBool("gtaoDisabled", vulkanGtaoPassIsDisabled());
-    settingsSetBool("ssrDisabled", vulkanSsrPassIsDisabled());
-    settingsSetBool("bloomDisabled", vulkanBloomPassIsDisabled());
-    settingsSetBool("contactShadowDisabled", vulkanContactShadowPassIsDisabled());
-    settingsSetDouble("fogMode", static_cast<double>(fogMode));
-    settingsWrite();
+    utils::settingsSetBool("shadowsDisabled", engine::vulkanShadowPassIsDisabled());
+    utils::settingsSetBool("gtaoDisabled", engine::vulkanGtaoPassIsDisabled());
+    utils::settingsSetBool("ssrDisabled", engine::vulkanSsrPassIsDisabled());
+    utils::settingsSetBool("bloomDisabled", engine::vulkanBloomPassIsDisabled());
+    utils::settingsSetBool("contactShadowDisabled", engine::vulkanContactShadowPassIsDisabled());
+    utils::settingsSetDouble("fogMode", static_cast<double>(fogMode));
+    utils::settingsWrite();
 
     /* Apply fog mode to engine */
-    VulkanFogData fog = vulkanResourceGetFogData();
+    engine::VulkanFogData fog = engine::vulkanResourceGetFogData();
     switch (fogMode) {
         case 0: /* Off */
             fog.fogType = 0;
-            vulkanVolumetricPassSetDisabled(1);
+            engine::vulkanVolumetricPassSetDisabled(1);
             break;
         case 1: /* On (exponential fog + god-rays) */
             fog.fogType = 2;
-            vulkanVolumetricPassSetDisabled(0);
+            engine::vulkanVolumetricPassSetDisabled(0);
             break;
     }
-    vulkanResourceSetFogData(fog);
+    engine::vulkanResourceSetFogData(fog);
 }
 
 int toggleShadows(void* _) {
-    vulkanShadowPassSetDisabled(!vulkanShadowPassIsDisabled());
+    engine::vulkanShadowPassSetDisabled(!engine::vulkanShadowPassIsDisabled());
     syncEffectLabels();
     rmlUpdateDirtyAll(model);
     persistEffectSettings();
@@ -399,7 +390,7 @@ int toggleShadows(void* _) {
 }
 
 int toggleGtao(void* _) {
-    vulkanGtaoPassSetDisabled(!vulkanGtaoPassIsDisabled());
+    engine::vulkanGtaoPassSetDisabled(!engine::vulkanGtaoPassIsDisabled());
     syncEffectLabels();
     rmlUpdateDirtyAll(model);
     persistEffectSettings();
@@ -407,7 +398,7 @@ int toggleGtao(void* _) {
 }
 
 int toggleSsr(void* _) {
-    vulkanSsrPassSetDisabled(!vulkanSsrPassIsDisabled());
+    engine::vulkanSsrPassSetDisabled(!engine::vulkanSsrPassIsDisabled());
     syncEffectLabels();
     rmlUpdateDirtyAll(model);
     persistEffectSettings();
@@ -415,7 +406,7 @@ int toggleSsr(void* _) {
 }
 
 int toggleBloom(void* _) {
-    vulkanBloomPassSetDisabled(!vulkanBloomPassIsDisabled());
+    engine::vulkanBloomPassSetDisabled(!engine::vulkanBloomPassIsDisabled());
     syncEffectLabels();
     rmlUpdateDirtyAll(model);
     persistEffectSettings();
@@ -423,7 +414,7 @@ int toggleBloom(void* _) {
 }
 
 int toggleContactShadow(void* _) {
-    vulkanContactShadowPassSetDisabled(!vulkanContactShadowPassIsDisabled());
+    engine::vulkanContactShadowPassSetDisabled(!engine::vulkanContactShadowPassIsDisabled());
     syncEffectLabels();
     rmlUpdateDirtyAll(model);
     persistEffectSettings();
@@ -442,14 +433,15 @@ int toggleTaa(void* _) {
     /* TAA and the FSR upscaler are mutually exclusive.  rendererSetAAMode
      * (AA_TAA) forces the upscaler off; enabling the upscaler elsewhere
      * forces TAA off. */
-    rendererSetAAMode(rendererGetAAMode() == AA_TAA ? AA_OFF : AA_TAA);
-    upscalerMode = rendererGetUpscalerMode();
+    engine::rendererSetAAMode(engine::rendererGetAAMode() == engine::AA_TAA ? engine::AA_OFF : engine::AA_TAA);
+    upscalerMode = engine::rendererGetUpscalerMode();
     syncAAUi();
     rmlUpdateDirtyAll(model);
-    settingsSetBool("taaEnabled", rendererIsTAAEnabled());
-    settingsSetDouble("upscalerMode", static_cast<double>(upscalerMode));
-    settingsWrite();
+    utils::settingsSetBool("taaEnabled", engine::rendererIsTAAEnabled());
+    utils::settingsSetDouble("upscalerMode", static_cast<double>(upscalerMode));
+    utils::settingsWrite();
     return 0;
 }
 
 
+}  // namespace game

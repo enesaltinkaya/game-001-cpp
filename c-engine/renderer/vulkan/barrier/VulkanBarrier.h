@@ -1,5 +1,6 @@
 #pragma once
 
+namespace engine {
 struct VulkanCommand;
 
 enum ExecutionBarrierType {
@@ -34,3 +35,4 @@ enum ExecutionBarrierType {
 };
 
 void vulkanBarrier(struct VulkanCommand* cmd, enum ExecutionBarrierType barrierType);
+}  // namespace engine

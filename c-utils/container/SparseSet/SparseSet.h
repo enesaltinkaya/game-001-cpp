@@ -1,6 +1,7 @@
 #pragma once
 #include <vector>
 
+namespace utils {
 struct SparseSet {
     std::vector<u32> dense;
     std::vector<u32> sparse;
@@ -24,3 +25,4 @@ bool ssRemoveByValue(SparseSet* ss, u32 value);
 void* ssInsert(SparseSet* ss, u32 value, const void* data);
 void* ssNewItem(SparseSet* ss, u32 value);
 void ssClear(SparseSet* ss);
+}  // namespace utils

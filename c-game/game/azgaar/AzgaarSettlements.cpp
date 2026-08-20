@@ -25,6 +25,7 @@
 
 // Per-building target height ranges (metres).  Mirrors the kSpecies table in
 // AzgaarProps.c (unit-height placeholder meshes: instance scale == height).
+namespace game {
 static const float kBuildH[AZGAAR_PROP_COUNT][2] = {
     [AZGAAR_PROP_HUT]    = {4.0f, 6.0f},
     [AZGAAR_PROP_HOUSE]  = {5.0f, 8.0f},
@@ -74,9 +75,9 @@ static const AzgaarWorld* g_world = nullptr;
 static bool               g_disabled = false;
 static u32                g_mapSeed;
 
-static PropInstance*  g_instances = nullptr;
+static std::vector<engine::PropInstance>  g_instances;
 static u32            g_instanceCount = 0;
-static PropTileRange* g_ranges = nullptr;
+static std::vector<engine::PropTileRange> g_ranges;
 static u32            g_rangeCount = 0;
 
 // Plateau spatial grid (D8): 1024 m buckets over the map AABB.
@@ -84,8 +85,8 @@ struct SettGrid {
     float  invBucket;
     float  minX, minZ;
     u32    gridW, gridH;
-    u32*   starts; // bucket -> start index into cells
-    u32*   cells;  // settlement indices sorted by bucket
+    std::vector<u32> starts; // bucket -> start index into cells
+    std::vector<u32> cells;  // settlement indices sorted by bucket
     u32    count;
 };
 static SettGrid g_grid = {};
@@ -96,9 +97,9 @@ struct SettRoadHash {
     float  invBucket;
     float  minX, minZ;
     u32    gridW, gridH;
-    u32*   starts;
-    u32*   cells; // point indices sorted by bucket
-    float*  pts;  // [x, z] pairs in world space
+    std::vector<u32>   starts;
+    std::vector<u32>   cells; // point indices sorted by bucket
+    std::vector<float>  pts;  // [x, z] pairs in world space
     u32    pointCount;
 };
 static SettRoadHash g_road = {};
@@ -140,11 +141,11 @@ static bool settRoadNear(float wx, float wz, float maxD, float* outRx, float* ou
 // ── Cluster generation ─────────────────────────────────────────────────────
 
 // Append one instance to the unsorted buffer (offset `w`, capacity `cap`).
-static void settPush(PropInstance* temp, u32 cap, u32* w,
+static void settPush(engine::PropInstance* temp, u32 cap, u32* w,
                       float x, float y, float z, float yaw, float scale,
                       u32 species, float colorJit, const AzgaarSettlement* s) {
     if (*w >= cap) return;
-    PropInstance inst = {};
+    engine::PropInstance inst = {};
     inst.pos[0] = x;
     inst.pos[1] = y;
     inst.pos[2] = z;
@@ -198,7 +199,7 @@ static float settWaterDir(const AzgaarWorld* world, const AzgaarSettlement* s) {
 // heightAt: natural + fBm detail + D8 plateau) so buildings sit flush with
 // the rendered terrain.  `flatY` is only the fallback when no callback.
 static u32 settGenOne(const AzgaarWorld* world, const AzgaarSettlement* s, u32 seed,
-                       PropInstance* temp, u32 cap, u32* w,
+                       engine::PropInstance* temp, u32 cap, u32* w,
                        float (*groundAt)(void* userData, float wx, float wz),
                        void* groundUd) {
     u32 start = *w;
@@ -304,7 +305,7 @@ static u32 settGenOne(const AzgaarWorld* world, const AzgaarSettlement* s, u32 s
             static bool portLogged = false;
             if (!portLogged) {
                 portLogged = true;
-                warn("azgaarSettlements: '%s' has a port but no water within 1.5r — piers omitted",
+                utils::warn("azgaarSettlements: '%s' has a port but no water within 1.5r — piers omitted",
                      s->name);
             }
         } else {
@@ -349,7 +350,7 @@ static u32 settGenOne(const AzgaarWorld* world, const AzgaarSettlement* s, u32 s
 // streaming) only ever sees either count==0 (returns the natural height) or
 // a fully built grid.  Publishing `count` last makes the publication safe.
 static void settGridBuild(const AzgaarWorld* world, SettGrid* out) {
-    *out = SettGrid{0};
+    *out = SettGrid{};
     if (!world || world->settlementCount == 0) return;
 
     const float BUCKET = 1024.0f;
@@ -361,11 +362,10 @@ static void settGridBuild(const AzgaarWorld* world, SettGrid* out) {
     out->gridW     = static_cast<u32>(2.0f * halfW / BUCKET) + 1u;
     out->gridH     = static_cast<u32>(2.0f * halfH / BUCKET) + 1u;
     u32 buckets = out->gridW * out->gridH;
-    out->starts  = static_cast<u32*>(memoryAlloc(sizeof(u32) * (buckets + 1u)));
-    out->cells   = static_cast<u32*>(memoryAlloc(sizeof(u32) * world->settlementCount));
+    out->starts.resize(buckets + 1u);
+    out->cells.resize(world->settlementCount);
 
-    u32* counts = static_cast<u32*>(memoryAlloc(sizeof(u32) * buckets));
-    memset(counts, 0, sizeof(u32) * buckets);
+    std::vector<u32> counts(buckets, 0u);
     for (u32 i = 0; i < world->settlementCount; i++) {
         const AzgaarSettlement* s = &world->settlements[i];
         i32 bx = static_cast<i32>((s->wx - out->minX) * out->invBucket);
@@ -382,8 +382,7 @@ static void settGridBuild(const AzgaarWorld* world, SettGrid* out) {
         acc += counts[b];
     }
     out->starts[buckets] = acc;
-    u32* cursor = static_cast<u32*>(memoryAlloc(sizeof(u32) * buckets));
-    memcpy(cursor, out->starts, sizeof(u32) * buckets);
+    std::vector<u32> cursor(out->starts.begin(), out->starts.end() - 1);
     for (u32 i = 0; i < world->settlementCount; i++) {
         const AzgaarSettlement* s = &world->settlements[i];
         i32 bx = static_cast<i32>((s->wx - out->minX) * out->invBucket);
@@ -395,20 +394,18 @@ static void settGridBuild(const AzgaarWorld* world, SettGrid* out) {
         u32 b = static_cast<u32>(bz) * out->gridW + static_cast<u32>(bx);
         out->cells[cursor[b]++] = i;
     }
-    memoryFree(counts);
-    memoryFree(cursor);
     // Publish last: concurrent readers only see count==0 or the finished grid.
     out->count = world->settlementCount;
 }
 
 static void settRoadBuild(const AzgaarWorld* world) {
-    g_road = SettRoadHash{0};
+    g_road = SettRoadHash{};
     if (!world || world->routeCount == 0) return;
 
     const float BUCKET = 64.0f;
     u32 totalPoints = 0;
     for (u32 r = 0; r < world->routeCount; r++) {
-        AzgaarRoute* route = &world->routes[r];
+        const AzgaarRoute* route = &world->routes[r];
         if (route->group == AZGAAR_ROUTE_SEAROUTE) continue;
         totalPoints += route->pointCount;
     }
@@ -422,15 +419,14 @@ static void settRoadBuild(const AzgaarWorld* world) {
     g_road.gridH     = static_cast<u32>(2.0f * halfH / BUCKET) + 1u;
     u32 buckets       = g_road.gridW * g_road.gridH;
     g_road.pointCount = totalPoints;
-    g_road.pts         = static_cast<float*>(memoryAlloc(sizeof(float) * 2 * totalPoints));
-    g_road.starts      = static_cast<u32*>(memoryAlloc(sizeof(u32) * (buckets + 1u)));
-    g_road.cells       = static_cast<u32*>(memoryAlloc(sizeof(u32) * totalPoints));
+    g_road.pts.resize(2 * totalPoints);
+    g_road.starts.resize(buckets + 1u);
+    g_road.cells.resize(totalPoints);
 
-    u32* counts = static_cast<u32*>(memoryAlloc(sizeof(u32) * buckets));
-    memset(counts, 0, sizeof(u32) * buckets);
+    std::vector<u32> counts(buckets, 0u);
     u32 write = 0;
     for (u32 r = 0; r < world->routeCount; r++) {
-        AzgaarRoute* route = &world->routes[r];
+        const AzgaarRoute* route = &world->routes[r];
         if (route->group == AZGAAR_ROUTE_SEAROUTE) continue;
         for (u32 p = 0; p < route->pointCount; p++) {
             float wx, wz;
@@ -454,11 +450,10 @@ static void settRoadBuild(const AzgaarWorld* world) {
         acc += counts[b];
     }
     g_road.starts[buckets] = acc;
-    u32* cursor = static_cast<u32*>(memoryAlloc(sizeof(u32) * buckets));
-    memcpy(cursor, g_road.starts, sizeof(u32) * buckets);
+    std::vector<u32> cursor(g_road.starts.begin(), g_road.starts.end() - 1);
     write = 0;
     for (u32 r = 0; r < world->routeCount; r++) {
-        AzgaarRoute* route = &world->routes[r];
+        const AzgaarRoute* route = &world->routes[r];
         if (route->group == AZGAAR_ROUTE_SEAROUTE) continue;
         for (u32 p = 0; p < route->pointCount; p++) {
             float wx, wz;
@@ -474,8 +469,6 @@ static void settRoadBuild(const AzgaarWorld* world) {
             write++;
         }
     }
-    memoryFree(counts);
-    memoryFree(cursor);
 }
 
 // ── Public API ─────────────────────────────────────────────────────────────
@@ -502,8 +495,6 @@ void azgaarSettlementsInit(const AzgaarWorld* world,
     // Y is sampled through it — this only works once the new grid is live.
     SettGrid newGrid = {};
     settGridBuild(world, &newGrid);
-    memoryFree(g_grid.starts);
-    memoryFree(g_grid.cells);
     g_grid = newGrid;
 
     // Budget the temp buffer exactly (n per the plan's formula + specials).
@@ -520,12 +511,12 @@ void azgaarSettlementsInit(const AzgaarWorld* world,
         if (s->flags & AZGAAR_SETT_FLAG_PORT) cap += 3; // up to 3 piers
         if (s->flags & AZGAAR_SETT_FLAG_SHANTY) cap += 4;
     }
-    PropInstance* temp = static_cast<PropInstance*>(memoryAlloc(sizeof(PropInstance) * cap));
+    std::vector<engine::PropInstance> temp(cap);
     u32 write = 0;
     for (u32 i = 0; i < world->settlementCount; i++) {
         const AzgaarSettlement* s = &world->settlements[i];
         u32 seed = g_mapSeed ^ s->id * 374761393u;
-        settGenOne(world, s, seed, temp, cap, &write, groundAt, groundUserData);
+        settGenOne(world, s, seed, temp.data(), cap, &write, groundAt, groundUserData);
     }
     g_instanceCount = write;
 
@@ -537,9 +528,7 @@ void azgaarSettlementsInit(const AzgaarWorld* world,
     }
     if (g_instanceCount > 0) {
         // The pass keeps its own GPU copy; the CPU arrays are ours to replace.
-        memoryFree(g_instances);
-        memoryFree(g_ranges);
-        g_instances  = static_cast<PropInstance*>(memoryAlloc(sizeof(PropInstance) * g_instanceCount));
+        g_instances.resize(g_instanceCount);
         u32 offsets[AZGAAR_PROP_COUNT] = {};
         u32 acc = 0;
         for (u32 s2 = 0; s2 < AZGAAR_PROP_COUNT; s2++) {
@@ -552,11 +541,11 @@ void azgaarSettlementsInit(const AzgaarWorld* world,
             u32 dst = offsets[sp] + cursor[sp]++;
             g_instances[dst] = temp[i];
         }
-        g_ranges  = static_cast<PropTileRange*>(memoryAlloc(sizeof(PropTileRange) * AZGAAR_PROP_COUNT));
+        g_ranges.clear();
         u32 rc = 0;
         for (u32 s2 = 0; s2 < AZGAAR_PROP_COUNT; s2++) {
             if (perSpecies[s2] > 0) {
-                g_ranges[rc] = PropTileRange{.species = s2, .variant = 0, .start = offsets[s2], .count = perSpecies[s2]};
+                g_ranges.push_back(engine::PropTileRange{.species = s2, .variant = 0, .start = offsets[s2], .count = perSpecies[s2]});
                 rc++;
             }
         }
@@ -566,29 +555,21 @@ void azgaarSettlementsInit(const AzgaarWorld* world,
         float halfH = static_cast<float>(world->heightPx * 0.5) * static_cast<float>(world->metersPerPixel) + 40.0f;
         float aabbMin[3] = {-halfW, -20.0f, -halfH};
         float aabbMax[3] = {halfW, world->maxLandHeightM + 20.0f, halfH};
-        azgaarPropsRegisterGlobal(g_instances, g_instanceCount,
-                                    g_ranges, g_rangeCount, aabbMin, aabbMax, false);
-        info("azgaarSettlements: uploaded %u building instances in %u species ranges",
+        azgaarPropsRegisterGlobal(g_instances.data(), g_instanceCount,
+                                    g_ranges.data(), g_rangeCount, aabbMin, aabbMax, false);
+        utils::info("azgaarSettlements: uploaded %u building instances in %u species ranges",
              g_instanceCount, g_rangeCount);
     }
-    memoryFree(temp);
 }
 
 void azgaarSettlementsClear(void) {
     azgaarPropsClearGlobal(false);
-    memoryFree(g_instances);
-    g_instances     = nullptr;
+    g_instances.clear();
     g_instanceCount = 0;
-    memoryFree(g_ranges);
-    g_ranges     = nullptr;
+    g_ranges.clear();
     g_rangeCount = 0;
-    memoryFree(g_grid.starts);
-    memoryFree(g_grid.cells);
-    g_grid = SettGrid{0};
-    memoryFree(g_road.pts);
-    memoryFree(g_road.starts);
-    memoryFree(g_road.cells);
-    g_road = SettRoadHash{0};
+    g_grid = SettGrid{};
+    g_road = SettRoadHash{};
     g_world    = nullptr;
     g_disabled = false;
 }
@@ -599,8 +580,8 @@ float azgaarSettlementsPlateauY(const AzgaarWorld* world, float wx, float wz, fl
     // Snapshot the grid state at entry: an in-flight call keeps its snapshot
     // even if the game thread swaps in a fresh grid mid-call.
     u32   count    = g_grid.count;
-    u32*  starts   = g_grid.starts;
-    u32*  cells    = g_grid.cells;
+    const u32*  starts   = g_grid.starts.empty() ? nullptr : g_grid.starts.data();
+    const u32*  cells    = g_grid.cells.empty() ? nullptr : g_grid.cells.data();
     if (count == 0 || !starts || !cells) return naturalY;
     float invBucket = g_grid.invBucket;
     float minX      = g_grid.minX;
@@ -653,3 +634,4 @@ const AzgaarSettlement* azgaarSettlementsNearest(const AzgaarWorld* world, float
     }
     return best;
 }
+}  // namespace game

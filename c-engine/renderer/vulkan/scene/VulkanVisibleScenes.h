@@ -1,5 +1,6 @@
 #pragma once
 
+namespace engine {
 struct Scene;
 
 /// Called by the renderer bridge once per frame after scene-level frustum
@@ -8,4 +9,5 @@ struct Scene;
 void vulkanSetVisibleScenes(struct Scene** scenes, u32 count);
 
 /// Returns the current visible-scene list (valid for the current frame).
-struct Scene** vulkanGetVisibleScenes(u32* outCount);
+const struct Scene** vulkanGetVisibleScenes(u32* outCount);
+}  // namespace engine

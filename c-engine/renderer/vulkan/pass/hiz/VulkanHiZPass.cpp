@@ -1,4 +1,5 @@
 #include "VulkanHiZPass.h"
+#include "VulkanHiZPass.h"
 #include "events/Events.h"
 #include "renderer/Renderer.h"
 #include "renderer/vulkan/Vulkan.h"
@@ -8,27 +9,14 @@
 #include "renderer/vulkan/resources/VulkanImage.h"
 #include "renderer/vulkan/resources/VulkanResourceManager.h"
 
-static void added(void);
-static void preUpdate(void);
-static void update(void);
-static void postUpdate(void);
-static void removed(void);
+namespace engine {
 
 static double elapsedCPU;
 static double elapsedGPU;
 
-System vulkanHiZPass = {
-    .name                = "hiz",
-    .added               = added,
-    .removed             = removed,
-    .preUpdate           = preUpdate,
-    .update              = update,
-    .postUpdate          = postUpdate,
-    .cpuElapsedLastFrame = 0.0,
-    .cpuElapsed          = 0.0,
-    .gpuElapsed          = 0.0,
-    .priority            = 0,
-};
+VulkanHiZPass vulkanHiZPass;
+
+VulkanHiZPass::VulkanHiZPass() : System("hiz") {}
 
 #define MAX_HIZ_MIPS 16
 
@@ -110,7 +98,7 @@ static void destroyHiZ(int imageIndex) {
     destroyMipViews(imageIndex);
     if (hizImages[imageIndex].img) {
         vulkanDestroyImage(&hizImages[imageIndex], NULL);
-        hizImages[imageIndex] = VulkanImage{0};
+        hizImages[imageIndex] = VulkanImage{};
     }
 }
 
@@ -134,8 +122,8 @@ static void swapchainCreated(void*) {
     currentHiZIndex = 0;
 }
 
-static void added(void) {
-    signalSubscribe("swapchainCreated", swapchainCreated);
+void VulkanHiZPass::added() {
+    utils::signalSubscribe("swapchainCreated", swapchainCreated);
 
     copyDepthPipe = vulkanCreatePipe(
         .name = "hiz_copy_depth",
@@ -146,7 +134,7 @@ static void added(void) {
         .comp = "shaders/pass/hiz/spv/hiz_downsample.comp.spv");
 }
 
-static void preUpdate(void) {
+void VulkanHiZPass::preUpdate() {
     if (vulkan.skipFrame) {
         return;
     }
@@ -170,7 +158,7 @@ static void preUpdate(void) {
     vulkanResetProfile(vulkan.currentCmd, &downsamplePipe.profile, 0);
 }
 
-static void update(void) {
+void VulkanHiZPass::update() {
     if (vulkan.skipFrame) return;
 
     VulkanImage* depthImg = vulkanFrameResourcesGetDepth();
@@ -257,7 +245,7 @@ static void update(void) {
     u32 srcW = w;
     u32 srcH = h;
 
-    if (isDebug()) {
+    if (utils::isDebug()) {
         vulkanLabelBeginColor(cmd, "hi-z downsample", 1.0f, 1.0f, 0.0f, 1.0f);
     }
 
@@ -328,7 +316,7 @@ static void update(void) {
         srcH = dstH;
     }
 
-    if (isDebug()) {
+    if (utils::isDebug()) {
         vulkanLabelEnd(cmd);
     }
 
@@ -386,12 +374,12 @@ static void update(void) {
     elapsedGPU = copyDepthPipe.profile.elapsed + downsamplePipe.profile.elapsed;
 }
 
-static void postUpdate(void) {
+void VulkanHiZPass::postUpdate() {
     vulkanHiZPass.cpuElapsed = elapsedCPU;
     vulkanHiZPass.gpuElapsed = elapsedGPU;
 }
 
-static void removed(void) {
+void VulkanHiZPass::removed() {
     for (int i = 0; i < 2; i++) {
         destroyHiZ(i);
     }
@@ -432,3 +420,4 @@ u32 vulkanHiZGetMipStorageIndex(int mip) {
     if (mip < 0 || mip >= mipCount) return 0;
     return (u32)mipStoragePoolIndex[justCompleted][mip];
 }
+}  // namespace engine

@@ -16,23 +16,11 @@
 #include "ecs/system/heightmap/HeightmapTerrain.h"
 #include "ecs/system/transform/TransformComponent.h"
 
-static void added(void);
-static void preUpdate(void);
-static void update(void);
-static void removed(void);
+namespace engine {
 
-System vulkanHeightmapTerrainPass = {
-    .name                = "heightmap_terrain",
-    .added               = added,
-    .removed             = removed,
-    .preUpdate           = preUpdate,
-    .update              = update,
-    .postUpdate          = nullptr,
-    .cpuElapsedLastFrame = 0.0,
-    .cpuElapsed          = 0.0,
-    .gpuElapsed          = 0.0,
-    .priority            = 0,
-};
+VulkanHeightmapTerrainPass vulkanHeightmapTerrainPass;
+
+VulkanHeightmapTerrainPass::VulkanHeightmapTerrainPass() : System("heightmap_terrain") {}
 
 // ── Push constants ────────────────────────────────────────────────────────
 // Layout must match the GLSL `HeightmapPC` (tile vec4, flags vec4).
@@ -80,7 +68,7 @@ typedef struct HeightmapGpuTile {
     VulkanDesc  heightDesc;
 } HeightmapGpuTile;
 
-static Array(HeightmapGpuTile) gpuTiles;
+static std::vector<HeightmapGpuTile> gpuTiles;
 static HeightmapTerrain*       cachedHt = NULL;
 
 // Descriptor pools of evicted tiles may still be referenced by in-flight
@@ -90,7 +78,7 @@ typedef struct DeferredDescDestroy {
     u32        framesLeft;
 } DeferredDescDestroy;
 
-static Array(DeferredDescDestroy) deferredDescs;
+static std::vector<DeferredDescDestroy> deferredDescs;
 
 // ── Public API ────────────────────────────────────────────────────────────
 
@@ -207,17 +195,17 @@ static void swapchainCreated(void*) {
 static void heightmapGpuTileDestroy(HeightmapGpuTile* e) {
     if (e->heightTex.img) vulkanDestroyImage(&e->heightTex, VK_NULL_HANDLE);
     if (e->heightDesc.set) {
-        arrayPut(deferredDescs, (DeferredDescDestroy{.desc = e->heightDesc, .framesLeft = 3}));
-        e->heightDesc = VulkanDesc{0};
+        deferredDescs.push_back((DeferredDescDestroy{.desc = e->heightDesc, .framesLeft = 3}));
+        e->heightDesc = VulkanDesc{};
     }
-    *e = HeightmapGpuTile{0};
+    *e = HeightmapGpuTile{};
 }
 
 static void heightmapPassReset(void) {
-    for (u32 i = 0; i < arraySize(gpuTiles); i++) {
+    for (u32 i = 0; i < gpuTiles.size(); i++) {
         if (gpuTiles[i].inUse) heightmapGpuTileDestroy(&gpuTiles[i]);
     }
-    arrayClear(gpuTiles);
+    gpuTiles.clear();
 }
 
 // Upload one tile's CPU height grid to the GPU (R32F) and (re)bind the
@@ -228,20 +216,20 @@ static void heightmapPassReset(void) {
 static bool heightmapPassUploadTile(HeightmapGpuTile* e, const HeightmapTileView* v) {
     static int hitchOn = -1;
     if (hitchOn < 0) hitchOn = getenv("ENGINE_HITCH_DEBUG") != NULL;
-    double hitchT0 = nanos();
+    double hitchT0 = utils::nanos();
 
     const u32   tex = HEIGHTMAP_TEX;
     const size_t n  = (size_t)tex * tex;
 
     VulkanImage heightImg = vulkanCreateImage(
-        .name   = strtmp("heightmap_height_%d_%d", v->tileX, v->tileZ),
+        .name   = utils::strtmp("heightmap_height_%d_%d", v->tileX, v->tileZ),
         .format = heightFormat,
         .usage  = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
         .width  = (int)tex,
         .height = (int)tex,
         .noPool = 1);
     if (!heightImg.img) {
-        warn("heightmapTerrain: height image creation failed tile(%d,%d)", v->tileX, v->tileZ);
+        utils::warn("heightmapTerrain: height image creation failed tile(%d,%d)", v->tileX, v->tileZ);
         return false;
     }
 
@@ -253,10 +241,10 @@ static bool heightmapPassUploadTile(HeightmapGpuTile* e, const HeightmapTileView
                .size        = (u32)(n * sizeof(float)));
     vulkanTransition(cmd, &heightImg, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
     {
-        double te0 = nanos();
+        double te0 = utils::nanos();
         vulkanTransientEnd(cmd, 1);
-        if (hitchOn) info("HITCH: heightmap upload tile(%d,%d) total=%.1f ms (transient+fence=%.1f ms)",
-                          v->tileX, v->tileZ, (nanos() - hitchT0) / 1e6, (nanos() - te0) / 1e6);
+        if (hitchOn) utils::info("HITCH: heightmap upload tile(%d,%d) total=%.1f ms (transient+fence=%.1f ms)",
+                          v->tileX, v->tileZ, (utils::nanos() - hitchT0) / 1e6, (utils::nanos() - te0) / 1e6);
     }
 
     if (!e->heightDesc.set) {
@@ -287,7 +275,7 @@ static bool gpuTileMatchesAnyView(const HeightmapGpuTile* e, const HeightmapTile
 }
 
 static HeightmapGpuTile* gpuTileAcquireFree(void) {
-    for (u32 i = 0; i < arraySize(gpuTiles); i++) {
+    for (u32 i = 0; i < gpuTiles.size(); i++) {
         if (!gpuTiles[i].inUse) return &gpuTiles[i];
     }
     return NULL;
@@ -295,17 +283,18 @@ static HeightmapGpuTile* gpuTileAcquireFree(void) {
 
 // ── Frame entry: cache maintenance + budgeted uploads ────────────────────
 
-static void preUpdate(void) {
+void VulkanHeightmapTerrainPass::preUpdate() {
     if (vulkan.skipFrame) return;
 
     // Tick deferred descriptor destruction (pools must survive in-flight
     // command buffers; 3 frames is well past the GPU queue depth).
-    for (i32 i = (i32)arraySize(deferredDescs) - 1; i >= 0; i--) {
+    for (i32 i = (i32)static_cast<i32>(deferredDescs.size()) - 1; i >= 0; i--) {
         if (deferredDescs[i].framesLeft > 1) {
             deferredDescs[i].framesLeft--;
         } else {
             vulkanDestroyDesc(&deferredDescs[i].desc);
-            arrayDeleteSwap(deferredDescs, (u32)i);
+            deferredDescs[(u32)i] = deferredDescs.back();
+            deferredDescs.pop_back();
         }
     }
 
@@ -326,26 +315,25 @@ static void preUpdate(void) {
     if (cachedHt != ht) {
         cachedHt  = ht;
         u32 cap   = ht->windowSize * ht->windowSize;
-        if (arraySize(gpuTiles) < cap) {
-            while (arraySize(gpuTiles) < cap) arrayPut(gpuTiles, HeightmapGpuTile{0});
+        if (gpuTiles.size() < cap) {
+            while (gpuTiles.size() < cap) gpuTiles.push_back(HeightmapGpuTile{});
         }
     }
 
     if (!scenePipe.pipe) recreatePipelines();
     setTerrainDefaults();
 
-    u32 snapCap = arraySize(gpuTiles);
+    u32 snapCap = static_cast<i32>(gpuTiles.size());
     if (snapCap == 0) return;
-    HeightmapTileView* views = static_cast<HeightmapTileView*>(memoryAlloc(sizeof(HeightmapTileView) * snapCap));
-    u32 viewCount           = heightmapTerrainSnapshotTiles(ht, views, snapCap);
+    std::vector<HeightmapTileView> views(snapCap);
+    u32 viewCount           = heightmapTerrainSnapshotTiles(ht, views.data(), snapCap);
     if (viewCount == 0) {
-        memoryFree(views);
         return;
     }
 
     // 1) Drop cache entries whose tile left the window or was regenerated.
-    for (u32 i = 0; i < arraySize(gpuTiles); i++) {
-        if (gpuTiles[i].inUse && !gpuTileMatchesAnyView(&gpuTiles[i], views, viewCount)) {
+    for (u32 i = 0; i < gpuTiles.size(); i++) {
+        if (gpuTiles[i].inUse && !gpuTileMatchesAnyView(&gpuTiles[i], views.data(), viewCount)) {
             heightmapGpuTileDestroy(&gpuTiles[i]);
         }
     }
@@ -387,7 +375,7 @@ static void preUpdate(void) {
     u32 budget = HEIGHTMAP_PASS_UPLOADS_PER_FRAME;
     for (u32 j = 0; j < viewCount && budget > 0; j++) {
         bool        have    = false;
-        for (u32 i = 0; i < arraySize(gpuTiles); i++) {
+        for (u32 i = 0; i < gpuTiles.size(); i++) {
             if (gpuTileHasView(&gpuTiles[i], &views[j])) {
                 have = true;
                 break;
@@ -399,7 +387,7 @@ static void preUpdate(void) {
         if (!e) break; // pool exhausted (shouldn't happen: cap = window^2)
         if (heightmapPassUploadTile(e, &views[j])) {
             budget--;
-            info("heightmapTerrain: uploaded GPU textures for tile(%d,%d) stamp=%llu",
+            utils::info("heightmapTerrain: uploaded GPU textures for tile(%d,%d) stamp=%llu",
                  views[j].tileX,
                  views[j].tileZ,
                  (unsigned long long)views[j].readyStamp);
@@ -408,8 +396,7 @@ static void preUpdate(void) {
         }
     }
 
-    memoryFree(views);
-}
+    }
 
 // ── Scene pass ────────────────────────────────────────────────────────────
 
@@ -444,7 +431,7 @@ static void heightmapPassDrawTiles(VulkanCommand* cmd,
     const vec4* planes = (const vec4*)camera->cameraUbo.frustumPlanes;
 
     vulkanBindPipe(cmd, pipe);
-    for (u32 i = 0; i < arraySize(gpuTiles); i++) {
+    for (u32 i = 0; i < gpuTiles.size(); i++) {
         HeightmapGpuTile* e = &gpuTiles[i];
         if (!e->inUse) continue;
 
@@ -482,27 +469,27 @@ static void heightmapPassDrawTiles(VulkanCommand* cmd,
     }
 }
 
-static void update(void) {
+void VulkanHeightmapTerrainPass::update() {
     if (vulkan.skipFrame) {
-        warn("heightmapTerrain: skipFrame");
+        utils::warn("heightmapTerrain: skipFrame");
         return;
     }
 
     HeightmapTerrain* ht = heightmapTerrainGetActive();
     if (!ht || !ht->initialized) return;
     if (!scenePipe.pipe) recreatePipelines();
-    if (arraySize(gpuTiles) == 0) return;
+    if (static_cast<i32>(gpuTiles.size()) == 0) return;
 
     VulkanCommand* cmd = vulkan.currentCmd;
     if (!cmd) {
-        warn("heightmapTerrain: no currentCmd");
+        utils::warn("heightmapTerrain: no currentCmd");
         return;
     }
 
     Entity* cameraEntity = cameraGetEntity();
     Camera* camera       = cameraEntity ? getComponent(cameraEntity->scene, Camera, cameraEntity->id) : NULL;
     if (!camera) {
-        warn("heightmapTerrain: no camera entity");
+        utils::warn("heightmapTerrain: no camera entity");
         return;
     }
 
@@ -556,7 +543,7 @@ static void update(void) {
 void vulkanHeightmapTerrainDrawPrepass(void) {
     HeightmapTerrain* ht = heightmapTerrainGetActive();
     if (!ht || !ht->initialized || !prepassPipe.pipe) return;
-    if (arraySize(gpuTiles) == 0) return;
+    if (static_cast<i32>(gpuTiles.size()) == 0) return;
 
     VulkanCommand* cmd = vulkan.currentCmd;
     if (!cmd) return;
@@ -573,7 +560,7 @@ void vulkanHeightmapTerrainDrawPrepass(void) {
     const vec4* planes = (const vec4*)camera->cameraUbo.frustumPlanes;
 
     vulkanBindPipe(cmd, &prepassPipe);
-    for (u32 i = 0; i < arraySize(gpuTiles); i++) {
+    for (u32 i = 0; i < gpuTiles.size(); i++) {
         HeightmapGpuTile* e = &gpuTiles[i];
         if (!e->inUse) continue;
 
@@ -613,21 +600,20 @@ void vulkanHeightmapTerrainDrawPrepass(void) {
 
 // ── Lifecycle ─────────────────────────────────────────────────────────────
 
-static void added(void) {
-    signalSubscribe("swapchainCreated", swapchainCreated);
+void VulkanHeightmapTerrainPass::added() {
+    utils::signalSubscribe("swapchainCreated", swapchainCreated);
     recreatePipelines();
 }
 
-static void removed(void) {
+void VulkanHeightmapTerrainPass::removed() {
     heightmapPassReset();
-    arrayClear(gpuTiles);
-    for (u32 i = 0; i < arraySize(deferredDescs); i++) vulkanDestroyDesc(&deferredDescs[i].desc);
-    arrayFree(deferredDescs);
-    deferredDescs = nullptr;
+    gpuTiles.clear();
+    for (u32 i = 0; i < deferredDescs.size(); i++) vulkanDestroyDesc(&deferredDescs[i].desc);
+    deferredDescs.clear();
 
     vulkanDestroyPipe(&scenePipe);
     vulkanDestroyPipe(&sceneWireFramePipe);
     vulkanDestroyPipe(&prepassPipe);
     if (layoutHeightDesc.set) vulkanDestroyDesc(&layoutHeightDesc);
     cachedHt = NULL;
-}
+}}  // namespace engine

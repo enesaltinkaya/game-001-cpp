@@ -93,6 +93,7 @@
  * @post The file may or may not exist.
  * @post The folder holding the file is created if needed.
  */
+namespace utils {
 static inline void get_user_config_file(char *out, unsigned int maxlen, const char *appname)
 {
 #ifdef CFGPATH_LINUX
@@ -473,3 +474,4 @@ static inline void get_user_cache_folder(char *out, unsigned int maxlen, const c
 }
 
 #endif /* CFGPATH_H_ */
+}  // namespace utils

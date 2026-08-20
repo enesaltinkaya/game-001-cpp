@@ -35,6 +35,7 @@
 #define SPLAT_UDIM_COUNT_Y 10
 #define SPLAT_UDIM_TILES   (SPLAT_UDIM_COUNT_X * SPLAT_UDIM_COUNT_Y)  // 100
 
+namespace engine {
 typedef struct Material {
     // Base PBR properties
     vec4 baseColor;  // RGB + Alpha
@@ -87,3 +88,4 @@ typedef struct Material {
     u32 pad1;
     u32 pad2;
 } Material;
+}  // namespace engine

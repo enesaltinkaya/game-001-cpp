@@ -16,10 +16,10 @@ typedef void* (*FnPtrPtr)(void*);
 typedef void (*FnPtr)(void*);
 typedef void (*FnVoid)(void);
 
-#define vec2_print(vec) info("(%.2f, %.2f)", (vec)[0], (vec)[1])
-#define vec3_print(vec) info("(%.2f, %.2f, %.2f)", (vec)[0], (vec)[1], (vec)[2])
-#define vec4_print(vec) info("(%.2f, %.2f, %.2f, %.2f)", (vec)[0], (vec)[1], (vec)[2], (vec)[3])
-#define vec4s_print(vec) info("(%.2f, %.2f, %.2f, %.2f)", (vec).x, (vec).y, (vec).z, (vec).w)
+#define vec2_print(vec) utils::info("(%.2f, %.2f)", (vec)[0], (vec)[1])
+#define vec3_print(vec) utils::info("(%.2f, %.2f, %.2f)", (vec)[0], (vec)[1], (vec)[2])
+#define vec4_print(vec) utils::info("(%.2f, %.2f, %.2f, %.2f)", (vec)[0], (vec)[1], (vec)[2], (vec)[3])
+#define vec4s_print(vec) utils::info("(%.2f, %.2f, %.2f, %.2f)", (vec).x, (vec).y, (vec).z, (vec).w)
 
 #define BILLION 1000000000.
 #define MILLION 1000000.

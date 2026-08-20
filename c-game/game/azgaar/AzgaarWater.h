@@ -11,6 +11,7 @@
 //   azgaarWaterUpdate(camX, camZ) — called each frame with camera position
 //   azgaarWaterDestroy()          — called on teardown
 
+namespace game {
 void azgaarWaterInit(const AzgaarWorld* world);
 void azgaarWaterUpdate(float camX, float camZ);
 void azgaarWaterDestroy(void);
@@ -23,3 +24,4 @@ void azgaarWaterDestroy(void);
 // multiples of CELL_SIZE so the camera-snap keeps the wave field stable.
 #define AZGAAR_WATER_GRID_SIZE  8192.0f
 #define AZGAAR_WATER_GRID_DIVS  512
+}  // namespace game

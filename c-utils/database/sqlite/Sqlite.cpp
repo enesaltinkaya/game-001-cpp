@@ -7,6 +7,7 @@
 #include "logger/Logger.h"
 #include "string/String.h"
 
+namespace utils {
 static sqlite3* db;
 
 static char* errorMessage = nullptr;
@@ -109,3 +110,4 @@ int sqliteCount(const char* query) {
 void* sqliteGetDb(void) {
     return db;
 }
+}  // namespace utils

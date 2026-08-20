@@ -1,7 +1,18 @@
 #pragma once
+#include "ecs/system/System.h"
 #include "rmlui/wrapper/src/crmlui.h"
 
-extern struct System vulkanRmluiPass;
+namespace engine {
+class VulkanRmluiPass : public System {
+public:
+    VulkanRmluiPass();
+    void added() override;
+    void removed() override;
+    void preUpdate() override;
+    void postUpdate() override;
+};
+
+extern VulkanRmluiPass vulkanRmluiPass;
 
 void rmlBeginFrame(void);
 void rmlEndFrame(void);
@@ -15,3 +26,4 @@ void rmlEnableScissorRegion(char enable);
 void rmlSetScissorRegion(int x, int y, int width, int height);
 void rmlSetTransform(void* transform);
 void rmlSetViewport(int width, int height);
+}  // namespace engine

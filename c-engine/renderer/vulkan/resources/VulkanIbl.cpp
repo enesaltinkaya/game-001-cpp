@@ -9,11 +9,12 @@
 #include "renderer/vulkan/command/VulkanCommand.h"
 #include "renderer/vulkan/pipeline/VulkanPipe.h"
 
+namespace engine {
 static const char* STUDIOLIGHTS_DIR = "images/hdr";
 static const char* ENVIRONMENT_PATH = "images/hdr/interior.exr";
 
 // IBL file list for cycling
-static Array(String) iblFiles;
+static std::vector<utils::String> iblFiles;
 static int iblCurrentIndex;
 static char iblFileListReady;
 
@@ -50,10 +51,10 @@ struct VulkanIblResources {
 };
 
 struct IblFacePushConstants {
-    u32 environmentMapIndex;
-    u32 faceIndex;
-    float roughness;
-    float pad;
+    u32 environmentMapIndex = 0;
+    u32 faceIndex           = 0;
+    float roughness         = 0.0f;
+    float pad               = 0.0f;
 };
 
 static VulkanIblResources ibl;
@@ -76,12 +77,12 @@ static void destroyPipelines(void);
 static void destroyImage(VulkanImage* image);
 static VkImageView createAttachmentView(VulkanImage* image, u32 baseMipLevel, u32 baseArrayLayer);
 static VulkanImage makeAttachmentProxy(VulkanImage* image, VkImageView view, u32 mipLevel);
-static void renderBrdfLut(VulkanCommand* cmd, Array(VkImageView) * tempViews);
+static void renderBrdfLut(VulkanCommand* cmd, std::vector<VkImageView> * tempViews);
 static void renderIrradiance(VulkanCommand* cmd,
-                             Array(VkImageView) * tempViews,
+                             std::vector<VkImageView> * tempViews,
                              u32 environmentMapIndex);
 static void renderPrefilter(VulkanCommand* cmd,
-                            Array(VkImageView) * tempViews,
+                            std::vector<VkImageView> * tempViews,
                             u32 environmentMapIndex);
 static void generateDitherNoise(u8* pixels, u32 size);
 static void extractSHAndSun(const float* pixels, int width, int height, float sunThreshold);
@@ -133,34 +134,32 @@ static void pushIblState(void) {
 static void buildIblFileList(void) {
     if (iblFileListReady) return;
 
-    Array(String) hdrFiles = dataManagerListFiles(".hdr");
-    foreach (String s, hdrFiles) {
-        if (strStartsWith(s.data, STUDIOLIGHTS_DIR)) {
-            String copy = {};
-            stringAppend(&copy, s.data);
-            arrayPut(iblFiles, copy);
+    std::vector<utils::String> hdrFiles = utils::dataManagerListFiles(".hdr");
+    for (utils::String s : hdrFiles) {
+        if (utils::strStartsWith(s.data, STUDIOLIGHTS_DIR)) {
+            utils::String copy = {};
+            utils::stringAppend(&copy, s.data);
+            iblFiles.push_back(copy);
         }
     }
-    foreach (String s, hdrFiles) {
-        stringDestroy((String*)&s);
+    for (utils::String s : hdrFiles) {
+        utils::stringDestroy((utils::String*)&s);
     }
-    arrayFree(hdrFiles);
 
-    Array(String) exrFiles = dataManagerListFiles(".exr");
-    foreach (String s, exrFiles) {
-        if (strStartsWith(s.data, STUDIOLIGHTS_DIR)) {
-            String copy = {};
-            stringAppend(&copy, s.data);
-            arrayPut(iblFiles, copy);
+    std::vector<utils::String> exrFiles = utils::dataManagerListFiles(".exr");
+    for (utils::String s : exrFiles) {
+        if (utils::strStartsWith(s.data, STUDIOLIGHTS_DIR)) {
+            utils::String copy = {};
+            utils::stringAppend(&copy, s.data);
+            iblFiles.push_back(copy);
         }
     }
-    foreach (String s, exrFiles) {
-        stringDestroy((String*)&s);
+    for (utils::String s : exrFiles) {
+        utils::stringDestroy((utils::String*)&s);
     }
-    arrayFree(exrFiles);
 
     iblCurrentIndex = 0;
-    for (u32 i = 0; i < arraySize(iblFiles); i++) {
+    for (u32 i = 0; i < iblFiles.size(); i++) {
         if (strcmp(iblFiles[i].data, ENVIRONMENT_PATH) == 0) {
             iblCurrentIndex = (int)i;
             break;
@@ -168,45 +167,48 @@ static void buildIblFileList(void) {
     }
 
     iblFileListReady = 1;
-    info("vulkanIbl: found %d IBL files in %s", arraySize(iblFiles), STUDIOLIGHTS_DIR);
+    utils::info("vulkanIbl: found %d IBL files in %s", static_cast<i32>(iblFiles.size()), STUDIOLIGHTS_DIR);
 }
 
 static void loadEnvironmentFromPath(const char* path) {
-    if (!dataManagerFileExists(path)) {
-        warn("vulkanIbl: environment map not found: %s", path);
+    if (!utils::dataManagerFileExists(path)) {
+        utils::warn("vulkanIbl: environment map not found: %s", path);
         if (!ibl.ready) vulkanResourceSetIbl(0);
         return;
     }
 
-    String fileData = dataManagerRead(path);
+    utils::String fileData = utils::dataManagerRead(path);
     if (!fileData.data || fileData.size == 0) {
-        warn("vulkanIbl: failed to read %s", path);
-        stringDestroy(&fileData);
+        utils::warn("vulkanIbl: failed to read %s", path);
+        utils::stringDestroy(&fileData);
         if (!ibl.ready) vulkanResourceSetIbl(0);
         return;
     }
 
     int width     = 0;
     int height    = 0;
-    float* pixels = nullptr;
+    std::vector<float> pixels;
 
-    String probe = {.data = const_cast<char*>(path), .size = static_cast<u32>(strlen(path))};
-    if (stringEndsWith(&probe, "exr")) {
+    utils::String probe = {.data = const_cast<char*>(path), .allocated = 0, .size = static_cast<u32>(strlen(path)), .onHeap = false};
+    if (utils::stringEndsWith(&probe, "exr")) {
         pixels = exrLoadFromMemory(fileData.data, fileData.size, &width, &height);
     } else {
         int channelsInFile = 0;
-        pixels             = stbi_loadf_from_memory((const stbi_uc*)fileData.data,
+        float* stbPixels   = stbi_loadf_from_memory((const stbi_uc*)fileData.data,
                                                     (int)fileData.size,
                                                     &width,
                                                     &height,
                                                     &channelsInFile,
                                                     4);
+        if (stbPixels) {
+            pixels.assign(stbPixels, stbPixels + static_cast<size_t>(width) * height * 4);
+            stbi_image_free(stbPixels);
+        }
     }
-    stringDestroy(&fileData);
+    utils::stringDestroy(&fileData);
 
-    if (!pixels || width <= 0 || height <= 0) {
-        warn("vulkanIbl: failed to decode HDR image %s", path);
-        if (pixels) memoryFree(pixels);
+    if (pixels.empty() || width <= 0 || height <= 0) {
+        utils::warn("vulkanIbl: failed to decode HDR image %s", path);
         if (!ibl.ready) vulkanResourceSetIbl(0);
         return;
     }
@@ -218,11 +220,10 @@ static void loadEnvironmentFromPath(const char* path) {
         destroyImage(&ibl.environment);
     }
 
-    extractSHAndSun(pixels, width, height, SUN_THRESHOLD);
+    extractSHAndSun(pixels.data(), width, height, SUN_THRESHOLD);
 
     u32 mipLevels = calculateMipLevels(width, height);
-    uploadEnvironment(pixels, width, height, mipLevels);
-    memoryFree(pixels);
+    uploadEnvironment(pixels.data(), width, height, mipLevels);
 
     ibl.environmentMaxLod = (float)(mipLevels - 1);
     ibl.prefilterMaxLod   = (float)(PREFILTER_MIPS - 1);
@@ -249,9 +250,9 @@ static void loadEnvironmentFromPath(const char* path) {
     glm_mat4_identity(ibl.envRotation);
 
     pushIblState();
-    info("vulkanIbl: loaded %s (%dx%d envLod=%.0f)", path, width, height, ibl.environmentMaxLod);
+    utils::info("vulkanIbl: loaded %s (%dx%d envLod=%.0f)", path, width, height, ibl.environmentMaxLod);
 
-    signalEmit("iblChanged", nullptr);
+    utils::signalEmit("iblChanged", nullptr);
 }
 
 void vulkanIblInit(void) {
@@ -271,28 +272,27 @@ void vulkanIblDestroy(void) {
     destroyPipelines();
     ibl = VulkanIblResources{};
 
-    foreach (String s, iblFiles) {
-        stringDestroy((String*)&s);
+    for (utils::String s : iblFiles) {
+        utils::stringDestroy((utils::String*)&s);
     }
-    arrayFree(iblFiles);
-    iblFiles         = nullptr;
+    iblFiles.clear();
     iblFileListReady = 0;
 }
 
 void vulkanIblCycleNext(void) {
-    if (arraySize(iblFiles) < 2) return;
-    iblCurrentIndex = (iblCurrentIndex + 1) % (int)arraySize(iblFiles);
+    if (static_cast<i32>(iblFiles.size()) < 2) return;
+    iblCurrentIndex = (iblCurrentIndex + 1) % (int)static_cast<i32>(iblFiles.size());
     loadEnvironmentFromPath(iblFiles[iblCurrentIndex].data);
 }
 
 void vulkanIblCyclePrev(void) {
-    if (arraySize(iblFiles) < 2) return;
-    iblCurrentIndex = (iblCurrentIndex + (int)arraySize(iblFiles) - 1) % (int)arraySize(iblFiles);
+    if (static_cast<i32>(iblFiles.size()) < 2) return;
+    iblCurrentIndex = (iblCurrentIndex + (int)static_cast<i32>(iblFiles.size()) - 1) % (int)static_cast<i32>(iblFiles.size());
     loadEnvironmentFromPath(iblFiles[iblCurrentIndex].data);
 }
 
 const char* vulkanIblGetCurrentName(void) {
-    if (arraySize(iblFiles) == 0) return "(none)";
+    if (static_cast<i32>(iblFiles.size()) == 0) return "(none)";
     const char* path  = iblFiles[iblCurrentIndex].data;
     const char* slash = strrchr(path, '/');
     return slash ? slash + 1 : path;
@@ -378,7 +378,7 @@ void vulkanIblRotateSun(float azimuthDeg, float elevationDeg) {
     glm_mat4_copy(combined, ibl.envRotation);
 
     pushIblState();
-    signalEmit("iblChanged", nullptr);
+    utils::signalEmit("iblChanged", nullptr);
 }
 
 // ---------------------------------------------------------------------------
@@ -454,8 +454,8 @@ static void createBrdfLut(void) {
 
 static void createDitherNoiseTexture(void) {
     const u32 pixelCount = BLUE_NOISE_SIZE * BLUE_NOISE_SIZE;
-    u8* pixels = static_cast<u8*>(memoryAlloc(pixelCount));
-    generateDitherNoise(pixels, BLUE_NOISE_SIZE);
+    std::vector<u8> pixels(pixelCount);
+    generateDitherNoise(pixels.data(), BLUE_NOISE_SIZE);
 
     ibl.blueNoise =
         vulkanCreateImage(.name   = "IBL Blue Noise",
@@ -466,24 +466,22 @@ static void createDitherNoiseTexture(void) {
 
     VulkanCommand* cmd = vulkanTransientBegin();
     vulkanTransition(cmd, &ibl.blueNoise, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 0, 1);
-    vulkanCopy(.cmd = cmd, .target.img = &ibl.blueNoise, .source.data = pixels, .size = pixelCount);
+    vulkanCopy(.cmd = cmd, .target.img = &ibl.blueNoise, .source.data = pixels.data(), .size = pixelCount);
     vulkanTransition(cmd, &ibl.blueNoise, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
     vulkanTransientEnd(cmd, 1);
-
-    memoryFree(pixels);
 }
 
 static char loadTonemapLutFile(const char* path, const char* name, VulkanImage* outImage) {
-    String fileData = dataManagerRead(path);
+    utils::String fileData = utils::dataManagerRead(path);
     if (!fileData.data || fileData.size == 0) {
-        warn("vulkanIbl: tonemap LUT not found: %s", path);
-        stringDestroy(&fileData);
+        utils::warn("vulkanIbl: tonemap LUT not found: %s", path);
+        utils::stringDestroy(&fileData);
         return 0;
     }
 
     if (fileData.size < 16) {
-        warn("vulkanIbl: tonemap LUT file too small: %s", path);
-        stringDestroy(&fileData);
+        utils::warn("vulkanIbl: tonemap LUT file too small: %s", path);
+        utils::stringDestroy(&fileData);
         return 0;
     }
 
@@ -493,8 +491,8 @@ static char loadTonemapLutFile(const char* path, const char* name, VulkanImage* 
 
     u32 expectedSize = 16 + width * height * 4 * 2;
     if (fileData.size < expectedSize) {
-        warn("vulkanIbl: tonemap LUT size mismatch: %s", path);
-        stringDestroy(&fileData);
+        utils::warn("vulkanIbl: tonemap LUT size mismatch: %s", path);
+        utils::stringDestroy(&fileData);
         return 0;
     }
 
@@ -514,8 +512,8 @@ static char loadTonemapLutFile(const char* path, const char* name, VulkanImage* 
     vulkanTransition(cmd, outImage, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
     vulkanTransientEnd(cmd, 1);
 
-    stringDestroy(&fileData);
-    info("vulkanIbl: loaded tonemap LUT %s (%dx%d)", path, width, height);
+    utils::stringDestroy(&fileData);
+    utils::info("vulkanIbl: loaded tonemap LUT %s (%dx%d)", path, width, height);
     return 1;
 }
 
@@ -552,7 +550,7 @@ static void createPipelines(void) {
 }
 
 static void precomputeIbl(char includeBrdf) {
-    Array(VkImageView) tempViews = {};
+    std::vector<VkImageView> tempViews = {};
     VulkanCommand* cmd           = vulkanTransientBegin();
 
     vulkanTransition(cmd, &ibl.irradiance, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, 0, 1);
@@ -574,10 +572,9 @@ static void precomputeIbl(char includeBrdf) {
 
     vulkanTransientEnd(cmd, 1);
 
-    foreach (VkImageView view, tempViews) {
+    for (VkImageView view : tempViews) {
         vkDestroyImageView(vulkan.device, view, nullptr);
     }
-    arrayFree(tempViews);
 }
 
 static void destroyPipelines(void) {
@@ -613,7 +610,7 @@ static VkImageView createAttachmentView(VulkanImage* image, u32 baseMipLevel, u3
 static VulkanImage makeAttachmentProxy(VulkanImage* image, VkImageView view, u32 mipLevel) {
     VulkanImage proxy   = *image;
     proxy.view          = view;
-    proxy.views         = nullptr;
+    proxy.views.clear();
     proxy.layers        = 1;
     proxy.mipLevels     = 1;
     proxy.extent.width  = std::max(1u, image->extent.width >> mipLevel);
@@ -622,9 +619,9 @@ static VulkanImage makeAttachmentProxy(VulkanImage* image, VkImageView view, u32
     return proxy;
 }
 
-static void renderBrdfLut(VulkanCommand* cmd, Array(VkImageView) * tempViews) {
+static void renderBrdfLut(VulkanCommand* cmd, std::vector<VkImageView> * tempViews) {
     VkImageView view = createAttachmentView(&ibl.brdfLut, 0, 0);
-    arrayPut(*tempViews, view);
+    tempViews->push_back(view);
     VulkanImage target = makeAttachmentProxy(&ibl.brdfLut, view, 0);
     vulkanBeginRender(.cmd = cmd, .pipe = &brdfPipe, .color1 = &target);
     vulkanViewport(cmd, 0, target.extent.height, target.extent.width, -((i32)target.extent.height));
@@ -635,11 +632,11 @@ static void renderBrdfLut(VulkanCommand* cmd, Array(VkImageView) * tempViews) {
 }
 
 static void renderIrradiance(VulkanCommand* cmd,
-                             Array(VkImageView) * tempViews,
+                             std::vector<VkImageView> * tempViews,
                              u32 environmentMapIndex) {
     for (u32 face = 0; face < 6; face++) {
         VkImageView view = createAttachmentView(&ibl.irradiance, 0, face);
-        arrayPut(*tempViews, view);
+        tempViews->push_back(view);
         VulkanImage target = makeAttachmentProxy(&ibl.irradiance, view, 0);
         vulkanBeginRender(.cmd = cmd, .pipe = &irradiancePipe, .color1 = &target);
         vulkanViewport(cmd,
@@ -657,13 +654,13 @@ static void renderIrradiance(VulkanCommand* cmd,
 }
 
 static void renderPrefilter(VulkanCommand* cmd,
-                            Array(VkImageView) * tempViews,
+                            std::vector<VkImageView> * tempViews,
                             u32 environmentMapIndex) {
     for (u32 mip = 0; mip < PREFILTER_MIPS; mip++) {
         float roughness = PREFILTER_MIPS > 1 ? (float)mip / (float)(PREFILTER_MIPS - 1) : 0.0f;
         for (u32 face = 0; face < 6; face++) {
             VkImageView view = createAttachmentView(&ibl.prefilter, mip, face);
-            arrayPut(*tempViews, view);
+            tempViews->push_back(view);
             VulkanImage target = makeAttachmentProxy(&ibl.prefilter, view, mip);
             vulkanBeginRender(.cmd = cmd, .pipe = &prefilterPipe, .color1 = &target);
             vulkanViewport(cmd,
@@ -850,7 +847,7 @@ static void extractSHAndSun(const float* pixels, int width, int height, float su
             float sunAngleCos             = 2.0f * normalizedLen - 1.0f;
             sunAngleCos                   = fmaxf(sunAngleCos, 0.001f);
             ibl.extractedSun.angularRadius = acosf(fminf(sunAngleCos, 1.0f));
-            info("vulkanIbl: extracted sun (dominant hotspot, seed u=%.3f v=%.3f) — dir=(%.4f,%.4f,%.4f), color=(%.2f,%.2f,%.2f), radiance=(%.0f,%.0f,%.0f), angularRadius=%.4f",
+            utils::info("vulkanIbl: extracted sun (dominant hotspot, seed u=%.3f v=%.3f) — dir=(%.4f,%.4f,%.4f), color=(%.2f,%.2f,%.2f), radiance=(%.0f,%.0f,%.0f), angularRadius=%.4f",
                  ((double)bestX + 0.5) / width, ((double)bestY + 0.5) / height,
                  (double)ibl.extractedSun.direction[0], (double)ibl.extractedSun.direction[1],
                  (double)ibl.extractedSun.direction[2], (double)ibl.extractedSun.color[0],
@@ -877,7 +874,7 @@ static void extractSHAndSun(const float* pixels, int width, int height, float su
             float sunAngleCos              = 2.0f * normalizedLen - 1.0f;
             sunAngleCos                    = fmaxf(sunAngleCos, 0.001f);
             ibl.extractedSun.angularRadius = acosf(fminf(sunAngleCos, 1.0f));
-            info("vulkanIbl: extracted sun — dir=(%.4f,%.4f,%.4f), color=(%.2f,%.2f,%.2f), radiance=(%.0f,%.0f,%.0f), angularRadius=%.4f",
+            utils::info("vulkanIbl: extracted sun — dir=(%.4f,%.4f,%.4f), color=(%.2f,%.2f,%.2f), radiance=(%.0f,%.0f,%.0f), angularRadius=%.4f",
                  (double)ibl.extractedSun.direction[0], (double)ibl.extractedSun.direction[1], (double)ibl.extractedSun.direction[2],
                  (double)ibl.extractedSun.color[0], (double)ibl.extractedSun.color[1], (double)ibl.extractedSun.color[2],
                  sunRadiance[0], sunRadiance[1], sunRadiance[2],
@@ -925,11 +922,11 @@ static void bnToggle(float* energy, u8* binary, u32 size, u32 idx, u8 state) {
 static void generateDitherNoise(u8* pixels, u32 size) {
     bnInitKernel();
     const u32 n   = size * size;
-    u8* binary = static_cast<u8*>(memoryAlloc(n));
-    u32* ranking = static_cast<u32*>(memoryAlloc(n * sizeof(u32)));
-    float* energy = static_cast<float*>(memoryAlloc(n * sizeof(float)));
-    memset(binary, 0, n);
-    memset(energy, 0, n * sizeof(float));
+    std::vector<u8> binary(n);
+    std::vector<u32> ranking(n);
+    std::vector<float> energy(n);
+    memset(binary.data(), 0, n);
+    memset(energy.data(), 0, n * sizeof(float));
 
     u32 seedCount = n / 10, placed = 0;
     for (u32 i = 0; placed < seedCount && i < n * 4; i++) {
@@ -939,7 +936,7 @@ static void generateDitherNoise(u8* pixels, u32 size) {
         v ^= v >> 16;
         u32 idx = v % n;
         if (!binary[idx]) {
-            bnToggle(energy, binary, size, idx, 1);
+            bnToggle(energy.data(), binary.data(), size, idx, 1);
             placed++;
         }
     }
@@ -956,7 +953,7 @@ static void generateDitherNoise(u8* pixels, u32 size) {
         }
         rank--;
         ranking[best] = rank;
-        bnToggle(energy, binary, size, best, 0);
+        bnToggle(energy.data(), binary.data(), size, best, 0);
     }
 
     rank = placed;
@@ -970,13 +967,10 @@ static void generateDitherNoise(u8* pixels, u32 size) {
             }
         }
         ranking[best] = rank;
-        bnToggle(energy, binary, size, best, 1);
+        bnToggle(energy.data(), binary.data(), size, best, 1);
         rank++;
     }
 
     for (u32 i = 0; i < n; i++) pixels[i] = (u8)((ranking[i] * 255u) / (n - 1));
-
-    memoryFree(energy);
-    memoryFree(ranking);
-    memoryFree(binary);
 }
+}  // namespace engine

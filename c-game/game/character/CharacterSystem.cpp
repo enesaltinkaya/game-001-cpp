@@ -1,3 +1,4 @@
+#include "CharacterSystem.h"
 #include "character/CharacterSystem.h"
 #include "character/CharacterStats.h"
 #include "enemy/Enemy.h"
@@ -12,34 +13,23 @@
 #include "settings/Settings.h"
 #include "timer/Timer.h"
 
-static void added(void);
-static void removed(void);
-static void update(void);
+namespace game {
 
-System characterSystem = {
-    .name                = "character",
-    .added               = added,
-    .removed             = removed,
-    .preUpdate           = nullptr,
-    .update              = update,
-    .postUpdate          = nullptr,
-    .cpuElapsedLastFrame = 0.0,
-    .cpuElapsed          = 0.0,
-    .gpuElapsed          = 0.0,
-    .priority            = 1001,
-};
+CharacterSystem characterSystem;
 
-static Sound* combatHitSound;
-static Sound* combatDeathSound1;
-static Sound* combatDeathSound2;
+CharacterSystem::CharacterSystem() : engine::System("character") {}
 
-static void characterNumberSpawn(Entity* target, float amount, u32 damageType, vec3 position);
+static engine::Sound* combatHitSound;
+static engine::Sound* combatDeathSound1;
+static engine::Sound* combatDeathSound2;
+
+static void characterNumberSpawn(engine::Entity* target, float amount, u32 damageType, vec3 position);
 static void combatAudioPlayHit(u32 damageType);
 static void combatAudioPlayDeath(void);
 
 // Forward reference to Enemy_id (defined in enemy/Enemy.h when compiled).
 // Weak link: resolves to 0 if Enemy component is not yet in the build.
-void applyDamage(Entity* target, float amount, u32 damageType) {
+void applyDamage(engine::Entity* target, float amount, u32 damageType) {
     if (!target) return;
 
     CharacterStats* stats = getComponent(target->scene, CharacterStats, target->id);
@@ -57,7 +47,7 @@ void applyDamage(Entity* target, float amount, u32 damageType) {
     stats->hp -= actualDamage;
     if (stats->hp < 0.0f) stats->hp = 0.0f;
 
-    Transform* transform = getComponent(target->scene, Transform, target->id);
+    engine::Transform* transform = getComponent(target->scene, engine::Transform, target->id);
     vec3 hitPosition = {0.0f, 0.0f, 0.0f};
     if (transform) {
         hitPosition[0] = transform->pos[0];
@@ -73,7 +63,7 @@ void applyDamage(Entity* target, float amount, u32 damageType) {
     }
 }
 
-void applyHeal(Entity* target, float amount) {
+void applyHeal(engine::Entity* target, float amount) {
     if (!target) return;
 
     CharacterStats* stats = getComponent(target->scene, CharacterStats, target->id);
@@ -83,7 +73,7 @@ void applyHeal(Entity* target, float amount) {
     if (stats->hp > stats->maxHp) stats->hp = stats->maxHp;
 }
 
-void gainXP(Entity* target, float amount) {
+void gainXP(engine::Entity* target, float amount) {
     if (!target) return;
 
     CharacterStats* stats = getComponent(target->scene, CharacterStats, target->id);
@@ -101,7 +91,7 @@ void gainXP(Entity* target, float amount) {
     }
 }
 
-void triggerDeath(Entity* target) {
+void triggerDeath(engine::Entity* target) {
     if (!target) return;
 
     CharacterStats* stats = getComponent(target->scene, CharacterStats, target->id);
@@ -109,7 +99,7 @@ void triggerDeath(Entity* target) {
 
     stats->isDead = 1;
 
-    animationPlayBlended(target, "death", 1.0f, false, 0.1f);
+    engine::animationPlayBlended(target, "death", 1.0f, false, 0.1f);
 
     {
         Enemy* enemy = getComponent(target->scene, Enemy, target->id);
@@ -123,7 +113,7 @@ void triggerDeath(Entity* target) {
     combatAudioPlayDeath();
 }
 
-static void characterNumberSpawn(Entity* target, float amount, u32 damageType, vec3 position) {
+static void characterNumberSpawn(engine::Entity* target, float amount, u32 damageType, vec3 position) {
     static_cast<void>(damageType);
     // Positive = damage dealt to enemy (yellow), negative = damage taken by player (red)
     Enemy* enemy = getComponent(target->scene, Enemy, target->id);
@@ -134,29 +124,30 @@ static void characterNumberSpawn(Entity* target, float amount, u32 damageType, v
 static void combatAudioPlayHit(u32 damageType) {
     static_cast<void>(damageType);
     if (!combatHitSound) return;
-    soundPlay(combatHitSound, settingsGetDouble("effects") / 100.0f, 0);
+    engine::soundPlay(combatHitSound, utils::settingsGetDouble("effects") / 100.0f, 0);
 }
 
 static void combatAudioPlayDeath(void) {
-    Sound* sound = randomU32() % 2 == 0 ? combatDeathSound1 : combatDeathSound2;
+    engine::Sound* sound = utils::randomU32() % 2 == 0 ? combatDeathSound1 : combatDeathSound2;
     if (!sound) return;
-    soundPlay(sound, settingsGetDouble("effects") / 100.0f, 0);
+    engine::soundPlay(sound, utils::settingsGetDouble("effects") / 100.0f, 0);
 }
 
-void added(void) {
-    combatHitSound      = soundLoad("sound/player/hit.ogg");
-    combatDeathSound1   = soundLoad("sound/effects/death1.ogg");
-    combatDeathSound2   = soundLoad("sound/effects/death2.ogg");
+void CharacterSystem::added() {
+    combatHitSound      = engine::soundLoad("sound/player/hit.ogg");
+    combatDeathSound1   = engine::soundLoad("sound/effects/death1.ogg");
+    combatDeathSound2   = engine::soundLoad("sound/effects/death2.ogg");
 }
 
-void removed(void) {
-    soundDestroy(combatHitSound);
-    soundDestroy(combatDeathSound1);
-    soundDestroy(combatDeathSound2);
+void CharacterSystem::removed() {
+    engine::soundDestroy(combatHitSound);
+    engine::soundDestroy(combatDeathSound1);
+    engine::soundDestroy(combatDeathSound2);
     combatHitSound      = nullptr;
     combatDeathSound1   = nullptr;
     combatDeathSound2   = nullptr;
 }
 
-void update(void) {
+void CharacterSystem::update() {
 }
+}  // namespace game

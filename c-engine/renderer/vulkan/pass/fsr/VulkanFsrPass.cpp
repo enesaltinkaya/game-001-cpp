@@ -14,15 +14,14 @@
 #include "renderer/vulkan/pipeline/VulkanPipe.h"
 #include "renderer/vulkan/pipeline/VulkanProfile.h"
 #include "timer/Timer.h"
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmissing-field-initializers"
 #include <FidelityFX/host/ffx_fsr3upscaler.h>
 #include <FidelityFX/host/backends/vk/ffx_vk.h>
+#pragma GCC diagnostic pop
 #include <stdlib.h>
 
-static void added(void);
-static void preUpdate(void);
-static void update(void);
-static void postUpdate(void);
-static void removed(void);
+namespace engine {
 static void swapchainCreated(void* _);
 static void destroyOutput(void);
 static void destroyContext(void);
@@ -98,21 +97,12 @@ typedef struct ReflVelocityPushConstants {
     u32 height;
 } ReflVelocityPushConstants;
 
-System vulkanFsrPass = {
-    .name                = "fsr",
-    .added               = added,
-    .removed             = removed,
-    .preUpdate           = preUpdate,
-    .update              = update,
-    .postUpdate          = postUpdate,
-    .cpuElapsedLastFrame = 0.0,
-    .cpuElapsed          = 0.0,
-    .gpuElapsed          = 0.0,
-    .priority            = 0,
-};
+VulkanFsrPass vulkanFsrPass;
 
-static void added(void) {
-    signalSubscribe("swapchainCreated", swapchainCreated);
+VulkanFsrPass::VulkanFsrPass() : System("fsr") {}
+
+void VulkanFsrPass::added() {
+    utils::signalSubscribe("swapchainCreated", swapchainCreated);
     profile              = vulkanCreateProfile("fsr");
     profileReady         = 1;
     reactivePipe         = vulkanCreatePipe(.name = "fsr_reactive",
@@ -127,7 +117,7 @@ static void added(void) {
     reflVelocityPipeReady = 1;
 }
 
-static void preUpdate(void) {
+void VulkanFsrPass::preUpdate() {
     if (profileReady) {
         vulkanResetProfile(vulkan.currentCmd, &profile, 0);
     }
@@ -142,27 +132,27 @@ static void swapchainCreated(void* _) {
 static void destroyOutput(void) {
     if (outputImage.img) {
         vulkanDestroyImage(&outputImage, NULL);
-        outputImage = VulkanImage{0};
+        outputImage = VulkanImage{};
     }
     if (dilatedDepthImage.img) {
         vulkanDestroyImage(&dilatedDepthImage, NULL);
-        dilatedDepthImage = VulkanImage{0};
+        dilatedDepthImage = VulkanImage{};
     }
     if (dilatedMotionVectorsImage.img) {
         vulkanDestroyImage(&dilatedMotionVectorsImage, NULL);
-        dilatedMotionVectorsImage = VulkanImage{0};
+        dilatedMotionVectorsImage = VulkanImage{};
     }
     if (reconstructedPrevNearestDepthImage.img) {
         vulkanDestroyImage(&reconstructedPrevNearestDepthImage, NULL);
-        reconstructedPrevNearestDepthImage = VulkanImage{0};
+        reconstructedPrevNearestDepthImage = VulkanImage{};
     }
     if (reactiveMaskImage.img) {
         vulkanDestroyImage(&reactiveMaskImage, NULL);
-        reactiveMaskImage = VulkanImage{0};
+        reactiveMaskImage = VulkanImage{};
     }
     if (tcMaskImage.img) {
         vulkanDestroyImage(&tcMaskImage, NULL);
-        tcMaskImage = VulkanImage{0};
+        tcMaskImage = VulkanImage{};
     }
     outputWidth  = 0;
     outputHeight = 0;
@@ -171,7 +161,7 @@ static void destroyOutput(void) {
 static void destroyContext(void) {
     if (contextReady) {
         ffxFsr3UpscalerContextDestroy(&context);
-        context      = FfxFsr3UpscalerContext{0};
+        context      = FfxFsr3UpscalerContext{};
         contextReady = 0;
     }
 }
@@ -181,7 +171,7 @@ static char ensureContext(u32 renderWidth, u32 renderHeight, u32 displayWidth, u
         scratchBufferSize = ffxGetScratchMemorySizeVK(vulkan.physicalDevice, 1);
         scratchBuffer     = calloc(1, scratchBufferSize);
         if (!scratchBuffer) {
-            error("vulkanFsrPass: failed to allocate %zu bytes of backend scratch memory",
+            utils::error("vulkanFsrPass: failed to allocate %zu bytes of backend scratch memory",
                   scratchBufferSize);
             return 0;
         }
@@ -196,7 +186,7 @@ static char ensureContext(u32 renderWidth, u32 renderHeight, u32 displayWidth, u
         FfxErrorCode backendResult =
             ffxGetInterfaceVK(&backendInterface, device, scratchBuffer, scratchBufferSize, 1);
         if (backendResult != FFX_OK) {
-            error("vulkanFsrPass: ffxGetInterfaceVK failed: %d", backendResult);
+            utils::error("vulkanFsrPass: ffxGetInterfaceVK failed: %d", backendResult);
             free(scratchBuffer);
             scratchBuffer     = NULL;
             scratchBufferSize = 0;
@@ -283,11 +273,11 @@ static char ensureContext(u32 renderWidth, u32 renderHeight, u32 displayWidth, u
     if (createResult != FFX_OK) {
         if ((u32)createResult == FFX_ERROR_OUT_OF_MEMORY ||
             (u32)createResult == FFX_ERROR_INSUFFICIENT_MEMORY) {
-            terminate(
+            utils::terminate(
                 "vulkanFsrPass: not enough GPU memory to create FSR context. "
                 "Free VRAM by closing other GPU applications and try again.");
         }
-        error("vulkanFsrPass: ffxFsr3UpscalerContextCreate failed: %d", createResult);
+        utils::error("vulkanFsrPass: ffxFsr3UpscalerContextCreate failed: %d", createResult);
         destroyOutput();
         return 0;
     }
@@ -303,7 +293,7 @@ static char ensureContext(u32 renderWidth, u32 renderHeight, u32 displayWidth, u
      * motion vectors or the reactive mask rather than scaling these
      * constants aggressively — high values cause shimmer. */
 
-    info("vulkanFsrPass: created context for %ux%u -> %ux%u mode %d",
+    utils::info("vulkanFsrPass: created context for %ux%u -> %ux%u mode %d",
          renderWidth,
          renderHeight,
          displayWidth,
@@ -406,7 +396,7 @@ static void fillSkyVelocity(VulkanCommand* cmd, VulkanImage* depth, VulkanImage*
     vulkanDispatch(cmd, &skyVelocityPipe, groupsX, groupsY, 1);
 }
 
-static void update(void) {
+void VulkanFsrPass::update() {
     if (vulkan.skipFrame || !rendererIsUpscalerEnabled()) {
         return;
     }
@@ -551,7 +541,7 @@ static void update(void) {
      * avoid double-sharpening (stacked unsharp masks cause ringing). */
     dispatch.enableSharpening = fsrSharpness > 0.0f && rendererGetCasStrength() <= 0.0f;
     dispatch.sharpness        = fsrSharpness;
-    dispatch.frameTimeDelta      = (float)(timer.frameTime / MILLION); /* ns → ms */
+    dispatch.frameTimeDelta      = (float)(utils::timer.frameTime / MILLION); /* ns → ms */
     dispatch.preExposure         = 1.0f;
     dispatch.reset               = contextJustCreated || (camera->frameIndex <= 2);
     if (contextJustCreated) {
@@ -567,7 +557,7 @@ static void update(void) {
     vulkanEndProfile(cmd, &profile, 0);
 
     if (result != FFX_OK) {
-        error("vulkanFsrPass: ffxFsr3UpscalerContextDispatch failed: %d", result);
+        utils::error("vulkanFsrPass: ffxFsr3UpscalerContextDispatch failed: %d", result);
         destroyContext();
         destroyOutput();
         return;
@@ -578,14 +568,14 @@ static void update(void) {
     elapsedGPU = profile.elapsed;
 }
 
-static void postUpdate(void) {
+void VulkanFsrPass::postUpdate() {
     vulkanFsrPass.cpuElapsed = elapsedCPU;
     vulkanFsrPass.gpuElapsed = elapsedGPU;
-    elapsedCPU               = nanos();
-    elapsedCPU               = nanos() - elapsedCPU;
+    elapsedCPU               = utils::nanos();
+    elapsedCPU               = utils::nanos() - elapsedCPU;
 }
 
-static void removed(void) {
+void VulkanFsrPass::removed() {
     destroyContext();
     destroyOutput();
     if (scratchBuffer) {
@@ -593,26 +583,26 @@ static void removed(void) {
         scratchBuffer     = NULL;
         scratchBufferSize = 0;
     }
-    backendInterface = FfxInterface{0};
+    backendInterface = FfxInterface{};
     backendReady     = 0;
     if (profileReady) {
         vulkanDestroyProfile(&profile);
-        profile      = VulkanProfile{0};
+        profile      = VulkanProfile{};
         profileReady = 0;
     }
     if (reactivePipeReady) {
         vulkanDestroyPipe(&reactivePipe);
-        reactivePipe      = VulkanPipe{0};
+        reactivePipe      = VulkanPipe{};
         reactivePipeReady = 0;
     }
     if (skyVelocityPipeReady) {
         vulkanDestroyPipe(&skyVelocityPipe);
-        skyVelocityPipe      = VulkanPipe{0};
+        skyVelocityPipe      = VulkanPipe{};
         skyVelocityPipeReady = 0;
     }
     if (reflVelocityPipeReady) {
         vulkanDestroyPipe(&reflVelocityPipe);
-        reflVelocityPipe      = VulkanPipe{0};
+        reflVelocityPipe      = VulkanPipe{};
         reflVelocityPipeReady = 0;
     }
 }
@@ -671,3 +661,4 @@ void vulkanFsrPassSetSharpness(float sharpness) {
 float vulkanFsrPassGetSharpness(void) {
     return fsrSharpness;
 }
+}  // namespace engine

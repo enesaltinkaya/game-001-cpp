@@ -1,5 +1,6 @@
 #pragma once
 
+namespace engine {
 struct VulkanCommand;
 
 struct Vulkan {
@@ -29,5 +30,6 @@ void vulkanPostUpdate(void);
 void vulkanSetVsync(bool vsync);
 
 // Access pass profiling data (for stats GUI)
-struct VulkanProfile* vulkanGetPassProfiles(void);
+const struct VulkanProfile* vulkanGetPassProfiles(void);
 size_t vulkanGetPassProfileCount(void);
+}  // namespace engine

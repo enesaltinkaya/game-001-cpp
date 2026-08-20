@@ -2,6 +2,7 @@
 
 #include "ecs/system/scene/SceneSystem.h"
 
+namespace engine {
 enum LightType {
     LIGHT_DIRECTIONAL,
     LIGHT_POINT,
@@ -60,3 +61,4 @@ typedef struct Light {
     float outerConeAngle; /* spot only, radians */
     bool castsShadows;
 } Light;
+}  // namespace engine

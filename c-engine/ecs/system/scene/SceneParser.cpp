@@ -26,7 +26,8 @@
 #include "zstd/git/lib/zstd.h"  // IWYU pragma: keep
 #include <limits.h>
 
-static void* decompressZstd(String* gltfFileData, u32* sizeOut, const char* path);
+namespace engine {
+static void* decompressZstd(utils::String* gltfFileData, u32* sizeOut, const char* path);
 static cgltf_data* parseGltfData(void* glbData, u32 glbSize, const char* pPath);
 static cgltf_result decompressMeshopt(cgltf_data* data);
 static Entity* parseNode(Scene* scene, cgltf_node* node, Entity* parent);
@@ -42,19 +43,19 @@ static void parseAnimationEventsFromExtras(AnimationClip* clip, const char* extr
 static void parseNodeSplatInfo(cgltf_node* node);
 static u32 sceneLoadSplatTiles(const char* splatBaseDir, const char* groupKey,
                                 u32 groupIndex) {
-    String prefix = {};
-    stringAppend(&prefix, splatBaseDir);
-    stringAppend(&prefix, groupKey);
-    stringAppend(&prefix, "/");
-    stringAppend(&prefix, groupKey);
-    stringAppend(&prefix, ".");
+    utils::String prefix = {};
+    utils::stringAppend(&prefix, splatBaseDir);
+    utils::stringAppend(&prefix, groupKey);
+    utils::stringAppend(&prefix, "/");
+    utils::stringAppend(&prefix, groupKey);
+    utils::stringAppend(&prefix, ".");
 
     u32 prefixLen = prefix.size;
     u32 loadedTiles = 0;
 
-    Array(String) allKtx2 = dataManagerListFiles(".ktx2");
-    for (u32 i = 0; i < arraySize(allKtx2); i++) {
-        String* filePath = &allKtx2[i];
+    std::vector<utils::String> allKtx2 = utils::dataManagerListFiles(".ktx2");
+    for (u32 i = 0; i < allKtx2.size(); i++) {
+        utils::String* filePath = &allKtx2[i];
         if (filePath->size < prefixLen + 6) continue;
         if (strncmp(filePath->data, prefix.data, prefixLen) != 0) continue;
 
@@ -76,10 +77,9 @@ static u32 sceneLoadSplatTiles(const char* splatBaseDir, const char* groupKey,
         loadedTiles++;
     }
 
-    arrayFree(allKtx2);
-    stringDestroy(&prefix);
+    utils::stringDestroy(&prefix);
 
-    info("sceneParser: splat group '%s': loaded %u/%u UDIM tiles (scan)",
+    utils::info("sceneParser: splat group '%s': loaded %u/%u UDIM tiles (scan)",
          groupKey, loadedTiles, SPLAT_UDIM_TILES);
     return loadedTiles;
 }
@@ -106,11 +106,11 @@ static u32 mapGltfSampler(cgltf_sampler* sampler) {
     return SAMPLER_LINEAR;
 }
 
-static thread_local Map(uintptr_t, u32) meshCache;
-static thread_local Map(uintptr_t, Entity*) nodeCache;
+static thread_local std::unordered_map<uintptr_t, u32> meshCache;
+static thread_local std::unordered_map<uintptr_t, Entity*> nodeCache;
 
 // SplatInfo mapping: splatmap texture name -> full splatInfo JSON object
-static thread_local StrMap(Json*) nodeSplatInfoMap;
+static thread_local std::unordered_map<std::string, Json*> nodeSplatInfoMap;
 static thread_local const char* currentModelPath;
 
 /// Compute the world-space position, rotation and uniform scale for a cgltf
@@ -181,7 +181,7 @@ struct PrecomputedJoltShape {
     float restitution;
 };
 
-static thread_local StrMap(PrecomputedJoltShape) precomputedJoltShapes;
+static thread_local std::unordered_map<std::string, PrecomputedJoltShape> precomputedJoltShapes;
 static thread_local void* precomputedJoltData; /* raw sidecar buffer */
 
 static void loadPrecomputedJoltShapes(const char* scenePath);
@@ -194,15 +194,15 @@ Scene* sceneLoad(const char* path) {
 }
 
 Scene* sceneLoadCb(const char* path, SceneLoadCallback callback, void* userData) {
-    Scene* scene = static_cast<Scene*>(memoryAlloc(sizeof(Scene)));
-    *scene                = Scene{};
+    Scene* scene = new Scene{};
     scene->asyncLoadPending = true;  // freed/handled by sceneLoadMainThread (or sceneDestroy's deferral)
-    SceneLoadRequest* req = static_cast<SceneLoadRequest*>(memoryAlloc(sizeof(SceneLoadRequest)));
-    req->path             = path;
-    req->scene            = scene;
-    req->callback         = callback;
-    req->userData         = userData;
-    threadPoolAddWork(nullptr, sceneLoadOffThread, req);
+    SceneLoadRequest* req = new SceneLoadRequest{
+        .path     = path,
+        .scene    = scene,
+        .callback = callback,
+        .userData = userData,
+    };
+    utils::threadPoolAddWork(nullptr, sceneLoadOffThread, req);
     return scene;
 }
 
@@ -215,7 +215,7 @@ void sceneLoadMainThread(void* pScene) {
     // deferred the free to here.  Discard it without registering it with the
     // ECS or invoking the load callback.
     if (scene->destroyRequested) {
-        info("sceneParser: scene '%s' was destroyed while loading; discarding",
+        utils::info("sceneParser: scene '%s' was destroyed while loading; discarding",
              scene->name.data ? scene->name.data : "(unnamed)");
         rendererSceneDestroy(scene);
         sceneDestroy(scene);
@@ -226,12 +226,12 @@ void sceneLoadMainThread(void* pScene) {
     // (on the main thread) rather than when they were parsed on the worker
     // thread.  Under heavy CPU load the worker can take >2 s, which would
     // cause every transform to expire before postUpdate() ever uploads it.
-    double now = millies();
-    for (i32 i = 0, si = mapSize(scene->activeEntities); i < si; i++) {
-        scene->activeEntities[i].value = now;
+    double now = utils::millies();
+    for (auto& entry : scene->activeEntities) {
+        entry.second = now;
     }
 
-    arrayPut(ecs.scenes, scene);
+    ecs.scenes.push_back(scene);
     scene->ready = true;
 
     if (scene->loadCallback) {
@@ -245,15 +245,15 @@ void sceneLoadOffThread(void* pRequest) {
     Scene* scene                = req->scene;
     scene->loadCallback         = req->callback;
     scene->loadCallbackUserData = req->userData;
-    memoryFree(req);
-    info("sceneParser: loading scene %s", path);
-    String fileData = dataManagerRead(path);
+    delete req;
+    utils::info("sceneParser: loading scene %s", path);
+    utils::String fileData = utils::dataManagerRead(path);
     u32 glbSize;
     void* glbData           = decompressZstd(&fileData, &glbSize, path);
     cgltf_data* cgltfData   = parseGltfData(glbData, glbSize, path);
     currentCgltfData        = cgltfData;
     currentModelPath        = path;
-    stringPrintf(&scene->name, path);
+    utils::stringPrintf(&scene->name, path);
 
     /* Try loading pre-baked Jolt shapes sidecar (e.g. .jolt.dat) */
     loadPrecomputedJoltShapes(path);
@@ -268,7 +268,8 @@ void sceneLoadOffThread(void* pRequest) {
     for (i32 i = 0, si = cgltfData->nodes_count; i < si; i++) {
         cgltf_node* node = &cgltfData->nodes[i];
         uintptr_t     nodeKey = (uintptr_t)node;
-        Entity* entity   = mapGet(nodeCache, nodeKey);
+        auto it = nodeCache.find(nodeKey);
+        Entity* entity   = it != nodeCache.end() ? it->second : nullptr;
         if (entity && node->skin) {
             parseSkin(scene, node, entity);
         }
@@ -280,22 +281,19 @@ void sceneLoadOffThread(void* pRequest) {
     }
 
     rendererSceneCreate(scene);
-    futureTaskAdd(0, sceneLoadMainThread, scene);
+    utils::futureTaskAdd(0, sceneLoadMainThread, scene);
 
-    mapFree(nodeCache);
-    mapFree(meshCache);
     freePrecomputedJoltShapes();
 
     // Free nodeSplatInfoMap
-    for (i32 i = 0, si = strmapSize(nodeSplatInfoMap); i < si; i++) {
-        json_decref(nodeSplatInfoMap[i].value);
+    for (const auto& entry : nodeSplatInfoMap) {
+        json_decref(entry.second);
     }
-    strmapFree(nodeSplatInfoMap);
-    nodeSplatInfoMap = nullptr;
+    nodeSplatInfoMap.clear();
     currentModelPath = nullptr;
 
-    memoryFree(glbData);
-    stringDestroy(&fileData);
+    free(glbData);
+    utils::stringDestroy(&fileData);
     currentCgltfData = nullptr;
     cgltf_free(cgltfData);
 }
@@ -303,18 +301,18 @@ void sceneLoadOffThread(void* pRequest) {
 Entity* parseNode(Scene* scene, cgltf_node* node, Entity* parent) {
     Entity* entity = createEntity(scene, node->name);
     uintptr_t nodeKey = (uintptr_t)node;
-    mapPut(nodeCache, nodeKey, entity);
+    nodeCache[nodeKey] = entity;
 
     if (parent) {
         entity->parent = parent;
-        arrayPut(parent->children, entity);
+        parent->children.push_back(entity);
     }
 
     // Store raw node extras on the scene so game code can inspect them later.
     if (node->extras.data) {
         Json* stored = jsonParse((char*)node->extras.data);
         if (stored) {
-            mapPut(scene->extras, entity->id, stored);
+            scene->extras[entity->id] = stored;
         }
     }
 
@@ -381,8 +379,8 @@ void parseNodeSplatInfo(cgltf_node* node) {
     json_object_foreach(splatInfo, key, value) {
         json_t* splatInfoCopy = json_deep_copy(splatInfo);
         if (!splatInfoCopy) continue;
-        strmapPut(nodeSplatInfoMap, key, splatInfoCopy);
-        debug("sceneParser: parsed splatInfo key '%s'", key);
+        nodeSplatInfoMap[key] = splatInfoCopy;
+        utils::debug("sceneParser: parsed splatInfo key '%s'", key);
     }
 
     jsonFree(extras);
@@ -423,75 +421,74 @@ void parseTransform(Scene* scene, cgltf_node* node, Entity* entity, Entity* pare
     // == node->scale[2] && "only uniform scale is supported!");
 }
 
-void* decompressZstd(String* gltfFileData, u32* sizeOut, const char* path) {
+void* decompressZstd(utils::String* gltfFileData, u32* sizeOut, const char* path) {
     u64 rSize = ZSTD_getFrameContentSize(gltfFileData->data, gltfFileData->size);
     if (rSize == ZSTD_CONTENTSIZE_ERROR) {
-        terminate("sceneParser: invalid zstd size: %s %lu %lu", path, rSize, gltfFileData->size);
+        utils::terminate("sceneParser: invalid zstd size: %s %lu %lu", path, rSize, gltfFileData->size);
     }
-    void* rBuff = memoryAlloc(rSize);
+    void* rBuff = malloc(rSize);
     u64 dSize   = ZSTD_decompress(rBuff, rSize, gltfFileData->data, gltfFileData->size);
 
     if (ZSTD_isError(dSize) != 0U) {
-        terminate("sceneParser: zstd error: %s", ZSTD_getErrorName(dSize));
+        utils::terminate("sceneParser: zstd error: %s", ZSTD_getErrorName(dSize));
     }
 
     if (rSize != dSize) {
-        terminate("sceneParser: zstd size mismatch: %s", path);
+        utils::terminate("sceneParser: zstd size mismatch: %s", path);
     }
     *sizeOut = rSize;
     return rBuff;
 }
 
 static void* cgltfAlloc(void* _, cgltf_size size) {
-    return memoryAlloc(size);
+    return malloc(size);
 }
 
 static void cgltfFree(void* _, void* ptr) {
-    memoryFree(ptr);
+    free(ptr);
 }
 
 cgltf_data* parseGltfData(void* glbData, u32 glbSize, const char* _) {
-    cgltf_options options = {
-        .memory.alloc_func = cgltfAlloc,
-        .memory.free_func  = cgltfFree,
-    };
+    cgltf_options options = {};
+    options.memory.alloc_func = cgltfAlloc;
+    options.memory.free_func  = cgltfFree;
 
     cgltf_data* cData   = nullptr;
     cgltf_result result = cgltf_parse(&options, glbData, glbSize, &cData);
     if (result != 0) {
-        terminate("sceneParser: cgltf_parse failed: %d", result);
+        utils::terminate("sceneParser: cgltf_parse failed: %d", result);
     }
     result = cgltf_load_buffers(&options, cData, 0);
     if (result != 0) {
-        terminate("sceneParser: cgltf_load_buffers failed: %d", result);
+        utils::terminate("sceneParser: cgltf_load_buffers failed: %d", result);
     }
 #ifndef NDEBUG
     result = cgltf_validate(cData);
     if (result != 0) {
-        terminate("sceneParser: cgltf_validate failed: %d", result);
+        utils::terminate("sceneParser: cgltf_validate failed: %d", result);
     }
 #endif
 
 #ifndef NDEBUG
-    createDirectory("scripts/gltf-json-debug");
-    String fileName  = {};
-    String directory = {};
-    stringAppend(&fileName, _);
-    Array(String*) split = stringSplit(&fileName, "/");
-    String* lastPart     = split[arraySize(split) - 1];
-    stringAppend(lastPart, ".json");
-    stringAppend(&directory, "scripts/gltf-json-debug/");
-    stringAppend(&directory, lastPart->data);
-    fileWriteBinary(directory.data, (char*)cData->json, cData->json_size);
+    utils::createDirectory("scripts/gltf-json-debug");
+    utils::String fileName  = {};
+    utils::String directory = {};
+    utils::stringAppend(&fileName, _);
+    std::vector<utils::String*> split = utils::stringSplit(&fileName, "/");
+    utils::String* lastPart     = split[static_cast<i32>(split.size()) - 1];
+    utils::stringAppend(lastPart, ".json");
+    utils::stringAppend(&directory, "scripts/gltf-json-debug/");
+    utils::stringAppend(&directory, lastPart->data);
+    utils::fileWriteBinary(directory.data, (char*)cData->json, cData->json_size);
 
-    stringDestroy(&fileName);
-    stringDestroy(&directory);
-    stringArrayDestroy(split);
+    utils::stringDestroy(&fileName);
+    utils::stringDestroy(&directory);
+    utils::stringArrayDestroy(split);
 
 #endif
 
     if (decompressMeshopt(cData) != cgltf_result_success) {
-        terminate("sceneParser: decompressMeshopt failed!");
+        utils::terminate("sceneParser: decompressMeshopt failed!");
     }
 
     return cData;
@@ -508,7 +505,7 @@ cgltf_result decompressMeshopt(cgltf_data* data) {
             return cgltf_result_invalid_gltf;
         }
         source += mc->offset;
-        void* result = memoryAlloc(mc->count * mc->stride);
+        void* result = malloc(mc->count * mc->stride);
         if (!result) {
             return cgltf_result_out_of_memory;
         }
@@ -558,32 +555,32 @@ cgltf_result decompressMeshopt(cgltf_data* data) {
 /* ── Pre-baked Jolt shapes sidecar loading ──────────────────────────────── */
 
 void loadPrecomputedJoltShapes(const char* scenePath) {
-    precomputedJoltShapes = nullptr;
+    precomputedJoltShapes.clear();
     precomputedJoltData   = nullptr;
 
     /* Derive sidecar path: "models/foo.dat" → "models/foo.jolt.dat" */
-    String sidecarPath = {};
+    utils::String sidecarPath = {};
     size_t pathLen     = strlen(scenePath);
-    if (pathLen > 4 && strequals(scenePath + pathLen - 4, ".dat")) {
-        stringAppendBinary(&sidecarPath, const_cast<char*>(scenePath), pathLen - 4);
+    if (pathLen > 4 && utils::strequals(scenePath + pathLen - 4, ".dat")) {
+        utils::stringAppendBinary(&sidecarPath, const_cast<char*>(scenePath), pathLen - 4);
     } else {
-        stringAppend(&sidecarPath, scenePath);
+        utils::stringAppend(&sidecarPath, scenePath);
     }
-    stringAppend(&sidecarPath, ".jolt.dat");
+    utils::stringAppend(&sidecarPath, ".jolt.dat");
 
-    if (!dataManagerFileExists(sidecarPath.data)) {
-        stringDestroy(&sidecarPath);
+    if (!utils::dataManagerFileExists(sidecarPath.data)) {
+        utils::stringDestroy(&sidecarPath);
         return;
     }
 
-    info("sceneParser: loading pre-baked Jolt shapes from %s", sidecarPath.data);
-    String fileData = dataManagerRead(sidecarPath.data);
-    stringDestroy(&sidecarPath);
+    utils::info("sceneParser: loading pre-baked Jolt shapes from %s", sidecarPath.data);
+    utils::String fileData = utils::dataManagerRead(sidecarPath.data);
+    utils::stringDestroy(&sidecarPath);
 
     /* Decompress zstd */
     u32 rawSize;
     void* raw = decompressZstd(&fileData, &rawSize, "jolt shapes sidecar");
-    stringDestroy(&fileData);
+    utils::stringDestroy(&fileData);
     precomputedJoltData = raw;
 
     /* Parse binary format:
@@ -610,7 +607,7 @@ void loadPrecomputedJoltShapes(const char* scenePath) {
     const u8* end = p + rawSize;
 
     if (rawSize < 12 || memcmp(p, "JBVH", 4) != 0) {
-        warn("sceneParser: invalid jolt shapes sidecar header");
+        utils::warn("sceneParser: invalid jolt shapes sidecar header");
         return;
     }
     p += 4;
@@ -619,7 +616,7 @@ void loadPrecomputedJoltShapes(const char* scenePath) {
     memcpy(&version, p, 4);
     p += 4;
     if (version != 1 && version != 2) {
-        warn("sceneParser: unsupported jolt shapes sidecar version %u", version);
+        utils::warn("sceneParser: unsupported jolt shapes sidecar version %u", version);
         return;
     }
 
@@ -635,34 +632,30 @@ void loadPrecomputedJoltShapes(const char* scenePath) {
         if (p + nameLen > end) break;
 
         /* Build null-terminated name for the strmap key */
-        char* name = static_cast<char*>(memoryAlloc(nameLen + 1));
-        memcpy(name, p, nameLen);
-        name[nameLen] = '\0';
+        std::string name(reinterpret_cast<const char*>(p), nameLen);
         p += nameLen;
 
         PrecomputedJoltShape shape = {};
 
         if (version == 2) {
             /* v2: shapeTag, motionTag, mass, friction, restitution, then blob */
-            if (p + 1 > end) { memoryFree(name); break; }
+            if (p + 1 > end) { break; }
             shape.shapeTag = *p; p += 1;
-            if (p + 1 > end) { memoryFree(name); break; }
+            if (p + 1 > end) { break; }
             shape.motionTag = *p; p += 1;
-            if (p + 12 > end) { memoryFree(name); break; }
+            if (p + 12 > end) { break; }
             memcpy(&shape.mass, p, 4);         p += 4;
             memcpy(&shape.friction, p, 4);      p += 4;
             memcpy(&shape.restitution, p, 4);   p += 4;
         }
 
         if (p + 4 > end) {
-            memoryFree(name);
             break;
         }
         u32 blobSize;
         memcpy(&blobSize, p, 4);
         p += 4;
         if (p + blobSize > end) {
-            memoryFree(name);
             break;
         }
 
@@ -679,18 +672,16 @@ void loadPrecomputedJoltShapes(const char* scenePath) {
             shape.restitution = 0.0f;
         }
 
-        strmapPut(precomputedJoltShapes, name, shape);
-        memoryFree(name);
+        precomputedJoltShapes[name] = shape;
     }
 
-    info("sceneParser: loaded %u pre-baked Jolt shape entries", entryCount);
+    utils::info("sceneParser: loaded %u pre-baked Jolt shape entries", entryCount);
 }
 
 void freePrecomputedJoltShapes(void) {
-    strmapFree(precomputedJoltShapes);
-    precomputedJoltShapes = nullptr;
+    precomputedJoltShapes.clear();
     if (precomputedJoltData) {
-        memoryFree(precomputedJoltData);
+        free(precomputedJoltData);
         precomputedJoltData = nullptr;
     }
 }
@@ -709,18 +700,19 @@ static void sceneMergeBounds(Scene* scene, vec3 min, vec3 max) {
 void parseMesh(Scene* scene, cgltf_node* node, Entity* entity) {
     // Check if mesh is already cached
     uintptr_t meshKey = (uintptr_t)node->mesh;
-    u32 meshEntityId = mapGet(meshCache, meshKey);
+    auto it = meshCache.find(meshKey);
+    u32 meshEntityId = it != meshCache.end() ? it->second : 0;
     if (meshEntityId) {
         Mesh* mesh            = getComponent(scene, Mesh, meshEntityId);
         InstanceData instance = {entity->id};
-        arrayPut(mesh->instances, instance);
+        mesh->instances.push_back(instance);
         return;
     }
 
     Mesh* mesh            = createComponent(scene, Mesh, entity->id);
     InstanceData instance = {.entity = entity->id};
-    arrayPut(mesh->instances, instance);
-    mapPut(meshCache, meshKey, entity->id);
+    mesh->instances.push_back(instance);
+    meshCache[meshKey] = entity->id;
 
     // Initialize AABB
     for (i32 i = 0; i < 3; i++) {
@@ -737,9 +729,9 @@ void parseMesh(Scene* scene, cgltf_node* node, Entity* entity) {
 
         // Copy vertex attributes
         primitive.indexCount = indicesAccessor->count;
-        arraySetSize(primitive.indices, primitive.indexCount);
+        primitive.indices.resize(primitive.indexCount);
         cgltf_accessor_unpack_indices(indicesAccessor,
-                                      primitive.indices,
+                                      primitive.indices.data(),
                                       sizeof(u32),
                                       primitive.indexCount);
 
@@ -748,9 +740,9 @@ void parseMesh(Scene* scene, cgltf_node* node, Entity* entity) {
             if (attribute->type == cgltf_attribute_type_position) {
                 const cgltf_accessor* position = attribute->data;
                 primitive.vertexCount          = position->count;
-                arraySetSize(primitive.positions, primitive.vertexCount * 3);
+                primitive.positions.resize(primitive.vertexCount * 3);
                 cgltf_accessor_unpack_floats(position,
-                                             primitive.positions,
+                                             primitive.positions.data(),
                                              primitive.vertexCount * 3);
                 primitive.attributeMask |= (1 << cgltf_attribute_type_position);
                 vec3 aabb[2] = {{position->min[0], position->min[1], position->min[2]},
@@ -761,22 +753,22 @@ void parseMesh(Scene* scene, cgltf_node* node, Entity* entity) {
                 // the props pass only needs the first 3 (RGB).
                 const cgltf_accessor* colorAccessor = attribute->data;
                 size_t comps = cgltf_num_components(colorAccessor->type);
-                arraySetSize(primitive.colors, primitive.vertexCount * comps);
-                cgltf_accessor_unpack_floats(colorAccessor, primitive.colors, primitive.vertexCount * comps);
+                primitive.colors.resize(primitive.vertexCount * comps);
+                cgltf_accessor_unpack_floats(colorAccessor, primitive.colors.data(), primitive.vertexCount * comps);
                 primitive.attributeMask |= (1 << cgltf_attribute_type_color);
             } else {
                 cgltf_accessor* accessor = attribute->data;
                 size_t attrSize          = primitive.vertexCount * accessor->stride;
-                arraySetSize(primitive.attributes[attribute->type], attrSize);
+                primitive.attributes[attribute->type].resize(attrSize);
                 const u8* src = cgltf_buffer_view_data(accessor->buffer_view) + accessor->offset;
-                memcpy(primitive.attributes[attribute->type], src, attrSize);
+                memcpy(primitive.attributes[attribute->type].data(), src, attrSize);
                 primitive.attributeMask |= (1 << attribute->type);
             }
         }
 
         primitive.materialId = parseMaterial(gltfPrimitive);
 
-        arrayPut(mesh->primitives, primitive);
+        mesh->primitives.push_back(primitive);
     }
 
     // Transform local AABB to world space before merging into scene bounds.
@@ -798,7 +790,7 @@ void parseMesh(Scene* scene, cgltf_node* node, Entity* entity) {
     if (entity->name && (strstr(entity->name, "eve") || strstr(entity->name, "armature"))) {
         vec3 aabbSize;
         glm_vec3_sub(mesh->aabbLocal[1], mesh->aabbLocal[0], aabbSize);
-        info("meshAABB: entity='%s' local=(%.3f,%.3f,%.3f) size=(%.3f,%.3f,%.3f) "
+        utils::info("meshAABB: entity='%s' local=(%.3f,%.3f,%.3f) size=(%.3f,%.3f,%.3f) "
              "worldMin=(%.2f,%.2f,%.2f) worldMax=(%.2f,%.2f,%.2f) scale=%.4f",
              entity->name,
              mesh->aabbLocal[0][0], mesh->aabbLocal[0][1], mesh->aabbLocal[0][2],
@@ -816,8 +808,9 @@ void parsePhysicsMesh(Scene* scene, cgltf_node* node, Entity* entity) {
     cgltfNodeWorldTransform(node, pos, rot, &worldScale);
 
     // Try pre-baked Jolt shape first (avoids BVH construction at load time).
-    if (node->name && precomputedJoltShapes) {
-        PrecomputedJoltShape shape = strmapGet(precomputedJoltShapes, node->name);
+    if (node->name && !precomputedJoltShapes.empty()) {
+        auto it = precomputedJoltShapes.find(node->name);
+        PrecomputedJoltShape shape = it != precomputedJoltShapes.end() ? it->second : PrecomputedJoltShape{};
         if (shape.blob) {
             physicsCreateFromBlob(scene, entity->id,
                                   shape.shapeTag, shape.motionTag,
@@ -836,10 +829,10 @@ void parsePhysicsMesh(Scene* scene, cgltf_node* node, Entity* entity) {
     if (!indicesAccessor) return;
 
     u32 indexCount = (u32)indicesAccessor->count;
-    u32* indices = static_cast<u32*>(memoryAlloc(indexCount * sizeof(u32)));
-    cgltf_accessor_unpack_indices(indicesAccessor, indices, sizeof(u32), indexCount);
+    std::vector<u32> indices(indexCount);
+    cgltf_accessor_unpack_indices(indicesAccessor, indices.data(), sizeof(u32), indexCount);
 
-    float* positions = nullptr;
+    std::vector<float> positions;
     u32 vertexCount  = 0;
 
     for (u64 j = 0; j < gltfPrimitive->attributes_count; j++) {
@@ -847,15 +840,13 @@ void parsePhysicsMesh(Scene* scene, cgltf_node* node, Entity* entity) {
         if (attribute->type == cgltf_attribute_type_position) {
             const cgltf_accessor* posAccessor = attribute->data;
             vertexCount                       = (u32)posAccessor->count;
-            positions                          = static_cast<float*>(memoryAlloc(vertexCount * 3 * sizeof(float)));
-            cgltf_accessor_unpack_floats(posAccessor, positions, vertexCount * 3);
+            positions.resize(vertexCount * 3);
+            cgltf_accessor_unpack_floats(posAccessor, positions.data(), vertexCount * 3);
             break;
         }
     }
 
-    if (!positions || vertexCount == 0) {
-        memoryFree(indices);
-        if (positions) memoryFree(positions);
+    if (positions.empty() || vertexCount == 0) {
         return;
     }
 
@@ -869,10 +860,7 @@ void parsePhysicsMesh(Scene* scene, cgltf_node* node, Entity* entity) {
         }
     }
 
-    physicsCreateMesh(scene, entity->id, positions, vertexCount * 3, indices, indexCount, pos, rot);
-
-    memoryFree(positions);
-    memoryFree(indices);
+    physicsCreateMesh(scene, entity->id, positions.data(), vertexCount * 3, indices.data(), indexCount, pos, rot);
 }
 
 void parseRigidBody(Scene* scene, cgltf_node* node, Entity* entity) {
@@ -893,7 +881,7 @@ void parseRigidBody(Scene* scene, cgltf_node* node, Entity* entity) {
     bool isDynamic = false;
     json_t* rbType = json_object_get(extras, "rigidBodyType");
     if (rbType && json_is_string(rbType)) {
-        isDynamic = strequals(json_string_value(rbType), "ACTIVE");
+        isDynamic = utils::strequals(json_string_value(rbType), "ACTIVE");
     }
 
     // Read physics material properties (defaults match Blender's)
@@ -919,9 +907,9 @@ void parseRigidBody(Scene* scene, cgltf_node* node, Entity* entity) {
     // dimensions from the mesh AABB.  For CONVEX_HULL and MESH we need
     // actual vertex/index data from the mesh.
     float aabb[6]     = {};
-    float* positions  = nullptr;
+    std::vector<float> positions;
     u32 positionCount = 0;
-    u32* indices      = nullptr;
+    std::vector<u32> indices;
     u32 indexCount    = 0;
 
     // Try getting AABB from the Mesh component first (fastest path).
@@ -962,8 +950,9 @@ void parseRigidBody(Scene* scene, cgltf_node* node, Entity* entity) {
     // For MESH shapes, try using a pre-baked Jolt blob first.
     // Only valid when scale == 1.0 — the blob was baked with unscaled vertices.
     // Try pre-baked Jolt blob first for all shape types.
-    if (node->name && precomputedJoltShapes) {
-        PrecomputedJoltShape shape = strmapGet(precomputedJoltShapes, node->name);
+    if (node->name && !precomputedJoltShapes.empty()) {
+        auto it = precomputedJoltShapes.find(node->name);
+        PrecomputedJoltShape shape = it != precomputedJoltShapes.end() ? it->second : PrecomputedJoltShape{};
         if (shape.blob) {
             physicsCreateFromBlob(scene, entity->id,
                                   shape.shapeTag, shape.motionTag,
@@ -976,14 +965,14 @@ void parseRigidBody(Scene* scene, cgltf_node* node, Entity* entity) {
     }
 
     // Fallback: build shape at runtime from glTF data
-    bool needsGeometry = strequals(shapeType, "CONVEX_HULL") || strequals(shapeType, "MESH");
+    bool needsGeometry = utils::strequals(shapeType, "CONVEX_HULL") || utils::strequals(shapeType, "MESH");
     if (needsGeometry && node->mesh && node->mesh->primitives_count > 0) {
         cgltf_primitive* prim = &node->mesh->primitives[0];
 
         if (prim->indices) {
             indexCount = (u32)prim->indices->count;
-            indices     = static_cast<u32*>(memoryAlloc(indexCount * sizeof(u32)));
-            cgltf_accessor_unpack_indices(prim->indices, indices, sizeof(u32), indexCount);
+            indices.resize(indexCount);
+            cgltf_accessor_unpack_indices(prim->indices, indices.data(), sizeof(u32), indexCount);
         }
 
         for (u64 j = 0; j < prim->attributes_count; j++) {
@@ -991,15 +980,15 @@ void parseRigidBody(Scene* scene, cgltf_node* node, Entity* entity) {
                 const cgltf_accessor* posAccessor = prim->attributes[j].data;
                 u32 vertexCount                   = (u32)posAccessor->count;
                 positionCount                     = vertexCount * 3;
-                positions                          = static_cast<float*>(memoryAlloc(positionCount * sizeof(float)));
-                cgltf_accessor_unpack_floats(posAccessor, positions, positionCount);
+                positions.resize(positionCount);
+                cgltf_accessor_unpack_floats(posAccessor, positions.data(), positionCount);
                 break;
             }
         }
 
         // Apply world scale to vertex positions so the physics geometry
         // matches the visual mesh.
-        if (worldScale != 1.0f && positions) {
+        if (worldScale != 1.0f && !positions.empty()) {
             for (u32 v = 0; v < positionCount; v++) {
                 positions[v] *= worldScale;
             }
@@ -1014,15 +1003,13 @@ void parseRigidBody(Scene* scene, cgltf_node* node, Entity* entity) {
                            friction,
                            restitution,
                            aabb,
-                           positions,
+                           positions.empty() ? nullptr : positions.data(),
                            positionCount,
-                           indices,
+                           indices.empty() ? nullptr : indices.data(),
                            indexCount,
                            pos,
                            rot);
 
-    if (positions) memoryFree(positions);
-    if (indices) memoryFree(indices);
     jsonFree(extras);
 }
 
@@ -1038,24 +1025,25 @@ void parseSkin(Scene* scene, cgltf_node* node, Entity* entity) {
     for (u64 i = 0; i < cgltfSkin->joints_count; i++) {
         cgltf_node* jointNode = cgltfSkin->joints[i];
         uintptr_t     jointKey = (uintptr_t)jointNode;
-        Entity* jointEntity   = mapGet(nodeCache, jointKey);
+        auto it = nodeCache.find(jointKey);
+        Entity* jointEntity   = it != nodeCache.end() ? it->second : nullptr;
         if (jointEntity) {
-            arrayPut(skin->joints, jointEntity->id);
+            skin->joints.push_back(jointEntity->id);
         }
     }
 
     // Copy inverse bind matrices
     if (cgltfSkin->inverse_bind_matrices) {
         cgltf_accessor* accessor = cgltfSkin->inverse_bind_matrices;
-        arraySetSize(skin->inverseBindMatrices, accessor->count);
+        skin->inverseBindMatrices.resize(accessor->count * 16);
         cgltf_accessor_unpack_floats(accessor,
-                                     (float*)skin->inverseBindMatrices,
+                                     skin->inverseBindMatrices.data(),
                                      accessor->count * 16);
     }
 
     // Initialize jointMatrices array to the same size as joints
     // These will be filled later during animation/animation update
-    arraySetSize(skin->jointTransforms, arraySize(skin->joints));
+    skin->jointTransforms.resize(static_cast<i32>(skin->joints.size()));
     skin->jointBufferCursor = 0;
 
     // Compensate for the parent armature's base rotation and scale.
@@ -1232,7 +1220,7 @@ u32 parseMaterial(cgltf_primitive* cgltfPrimitive) {
             cgltfMaterial->pbr_metallic_roughness.base_color_texture.texture;
         cgltf_image* image = cgltfTexture->image;
         if (!image) image = cgltfTexture->basisu_image;
-        if (!image) { warn("sceneParser: base color texture has no image for material '%s'", nameCheck); goto after_base_color; }
+        if (!image) { utils::warn("sceneParser: base color texture has no image for material '%s'", nameCheck); goto after_base_color; }
 
         Texture* texture = getTextureByName(image->name);
         if (texture) {
@@ -1268,7 +1256,7 @@ u32 parseMaterial(cgltf_primitive* cgltfPrimitive) {
             cgltfMaterial->pbr_metallic_roughness.metallic_roughness_texture.texture;
         cgltf_image* image = cgltfTexture->image;
         if (!image) image = cgltfTexture->basisu_image;
-        if (!image) { warn("sceneParser: metallic roughness texture has no image for material '%s'", nameCheck); goto after_roughness; }
+        if (!image) { utils::warn("sceneParser: metallic roughness texture has no image for material '%s'", nameCheck); goto after_roughness; }
         // debug("parse rough image: %s", image->name);
 
         Texture* texture = getTextureByName(image->name);
@@ -1303,7 +1291,7 @@ u32 parseMaterial(cgltf_primitive* cgltfPrimitive) {
         cgltf_texture* cgltfTexture = cgltfMaterial->normal_texture.texture;
         cgltf_image* image          = cgltfTexture->image;
         if (!image) image = cgltfTexture->basisu_image;
-        if (!image) { warn("sceneParser: normal texture has no image for material '%s'", nameCheck); goto after_normal; }
+        if (!image) { utils::warn("sceneParser: normal texture has no image for material '%s'", nameCheck); goto after_normal; }
         // debug("parse normal image: %s", image->name);
 
         Texture* texture = getTextureByName(image->name);
@@ -1335,7 +1323,7 @@ u32 parseMaterial(cgltf_primitive* cgltfPrimitive) {
         cgltf_texture* cgltfTexture = cgltfMaterial->emissive_texture.texture;
         cgltf_image* image          = cgltfTexture->image;
         if (!image) image = cgltfTexture->basisu_image;
-        if (!image) { warn("sceneParser: emissive texture has no image for material '%s'", nameCheck); goto after_emissive; }
+        if (!image) { utils::warn("sceneParser: emissive texture has no image for material '%s'", nameCheck); goto after_emissive; }
         // debug("parse emissive image: %s", image->name);
 
         Texture* texture = getTextureByName(image->name);
@@ -1366,7 +1354,7 @@ u32 parseMaterial(cgltf_primitive* cgltfPrimitive) {
         cgltf_texture* cgltfTexture = cgltfMaterial->occlusion_texture.texture;
         cgltf_image* image          = cgltfTexture->image;
         if (!image) image = cgltfTexture->basisu_image;
-        if (!image) { warn("sceneParser: occlusion texture has no image for material '%s'", nameCheck); goto after_occlusion; }
+        if (!image) { utils::warn("sceneParser: occlusion texture has no image for material '%s'", nameCheck); goto after_occlusion; }
         // debug("parse occ image: %s", image->name);
 
         Texture* texture = getTextureByName(image->name);
@@ -1401,11 +1389,12 @@ u32 parseMaterial(cgltf_primitive* cgltfPrimitive) {
     // Detail textures (albedo/normal per channel) stay per-material.
     {
         Json* fullSplatInfo = nullptr;
-        if (strmapSize(nodeSplatInfoMap) > 0) {
+        if (static_cast<i32>(nodeSplatInfoMap.size()) > 0) {
             // Try matching the material name against splatInfo keys first
-            fullSplatInfo = strmapGet(nodeSplatInfoMap, nameCheck);
+            auto it = nodeSplatInfoMap.find(nameCheck);
+            fullSplatInfo = it != nodeSplatInfoMap.end() ? it->second : nullptr;
             // If not found, use the first available entry (splatInfo is shared)
-            if (!fullSplatInfo) fullSplatInfo = nodeSplatInfoMap[0].value;
+            if (!fullSplatInfo) fullSplatInfo = nodeSplatInfoMap.begin()->second;
         }
         if (fullSplatInfo && json_is_object(fullSplatInfo)) {
             const char* groupKey;
@@ -1413,7 +1402,7 @@ u32 parseMaterial(cgltf_primitive* cgltfPrimitive) {
             u32 groupIndex = 0;
 
             // Derive UDIM tile directory from model path
-            String splatBaseDir = {};
+            utils::String splatBaseDir = {};
             if (currentModelPath) {
                 const char* lastSlash = strrchr(currentModelPath, '/');
                 const char* filename  = lastSlash ? lastSlash + 1 : currentModelPath;
@@ -1424,10 +1413,10 @@ u32 parseMaterial(cgltf_primitive* cgltfPrimitive) {
                 stem[stemLen] = '\0';
                 if (lastSlash) {
                     u32 dirLen = (u32)(lastSlash - currentModelPath + 1);
-                    stringAppendBinary(&splatBaseDir, const_cast<char*>(currentModelPath), dirLen);
+                    utils::stringAppendBinary(&splatBaseDir, const_cast<char*>(currentModelPath), dirLen);
                 }
-                stringAppend(&splatBaseDir, stem);
-                stringAppend(&splatBaseDir, "/");
+                utils::stringAppend(&splatBaseDir, stem);
+                utils::stringAppend(&splatBaseDir, "/");
             }
 
             json_object_foreach(fullSplatInfo, groupKey, groupValue) {
@@ -1453,8 +1442,8 @@ u32 parseMaterial(cgltf_primitive* cgltfPrimitive) {
                     }
 
                     // Load albedo: images/terrain/<detailName>/albedo.ktx2
-                    String albedoPath = {};
-                    stringPrintf(&albedoPath, "images/terrain/%s/albedo.ktx2", detailName);
+                    utils::String albedoPath = {};
+                    utils::stringPrintf(&albedoPath, "images/terrain/%s/albedo.ktx2", detailName);
                     Texture* albedoTex = getTextureByName(albedoPath.data);
                     if (albedoTex) {
                         albedoTex->refCount++;
@@ -1462,11 +1451,11 @@ u32 parseMaterial(cgltf_primitive* cgltfPrimitive) {
                     } else {
                         material->splatAlbedoTextures[detailIdx] = 0;
                     }
-                    stringDestroy(&albedoPath);
+                    utils::stringDestroy(&albedoPath);
 
                     // Load normal: images/terrain/<detailName>/normal.ktx2
-                    String normalPath = {};
-                    stringPrintf(&normalPath, "images/terrain/%s/normal.ktx2", detailName);
+                    utils::String normalPath = {};
+                    utils::stringPrintf(&normalPath, "images/terrain/%s/normal.ktx2", detailName);
                     Texture* normalTex = getTextureByName(normalPath.data);
                     if (normalTex) {
                         normalTex->refCount++;
@@ -1474,7 +1463,7 @@ u32 parseMaterial(cgltf_primitive* cgltfPrimitive) {
                     } else {
                         material->splatNormalTextures[detailIdx] = 0;
                     }
-                    stringDestroy(&normalPath);
+                    utils::stringDestroy(&normalPath);
                 }
 
                 groupIndex++;
@@ -1484,11 +1473,11 @@ u32 parseMaterial(cgltf_primitive* cgltfPrimitive) {
                 material->splatGroupCount = groupIndex;
                 material->featureMask |= (1u << MAT_HAS_SPLATMAP);
                 vulkanResourceSetTerrainSplatGroupCount(groupIndex);
-                info("sceneParser: material '%s' has %u splat groups (UDIM)",
+                utils::info("sceneParser: material '%s' has %u splat groups (UDIM)",
                      nameCheck, groupIndex);
             }
 
-            stringDestroy(&splatBaseDir);
+            utils::stringDestroy(&splatBaseDir);
         }
     }
 
@@ -1589,7 +1578,7 @@ void parseAnimation(cgltf_animation* cgltfAnim) {
 
         // Validate accessors
         if (!inputAccessor || !outputAccessor || inputAccessor->count == 0) {
-            warn(
+            utils::warn(
                 "animationParser: invalid accessors for channel %d in "
                 "animation '%s'",
                 i,
@@ -1600,7 +1589,7 @@ void parseAnimation(cgltf_animation* cgltfAnim) {
         // Get the target node's bone name
         const char* boneName = cgChannel->target_node->name;
         if (!boneName || !boneName[0]) {
-            warn(
+            utils::warn(
                 "animationParser: target node has no name for channel %d in "
                 "animation '%s'",
                 i,
@@ -1610,8 +1599,8 @@ void parseAnimation(cgltf_animation* cgltfAnim) {
 
         // Find or create animation channel for this bone name
         AnimationChannel* animChannel = nullptr;
-        for (size_t j = 0; j < arraySize(clip->channels); j++) {
-            if (strequals(clip->channels[j].jointName.data, boneName)) {
+        for (size_t j = 0; j < clip->channels.size(); j++) {
+            if (utils::strequals(clip->channels[j].jointName.data, boneName)) {
                 animChannel = &clip->channels[j];
                 break;
             }
@@ -1619,15 +1608,15 @@ void parseAnimation(cgltf_animation* cgltfAnim) {
 
         if (!animChannel) {
             AnimationChannel newChannel = {};
-            stringPrintf(&newChannel.jointName, boneName);
-            arrayPut(clip->channels, newChannel);
-            animChannel = &clip->channels[arraySize(clip->channels) - 1];
+            utils::stringPrintf(&newChannel.jointName, boneName);
+            clip->channels.push_back(newChannel);
+            animChannel = &clip->channels[static_cast<i32>(clip->channels.size()) - 1];
         }
 
         // Determine keyframe count and component count based on target path
         size_t keyCount                     = inputAccessor->count;
         size_t componentCount               = 0;
-        Array(Keyframe)* targetArray        = nullptr;
+        std::vector<Keyframe>* targetArray        = nullptr;
         InterpolationType* interpolationPtr = nullptr;
 
         switch (cgChannel->target_path) {
@@ -1647,7 +1636,7 @@ void parseAnimation(cgltf_animation* cgltfAnim) {
                 interpolationPtr = &animChannel->scaleInterpolation;
                 break;
             default:
-                warn("animationParser: unsupported animation path type %d", cgChannel->target_path);
+                utils::warn("animationParser: unsupported animation path type %d", cgChannel->target_path);
                 continue;
         }
 
@@ -1668,18 +1657,18 @@ void parseAnimation(cgltf_animation* cgltfAnim) {
         }
 
         // Allocate keyframes
-        arraySetSize(*targetArray, keyCount);
+        (*targetArray).resize(keyCount);
 
         // Read time values (input)
-        float* times = static_cast<float*>(memoryAlloc(keyCount * sizeof(float)));
-        cgltf_accessor_unpack_floats(inputAccessor, times, keyCount);
+        std::vector<float> times(keyCount);
+        cgltf_accessor_unpack_floats(inputAccessor, times.data(), keyCount);
 
         // Handle different interpolation types
         bool isCubicSpline      = (sampler->interpolation == cgltf_interpolation_type_cubic_spline);
         size_t outputMultiplier = isCubicSpline ? 3 : 1;
-        float* values = static_cast<float*>(memoryAlloc(keyCount * componentCount * outputMultiplier * sizeof(float)));
+        std::vector<float> values(keyCount * componentCount * outputMultiplier);
         cgltf_accessor_unpack_floats(outputAccessor,
-                                     values,
+                                     values.data(),
                                      keyCount * componentCount * outputMultiplier);
 
         // Populate keyframes
@@ -1735,9 +1724,6 @@ void parseAnimation(cgltf_animation* cgltfAnim) {
                 glm_vec4_zero(kf->outTangent);
             }
         }
-
-        memoryFree(times);
-        memoryFree(values);
     }
 
     // Parse events from extras
@@ -1750,7 +1736,7 @@ void parseAnimation(cgltf_animation* cgltfAnim) {
     //         "animationParser: loaded animation '%s' with %zu channels, "
     //         "duration: %.2fs",
     //         clip->name.data,
-    //         arraySize(clip->channels),
+    //         static_cast<i32>(clip->channels.size()),
     //         clip->duration);
 }
 
@@ -1762,7 +1748,7 @@ void parseAnimationEventsFromExtras(AnimationClip* clip, const char* extrasJson)
 
     Json* extras = jsonParse(extrasJson);
     if (!extras) {
-        warn("animationParser: failed to parse events JSON for '%s': %s",
+        utils::warn("animationParser: failed to parse events JSON for '%s': %s",
              clip->name.data,
              extrasJson);
         return;
@@ -1777,12 +1763,12 @@ void parseAnimationEventsFromExtras(AnimationClip* clip, const char* extrasJson)
             float eventTime  = (float)frame / DEFAULT_ANIMATION_FRAME_RATE;
 
             AnimationEventDef event = {};
-            stringAppend(&event.name, key);
+            utils::stringAppend(&event.name, key);
             event.time = eventTime;
 
-            arrayPut(clip->events, event);
+            clip->events.push_back(event);
 
-            info(
+            utils::info(
                 "animationParser: added event '%s' at time %.3fs (frame "
                 "%lld) to '%s'",
                 key,
@@ -1794,3 +1780,4 @@ void parseAnimationEventsFromExtras(AnimationClip* clip, const char* extrasJson)
 
     jsonFree(extras);
 }
+}  // namespace engine

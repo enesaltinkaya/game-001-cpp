@@ -1,4 +1,7 @@
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wgnu-anonymous-struct"
 #include "cglm/git/include/cglm/types-struct.h"
+#pragma GCC diagnostic pop
 #include "ecs/Ecs.h"
 #include "ecs/system/System.h"
 #include "ecs/system/window/WindowSystem.h"
@@ -11,27 +14,15 @@
 #include "renderer/vulkan/pass/debug_physics/VulkanDebugPhysicsPass.h"
 #include "renderer/vulkan/pass/debug_navmesh/VulkanDebugNavMeshPass.h"
 
-static void added(void);
-static void removed(void);
-static void preUpdate(void);
-static void update(void);
+namespace engine {
 
-System pyhsicsSystem = {
-    .name                = "physics",
-    .added               = added,
-    .removed             = removed,
-    .preUpdate           = preUpdate,
-    .update              = update,
-    .postUpdate          = nullptr,
-    .cpuElapsedLastFrame = 0.0,
-    .cpuElapsed          = 0.0,
-    .gpuElapsed          = 0.0,
-    .priority            = 0,
-};
+PhysicsSystem pyhsicsSystem;
+
+PhysicsSystem::PhysicsSystem() : System("physics") {}
 
 // entity → Scene* mapping for dynamic bodies so we can look up
 // which scene an active body belongs to in O(1).
-static Map(u32, Scene*) dynamicBodyScenes;
+static std::unordered_map<u32, Scene*> dynamicBodyScenes;
 
 // Scratch buffer for joltGetActiveTransforms().
 // 512 should be more than enough for active dynamic bodies per frame.
@@ -48,24 +39,23 @@ bool physicsSystemJoltActive(void) {
     return joltActive;
 }
 
-void added(void) {
+void PhysicsSystem::added() {
     joltInit();
     joltActive = true;
 }
 
-void removed(void) {
+void PhysicsSystem::removed() {
     joltActive = false;
     joltDestroy();
-    mapFree(dynamicBodyScenes);
 }
 
-void preUpdate(void) {
+void PhysicsSystem::preUpdate() {
     // Toggle all debug visualization with Ctrl+H
     if (input.ctrl && input.pressed == KEY_H) {
         char current = vulkanDebugPhysicsIsEnabled();
         vulkanDebugPhysicsSetEnabled(!current);
         vulkanDebugNavMeshSetEnabled(!current);
-        info("debug visualization: %s", !current ? "ON" : "OFF");
+        utils::info("debug visualization: %s", !current ? "ON" : "OFF");
     }
 
     if (input.ctrl && input.pressed == KEY_P) {
@@ -77,18 +67,18 @@ void preUpdate(void) {
         vec3 touch;
         if (joltCastRay(transform->pos, direction, 5000, touch)) {
             float distance = glm_vec3_distance(touch, transform->pos);
-            info("yup you touch my tralala %f %f %f dist:%f",
+            utils::info("yup you touch my tralala %f %f %f dist:%f",
                  touch[0],
                  touch[1],
                  touch[2],
                  distance);
         } else {
-            info("miss!");
+            utils::info("miss!");
         }
     }
 }
 
-void update(void) {
+void PhysicsSystem::update() {
     joltUpdate(0.02F);
 
     // Sync active dynamic body transforms back to ECS
@@ -97,7 +87,8 @@ void update(void) {
         JoltActiveTransform* at = &activeTransforms[i];
         u32 entity              = static_cast<u32>(at->userData);
 
-        Scene* scene = mapGet(dynamicBodyScenes, entity);
+        auto it = dynamicBodyScenes.find(entity);
+        Scene* scene = it != dynamicBodyScenes.end() ? it->second : nullptr;
         if (!scene) continue;
 
         Transform* transform = getComponent(scene, Transform, entity);
@@ -131,7 +122,7 @@ void physicsCreateMesh(Scene* scene,
     // indexType 1 = 32-bit indices (we already unpacked to u32 in the parser)
     physics->joltMesh =
         joltCreateMeshShapeNoCache(positions, positionCount, indices, indexCount, pos, rot, 1, static_cast<uint64_t>(entity));
-    info("physics: created mesh body for entity %u (verts=%u, indices=%u)",
+    utils::info("physics: created mesh body for entity %u (verts=%u, indices=%u)",
          entity,
          positionCount / 3,
          indexCount);
@@ -145,14 +136,14 @@ void physicsCreateMeshFromBlob(Scene* scene,
                                float* rot) {
     JoltMesh* joltMesh = joltCreateMeshShapeFromBlob(blob, blobSize, pos, rot, 0);
     if (!joltMesh) {
-        warn("physics: failed to restore pre-baked mesh for entity %u", entity);
+        utils::warn("physics: failed to restore pre-baked mesh for entity %u", entity);
         return;
     }
     Physics* physics   = createComponent(scene, Physics, entity);
     physics->shapeType = PHYSICS_SHAPE_MESH;
     physics->isDynamic = false;
     physics->joltMesh  = joltMesh;
-    info("physics: created mesh body from pre-baked blob for entity %u (%u bytes)",
+    utils::info("physics: created mesh body from pre-baked blob for entity %u (%u bytes)",
          entity,
          blobSize);
 }
@@ -185,7 +176,7 @@ void physicsCreateFromBlob(Scene* scene,
     uint64_t userData = static_cast<uint64_t>(entity);
 
     if (physics->isDynamic) {
-        mapPut(dynamicBodyScenes, entity, scene);
+        dynamicBodyScenes[entity] = scene;
     }
 
     float scale[3] = {worldScale, worldScale, worldScale};
@@ -200,7 +191,7 @@ void physicsCreateFromBlob(Scene* scene,
                                                    hasScale ? scale : nullptr,
                                                    pos, rot, userData);
         if (!result) {
-            warn("physics: failed to restore pre-baked shape for entity %u", entity);
+            utils::warn("physics: failed to restore pre-baked shape for entity %u", entity);
             return;
         }
         physics->shapeType = PHYSICS_SHAPE_MESH;
@@ -211,7 +202,7 @@ void physicsCreateFromBlob(Scene* scene,
                                                    hasScale ? scale : nullptr,
                                                    pos, rot, userData);
         if (!result) {
-            warn("physics: failed to restore pre-baked shape for entity %u", entity);
+            utils::warn("physics: failed to restore pre-baked shape for entity %u", entity);
             return;
         }
         physics->joltBody = reinterpret_cast<JoltBody*>(result);
@@ -228,7 +219,7 @@ void physicsCreateFromBlob(Scene* scene,
         }
     }
 
-    info("physics: created %s body from pre-baked blob for entity %u (%u bytes, scale=%.4f)",
+    utils::info("physics: created %s body from pre-baked blob for entity %u (%u bytes, scale=%.4f)",
          physics->isDynamic ? "dynamic" : "static",
          entity,
          blobSize,
@@ -257,7 +248,7 @@ void physicsCreateRigidBody(Scene* scene,
 
     // Track dynamic bodies for transform sync
     if (isDynamic) {
-        mapPut(dynamicBodyScenes, entity, scene);
+        dynamicBodyScenes[entity] = scene;
     }
 
     // Compute half-extents from AABB
@@ -265,7 +256,7 @@ void physicsCreateRigidBody(Scene* scene,
     float hy = (aabb[4] - aabb[1]) * 0.5f;
     float hz = (aabb[5] - aabb[2]) * 0.5f;
 
-    if (strequals(shapeType, "SPHERE")) {
+    if (utils::strequals(shapeType, "SPHERE")) {
         physics->shapeType = PHYSICS_SHAPE_SPHERE;
         float radius       = hx;
         if (hy > radius) radius = hy;
@@ -283,7 +274,7 @@ void physicsCreateRigidBody(Scene* scene,
         //      entity,
         //      radius);
 
-    } else if (strequals(shapeType, "BOX")) {
+    } else if (utils::strequals(shapeType, "BOX")) {
         physics->shapeType   = PHYSICS_SHAPE_BOX;
         float halfExtents[3] = {hx, hy, hz};
         physics->joltBody    = joltCreateBoxShape(halfExtents,
@@ -301,7 +292,7 @@ void physicsCreateRigidBody(Scene* scene,
         //      hy,
         //      hz);
 
-    } else if (strequals(shapeType, "CAPSULE")) {
+    } else if (utils::strequals(shapeType, "CAPSULE")) {
         physics->shapeType = PHYSICS_SHAPE_CAPSULE;
         float radius       = hx > hz ? hx : hz;
         float halfHeight   = hy > radius ? hy - radius : 0.0f;
@@ -320,7 +311,7 @@ void physicsCreateRigidBody(Scene* scene,
         //      halfHeight,
         //      radius);
 
-    } else if (strequals(shapeType, "CYLINDER")) {
+    } else if (utils::strequals(shapeType, "CYLINDER")) {
         physics->shapeType = PHYSICS_SHAPE_CYLINDER;
         float radius       = hx > hz ? hx : hz;
         physics->joltBody  = joltCreateCylinderShape(hy,
@@ -338,7 +329,7 @@ void physicsCreateRigidBody(Scene* scene,
         //      hy,
         //      radius);
 
-    } else if (strequals(shapeType, "CONVEX_HULL")) {
+    } else if (utils::strequals(shapeType, "CONVEX_HULL")) {
         physics->shapeType = PHYSICS_SHAPE_CONVEX_HULL;
         assert(positions && positionCount > 0 && "CONVEX_HULL requires mesh vertex data");
         physics->joltBody = joltCreateConvexHullShape(positions,
@@ -350,12 +341,12 @@ void physicsCreateRigidBody(Scene* scene,
                                                       friction,
                                                       restitution,
                                                       userData);
-        info("physics: created %s convex hull for entity %u (verts=%u)",
+        utils::info("physics: created %s convex hull for entity %u (verts=%u)",
              isDynamic ? "dynamic" : "static",
              entity,
              positionCount / 3);
 
-    } else if (strequals(shapeType, "MESH")) {
+    } else if (utils::strequals(shapeType, "MESH")) {
         physics->shapeType = PHYSICS_SHAPE_MESH;
         assert(positions && positionCount > 0 && indices && indexCount > 0 &&
                "MESH requires vertex and index data");
@@ -367,10 +358,11 @@ void physicsCreateRigidBody(Scene* scene,
         //      positionCount / 3,
         //      indexCount);
 
-    } else if (strequals(shapeType, "CONE")) {
+    } else if (utils::strequals(shapeType, "CONE")) {
         assert(false && "CONE rigid body shape is not supported — change it in Blender");
 
     } else {
-        warn("physics: unknown rigid body shape '%s' for entity %u", shapeType, entity);
+        utils::warn("physics: unknown rigid body shape '%s' for entity %u", shapeType, entity);
     }
 }
+}  // namespace engine

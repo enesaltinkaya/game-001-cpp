@@ -6,6 +6,7 @@
 #include "../utils/VulkanUtils.h"
 #include "renderer/vulkan/resources/VulkanResourceManager.h"
 
+namespace engine {
 static void copyDataToBuffer(VulkanCopyInfo info);
 static void copyDataToImage(VulkanCopyInfo info);
 static void copyBufferToBuffer(VulkanCopyInfo info);
@@ -17,14 +18,14 @@ static void copyImageToImage(VulkanCopyInfo info);
 // pool threads (scene loads, azgaar props uploads) while destruction happens on
 // the main thread (vulkanCleanupGarbage), so every VMA allocator call is
 // serialized here.
-static Thread vmaLock = {.mutex = PTHREAD_MUTEX_INITIALIZER};
+static utils::Thread vmaLock = {.mutex = PTHREAD_MUTEX_INITIALIZER};
 
 void vulkanVmaLock(void) {
-    threadLock(&vmaLock);
+    utils::threadLock(&vmaLock);
 }
 
 void vulkanVmaUnlock(void) {
-    threadUnlock(&vmaLock);
+    utils::threadUnlock(&vmaLock);
 }
 
 static VulkanBuffer createBuffer(const char* name,
@@ -34,7 +35,7 @@ VkBufferUsageFlags usage,
                                   bool readBack) {
     assert(name && "need buf name");
     VulkanBuffer buf = {};
-    threadInitMutex(&buf.lock);
+    utils::threadInitMutex(&buf.lock);
 
     VkBufferCreateInfo bufInfo = {};
     bufInfo.sType              = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
@@ -80,7 +81,7 @@ VkBufferUsageFlags usage,
     pInfo.buffer                    = buf.buf;
     buf.address                     = vkGetBufferDeviceAddress(vulkan.device, &pInfo);
 
-    if (isDebug()) {
+    if (utils::isDebug()) {
         // Local format (not strtmp): this path runs on pool threads.
         char debugName[128];
         snprintf(debugName, sizeof(debugName), "buf %s", name);
@@ -126,7 +127,7 @@ VulkanVirtualBuf vulkanBufferAllocateVirtual(VulkanBuffer* buf, u32 size, u32 al
     assert(buf->virtualBlock && "did you create the buffer with virtual flag on?");
     VulkanVirtualBuf virtualBuf = {};
     vulkanVmaLock();
-    threadLock(&buf->lock);
+    utils::threadLock(&buf->lock);
     u32 alignUp                              = (size + align - 1) & ~(align - 1);
     size                                     = alignUp;
     virtualBuf.size                          = size;
@@ -140,7 +141,7 @@ VulkanVirtualBuf vulkanBufferAllocateVirtual(VulkanBuffer* buf, u32 size, u32 al
                                                                   &virtualBuf.virtualAllocation,
                                                                   &virtualBuf.offset);
     assert(!result);
-    threadUnlock(&buf->lock);
+    utils::threadUnlock(&buf->lock);
     vulkanVmaUnlock();
     return virtualBuf;
 }
@@ -150,9 +151,9 @@ void vulkanBufferDestroyVirtual(VulkanVirtualBuf* virtualBuf) {
         return;
     }
     vulkanVmaLock();
-    threadLock(&virtualBuf->buffer->lock);
+    utils::threadLock(&virtualBuf->buffer->lock);
     vmaVirtualFree(virtualBuf->buffer->virtualBlock, virtualBuf->virtualAllocation);
-    threadUnlock(&virtualBuf->buffer->lock);
+    utils::threadUnlock(&virtualBuf->buffer->lock);
     vulkanVmaUnlock();
 }
 
@@ -240,7 +241,7 @@ void copyDataToImage(VulkanCopyInfo copyInfo) {
     //     };
     //     vkCmdCopyBufferToImage(copyInfo.cmd->cmd, copyInfo.staging->buffer->buf, target->img,
     //     VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
-    //     // arrayPut(copyInfo.cmd->virtualBufsToClean, *copyInfo.staging);
+    //     // copyInfo.cmd->virtualBufsToClean.push_back(*copyInfo.staging);
 
     // } else {
     VulkanBuffer staging = vulkanCreateStagingBuffer(copyInfo.size);
@@ -260,6 +261,7 @@ void copyDataToImage(VulkanCopyInfo copyInfo) {
         .imageSubresource.baseArrayLayer = copyInfo.target.layer,
         .imageSubresource.layerCount     = 1,
         .bufferRowLength                 = copyInfo.target.bufferRowLength,
+        .bufferImageHeight               = 0,
         .imageExtent                     = {static_cast<uint32_t>(copyInfo.target.imageExtent[0]),
                                             static_cast<uint32_t>(copyInfo.target.imageExtent[1]),
                                             static_cast<uint32_t>(copyInfo.target.imageExtent[2])},
@@ -339,3 +341,4 @@ void copyImageToImage(VulkanCopyInfo info) {
 VulkanBuffer vulkanCreateStagingBuffer(u64 size) {
     return vulkanCreateCpuBuffer("staging", size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
 }
+}  // namespace engine

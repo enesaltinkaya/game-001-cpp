@@ -1,14 +1,22 @@
 #pragma once
 
 #include "ecs/system/System.h"
+#include "ecs/system/scene/Scene.h"  // IWYU pragma: keep
 
-struct Entity;
-struct Scene;
+namespace game {
+class CombatSystem : public engine::System {
+public:
+    CombatSystem();
+    void added() override;
+    void removed() override;
+    void update() override;
+};
 
-extern struct System combatSystem;
+extern CombatSystem combatSystem;
 
-Entity* combatCreateHitbox(Entity* parent, float radius, float damage, u32 damageType, u32 ownerEntityId, u8 once, float hitCooldown);
+engine::Entity* combatCreateHitbox(engine::Entity* parent, float radius, float damage, u32 damageType, u32 ownerEntityId, u8 once, float hitCooldown);
 
-void combatSetPlayerEntity(Scene* scene, u32 entityId);
+void combatSetPlayerEntity(engine::Scene* scene, u32 entityId);
 
-Entity* combatGetPlayerEntity(void);
+engine::Entity* combatGetPlayerEntity(void);
+}  // namespace game

@@ -2,6 +2,7 @@
 
 #include "Utils.h"
 
+namespace engine {
 enum DecalProjectionAxis {
     DECAL_PROJECT_Y_DOWN = 0,
     DECAL_PROJECT_Z_FORWARD = 1,
@@ -45,3 +46,4 @@ void decalSubmitTransient(const DecalInstance* decal);
 
 const DecalInstance* decalGetPersistent(size_t* count);
 const DecalInstance* decalGetTransient(size_t* count);
+}  // namespace engine

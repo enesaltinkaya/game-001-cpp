@@ -2,6 +2,7 @@
 
 #include "renderer/vulkan/resources/VulkanImage.h"
 
+namespace engine {
 struct VulkanCommand;
 
 void vulkanFrameResourcesInit(void);
@@ -20,3 +21,4 @@ VulkanImage* vulkanFrameResourcesGetRoadLayer(void);
 VulkanImage* vulkanFrameResourcesGetDepth(void);
 VulkanImage* vulkanFrameResourcesGetVelocity(void);
 VulkanImage* vulkanFrameResourcesGetViewNormal(void);
+}  // namespace engine

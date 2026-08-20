@@ -1,3 +1,4 @@
+#include "CameraSystem.h"
 #include "ecs/Ecs.h"
 #include "ecs/system/System.h"
 #include "ecs/system/camera/CameraComponent.h"
@@ -9,30 +10,20 @@
 #include "renderer/Renderer.h"
 #include "timer/Timer.h"
 
-static void added(void);
-static void preUpdate(void);
-static void update(void);
-static void postUpdate(void);
+namespace engine {
+static vec3 Y_UP     = {0.0f, 1.0f, 0.0f};
+static vec3 FORWARD  = {0.0f, 0.0f, 1.0f};
 static void perspective(u32 cameraEntity);
 
 static Entity* cameraEntityObj;
 static u32 cameraEntity;
 static Scene* scene;
 
-System cameraSystem = {
-    .name                = "camera",
-    .added               = added,
-    .removed             = nullptr,
-    .preUpdate           = preUpdate,
-    .update              = update,
-    .postUpdate          = postUpdate,
-    .cpuElapsedLastFrame = 0.0,
-    .cpuElapsed          = 0.0,
-    .gpuElapsed          = 0.0,
-    .priority            = 0,
-};
+CameraSystem cameraSystem;
 
-void added(void) {
+CameraSystem::CameraSystem() : System("camera") {}
+
+void CameraSystem::added() {
     scene = ecs.defaultScene;
 
     cameraEntityObj = createEntity(scene, "camera");
@@ -79,21 +70,21 @@ void added(void) {
     flyingCameraInit(cameraEntity);
 }
 
-void preUpdate(void) {
+void CameraSystem::preUpdate() {
     flyingCameraPreUpdate(cameraEntity);
 }
 
-void update(void) {
+void CameraSystem::update() {
     flyingCameraUpdate(cameraEntity);
 }
 
-void postUpdate(void) {
+void CameraSystem::postUpdate() {
     Camera* camera = getComponent(scene, Camera, cameraEntity);
     perspective(cameraEntity);
     rendererSetCamera(camera);
 
     static double lastSave;
-    double now = millies();
+    double now = utils::millies();
     if (now > lastSave + 1000) {
         lastSave             = now;
         Transform* transform = getComponent(scene, Transform, cameraEntity);
@@ -121,11 +112,11 @@ void perspective(u32 cameraEntity) {
         vec3 direction;
         transformGetDirection(scene, cameraEntity, direction);
         vec3 lastDirection;
-        glm_quat_rotatev(last->rot, GLM_FORWARD, lastDirection);
+        glm_quat_rotatev(last->rot, FORWARD, lastDirection);
         glm_vec3_normalize(lastDirection);
 
-        glm_vec3_lerp(last->pos, transform->pos, timer.alpha, currentPos);
-        glm_vec3_lerp(lastDirection, direction, timer.alpha, currentDir);
+        glm_vec3_lerp(last->pos, transform->pos, utils::timer.alpha, currentPos);
+        glm_vec3_lerp(lastDirection, direction, utils::timer.alpha, currentDir);
     } else {
         vec3 direction;
         transformGetDirection(scene, cameraEntity, direction);
@@ -160,7 +151,7 @@ void perspective(u32 cameraEntity) {
     glm_vec3_copy(currentDir, camera->cameraUbo.renderDirection);
     camera->cameraUbo.renderDirection[3] = 0.0f;
 
-    glm_look(currentPos, currentDir, GLM_YUP, camera->cameraUbo.view);
+    glm_look(currentPos, currentDir, Y_UP, camera->cameraUbo.view);
 
     // Build the stable projection.
     mat4 projectionNoJitter;
@@ -287,3 +278,4 @@ void perspective(u32 cameraEntity) {
 Entity* cameraGetEntity(void) {
     return cameraEntityObj;
 }
+}  // namespace engine

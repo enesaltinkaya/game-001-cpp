@@ -1,46 +1,36 @@
 #include "ecs/system/System.h"
 #include "ecs/Ecs.h"
 
-void systemPreUpdate(struct System* system) {
+namespace engine {
+void systemPreUpdate(System* system) {
     if (ecs.showStats) {
         system->cpuElapsedLastFrame = system->cpuElapsed;
         system->cpuElapsed          = 0;
-        double start                = nanos();
-        if (system->preUpdate) {
-            system->preUpdate();
-        }
-        system->cpuElapsed += nanos() - start;
+        double start                = utils::nanos();
+        system->preUpdate();
+        system->cpuElapsed += utils::nanos() - start;
     } else {
-        if (system->preUpdate) {
-            system->preUpdate();
-        }
+        system->preUpdate();
     }
 }
 
-void systemUpdate(struct System* system) {
+void systemUpdate(System* system) {
     if (ecs.showStats) {
-        double start = nanos();
-        if (system->update) {
-            system->update();
-        }
-        system->cpuElapsed += nanos() - start;
+        double start = utils::nanos();
+        system->update();
+        system->cpuElapsed += utils::nanos() - start;
     } else {
-        if (system->update) {
-            system->update();
-        }
+        system->update();
     }
 }
 
-void systemPostUpdate(struct System* system) {
+void systemPostUpdate(System* system) {
     if (ecs.showStats) {
-        double start = nanos();
-        if (system->postUpdate) {
-            system->postUpdate();
-        }
-        system->cpuElapsed += nanos() - start;
+        double start = utils::nanos();
+        system->postUpdate();
+        system->cpuElapsed += utils::nanos() - start;
     } else {
-        if (system->postUpdate) {
-            system->postUpdate();
-        }
+        system->postUpdate();
     }
 }
+}  // namespace engine

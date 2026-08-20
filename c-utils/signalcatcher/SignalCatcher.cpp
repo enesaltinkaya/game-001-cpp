@@ -11,6 +11,7 @@
 this disables core dump
 faster exit
  */
+namespace utils {
 void clean_exit_on_sig(int _) {
     crit("SIGSEGV");
 
@@ -31,6 +32,9 @@ void signalCatcherInit(void) {
         signal(SIGSEGV, clean_exit_on_sig);
     }
 }
+}  // namespace utils
 #else
+namespace utils {
 void signalCatcherInit(void) {}
+}  // namespace utils
 #endif

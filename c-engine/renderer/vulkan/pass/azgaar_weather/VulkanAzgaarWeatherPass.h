@@ -29,7 +29,17 @@
  * WeatherData.look.w < 0.5, so non-Azgaar scenes pay nothing.
  */
 
-extern struct System vulkanAzgaarWeatherPass;
+namespace engine {
+class VulkanAzgaarWeatherPass : public System {
+public:
+    VulkanAzgaarWeatherPass();
+    void added() override;
+    void removed() override;
+    void preUpdate() override;
+    void update() override;
+};
+
+extern VulkanAzgaarWeatherPass vulkanAzgaarWeatherPass;
 
 // Re-seed the particle buffer from `weather` (game-side initial state):
 // positions distributed through the wrap volume, spawn types rolled from
@@ -51,3 +61,4 @@ void vulkanAzgaarWeatherReseed(const VulkanWeatherData* weather);
 // render target; callers must treat a NULL pair as "no mask".
 VulkanImage* vulkanAzgaarWeatherPassGetMask(void);
 VulkanImage* vulkanAzgaarWeatherPassGetPrevMask(void);
+}  // namespace engine

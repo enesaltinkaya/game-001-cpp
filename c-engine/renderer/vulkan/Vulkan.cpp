@@ -47,6 +47,7 @@
 #include "renderer/vulkan/pass/debug_navmesh/VulkanDebugNavMeshPass.h"
 #include "renderer/vulkan/resources/VulkanIbl.h"
 
+namespace engine {
 struct Vulkan vulkan;
 const uint32_t VULKAN_VERSION = VK_API_VERSION_1_3;
 
@@ -54,12 +55,12 @@ static void initInstance(void);
 static void initPhysicalDevice(void);
 static void initLogicalDevice(void);
 static void initVma(void);
-static char checkDiscreteGpus(Array(VkPhysicalDevice));
-static char checkIntegratedGpus(Array(VkPhysicalDevice));
-static char checkOtherGpus(Array(VkPhysicalDevice));
-static void addPass(struct System* pass);
+static char checkDiscreteGpus(const std::vector<VkPhysicalDevice>&);
+static char checkIntegratedGpus(const std::vector<VkPhysicalDevice>&);
+static char checkOtherGpus(const std::vector<VkPhysicalDevice>&);
+static void addPass(System* pass);
 static struct VulkanProfile overallProfile;
-static Array(struct VulkanProfile) passProfiles;
+static std::vector<struct VulkanProfile> passProfiles;
 
 // Screenshot-on-game-loaded state
 static char screenshotPathBuf[1024];
@@ -109,7 +110,7 @@ static void onGameLoadedForScreenshot(void* _) {
         const char* delayEnv = getenv("ENGINE_SCREENSHOT_DELAY_MS");
         if (delayEnv && *delayEnv) delayMs = atoi(delayEnv);
         if (delayMs < 0) delayMs = 0;
-        futureTaskAdd(delayMs, vulkanScreenshotArm, screenshotPathBuf);
+        utils::futureTaskAdd(delayMs, vulkanScreenshotArm, screenshotPathBuf);
     }
 }
 
@@ -162,7 +163,7 @@ static void vulkanDebugDumpFrameImages(const char* shotPath) {
 }
 
 static void onDeviceLost(void) {
-    error("device lost: waiting idle before cleanup");
+    utils::error("device lost: waiting idle before cleanup");
     vkDeviceWaitIdle(vulkan.device);
 }
 
@@ -221,7 +222,7 @@ void vulkanInit(void) {
             const char* countEnv = getenv("ENGINE_SCREENSHOT_COUNT");
             screenshotCount = countEnv ? atoi(countEnv) : 1;
             if (screenshotCount < 1) screenshotCount = 1;
-            signalSubscribe("gameLoaded", onGameLoadedForScreenshot);
+            utils::signalSubscribe("gameLoaded", onGameLoadedForScreenshot);
         }
     }
 #endif
@@ -236,10 +237,8 @@ void vulkanInit(void) {
 static void vulkanDestroyDelayed(void* _) {
     vulkanWaitIdle("wait before cleaning up");
 
-    foreach (struct System* pass, renderer.passes) {
-        if (pass->removed) {
-            pass->removed();
-        }
+    for (System* pass : renderer.passes) {
+        pass->removed();
     }
 
     vulkanIblDestroy();
@@ -253,32 +252,29 @@ static void vulkanDestroyDelayed(void* _) {
     vulkanWaitIdle("wait before swapchain destroy");
     vulkanSwapchainDestroy();
 
-    for (size_t i = 0; i < arraySize(passProfiles); i++) {
+    for (size_t i = 0; i < passProfiles.size(); i++) {
         vulkanDestroyProfile(&passProfiles[i]);
     }
-    arrayFree(passProfiles);
     vulkanDestroyProfile(&overallProfile);
     vkDestroySurfaceKHR(vulkan.instance, vulkan.surface, nullptr);
     vmaDestroyAllocator(vulkan.vmaAllocator);
     vkDestroyDevice(vulkan.device, nullptr);
-    if (isDebug()) {
+    if (utils::isDebug()) {
         vkDestroyDebugUtilsMessengerEXT(vulkan.instance, vulkan.debugMessenger, 0);
     }
     vkDestroyInstance(vulkan.instance, nullptr);
 }
 
 void vulkanDestroy(void) {
-    futureTaskAdd(0, vulkanDestroyDelayed, 0);
+    utils::futureTaskAdd(0, vulkanDestroyDelayed, 0);
 }
 
-void addPass(struct System* pass) {
-    info("vulkanCore: adding pass %s", pass->name);
-    arrayPut(renderer.passes, pass);
-    struct VulkanProfile prof = vulkanCreateProfile(strtmp("pass_%s", pass->name));
-    arrayPut(passProfiles, prof);
-    if (pass->added) {
-        pass->added();
-    }
+void addPass(System* pass) {
+    utils::info("vulkanCore: adding pass %s", pass->name);
+    renderer.passes.push_back(pass);
+    struct VulkanProfile prof = vulkanCreateProfile(utils::strtmp("pass_%s", pass->name));
+    passProfiles.push_back(prof);
+    pass->added();
 }
 
 void vulkanPostUpdate(void) {
@@ -295,16 +291,16 @@ void vulkanPostUpdate(void) {
         vulkanResetProfile(vulkan.currentCmd, &overallProfile, 1);
         vulkanBeginProfile(vulkan.currentCmd, &overallProfile, 1);
 
-        foreach (System* pass, renderer.passes) {
+        for (System* pass : renderer.passes) {
             systemPreUpdate(pass);
         }
 
-        for (size_t i = 0; i < arraySize(renderer.passes); i++) {
+        for (size_t i = 0; i < renderer.passes.size(); i++) {
             vulkanResetProfile(vulkan.currentCmd, &passProfiles[i], 1);
             vulkanResetProfileStats(vulkan.currentCmd, &passProfiles[i], 1);
         }
 
-        for (size_t i = 0; i < arraySize(renderer.passes); i++) {
+        for (size_t i = 0; i < renderer.passes.size(); i++) {
             vulkanBeginProfile(vulkan.currentCmd, &passProfiles[i], 1);
             vulkanBeginProfileStats(vulkan.currentCmd, &passProfiles[i], 1);
             systemUpdate(renderer.passes[i]);
@@ -312,7 +308,7 @@ void vulkanPostUpdate(void) {
             vulkanEndProfile(vulkan.currentCmd, &passProfiles[i], 1);
         }
 
-        for (size_t i = 0; i < arraySize(renderer.passes); i++) {
+        for (size_t i = 0; i < renderer.passes.size(); i++) {
             systemPostUpdate(renderer.passes[i]);
             renderer.passes[i]->gpuElapsed = passProfiles[i].elapsed;
         }
@@ -335,7 +331,7 @@ void vulkanPostUpdate(void) {
             if (env && *env && atoi(env)) passGpuLogOn = 1;
         }
         if (passGpuLogOn) {
-            size_t n = arraySize(renderer.passes);
+            size_t n = static_cast<i32>(renderer.passes.size());
             if (n > 64) n = 64;
             passGpuLogFrame++;
             /* Skip the first 600 frames (asset streaming, warmup), then
@@ -348,9 +344,9 @@ void vulkanPostUpdate(void) {
                 passGpuAccumCount++;
             }
             if (passGpuLogFrame == 1200) {
-                info("pass-gpu: total=%.2f ms (avg of %u frames) fps=%.1f", passGpuAccumTotal / passGpuAccumCount / MILLION, static_cast<u32>(passGpuAccumCount), timer.fps);
+                utils::info("pass-gpu: total=%.2f ms (avg of %u frames) fps=%.1f", passGpuAccumTotal / passGpuAccumCount / MILLION, static_cast<u32>(passGpuAccumCount), utils::timer.fps);
                 for (size_t i = 0; i < n; i++) {
-                    info("pass-gpu:   %-20s %6.2f", renderer.passes[i]->name, passGpuAccum[i] / passGpuAccumCount / MILLION);
+                    utils::info("pass-gpu:   %-20s %6.2f", renderer.passes[i]->name, passGpuAccum[i] / passGpuAccumCount / MILLION);
                 }
                 passGpuAccumTotal = 0;
                 for (size_t i = 0; i < n; i++) passGpuAccum[i] = 0;
@@ -386,7 +382,7 @@ void vulkanPostUpdate(void) {
         vulkanDebugDumpFrameImages(shotPath);
         screenshotIndex++;
         if (screenshotIndex >= screenshotCount) {
-            info("vulkanScreenshot: captured all %d screenshots — stopping", screenshotCount);
+            utils::info("vulkanScreenshot: captured all %d screenshots — stopping", screenshotCount);
             engineStop();
         }
     }
@@ -394,7 +390,7 @@ void vulkanPostUpdate(void) {
 
 void initInstance(void) {
     if (volkInitialize() != VK_SUCCESS) {
-        terminate("failed initialize volk!\n");
+        utils::terminate("failed initialize volk!\n");
     }
 
     VkApplicationInfo appInfo  = {};
@@ -403,33 +399,33 @@ void initInstance(void) {
     appInfo.engineVersion      = VULKAN_VERSION;
     appInfo.apiVersion         = VULKAN_VERSION;
 
-    Array(const char*) extensions        = {};
+    std::vector<const char*> extensions        = {};
     u32 extensionCount                   = 0;
     char const* const* backendExtensions = windowSystemGetRequiredVulkanExtensions(&extensionCount);
 
-    arraySetSize(extensions, extensionCount);
+    extensions.resize(extensionCount);
     for (i32 i = 0, si = extensionCount; i < si; i++) {
         extensions[i] = backendExtensions[i];
     }
-    if (isDebug()) {
-        arrayPut(extensions, VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+    if (utils::isDebug()) {
+        extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
     }
 
     VkInstanceCreateInfo instanceCreateInfo    = {};
     instanceCreateInfo.sType                   = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
     instanceCreateInfo.pApplicationInfo        = &appInfo;
-    instanceCreateInfo.enabledExtensionCount   = arraySize(extensions);
-    instanceCreateInfo.ppEnabledExtensionNames = extensions;
+    instanceCreateInfo.enabledExtensionCount   = static_cast<i32>(extensions.size());
+    instanceCreateInfo.ppEnabledExtensionNames = extensions.data();
 
     const char* validationLayers[] = {"VK_LAYER_KHRONOS_validation"};
     bool hasValidationLayers       = false;
-    if (isDebug()) {
+    if (utils::isDebug()) {
         u32 layerCount = 0;
         vkEnumerateInstanceLayerProperties(&layerCount, nullptr);
-        Array(VkLayerProperties) layerProps = {};
-        arraySetSize(layerProps, layerCount);
+        std::vector<VkLayerProperties> layerProps = {};
+        layerProps.resize(layerCount);
         if (layerCount > 0) {
-            vkEnumerateInstanceLayerProperties(&layerCount, layerProps);
+            vkEnumerateInstanceLayerProperties(&layerCount, layerProps.data());
         }
         for (u32 i = 0; i < layerCount; i++) {
             if (strcmp(layerProps[i].layerName, "VK_LAYER_KHRONOS_validation") == 0) {
@@ -437,7 +433,6 @@ void initInstance(void) {
                 break;
             }
         }
-        arrayFree(layerProps);
         if (hasValidationLayers) {
             instanceCreateInfo.enabledLayerCount   = 1;
             instanceCreateInfo.ppEnabledLayerNames = validationLayers;
@@ -445,13 +440,12 @@ void initInstance(void) {
     }
 
     if (vkCreateInstance(&instanceCreateInfo, nullptr, &vulkan.instance) != VK_SUCCESS) {
-        terminate("vulkanCore: failed to initialize vulkan instance!");
+        utils::terminate("vulkanCore: failed to initialize vulkan instance!");
     }
 
-    arrayFree(extensions);
     volkLoadInstanceOnly(vulkan.instance);
 
-    if (isDebug()) {
+    if (utils::isDebug()) {
         VkDebugUtilsMessengerCreateInfoEXT messengerInfo = {};
         messengerInfo.sType           = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
         messengerInfo.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
@@ -473,11 +467,11 @@ void initPhysicalDevice(void) {
     u32 deviceCount = 0;
     vkEnumeratePhysicalDevices(vulkan.instance, &deviceCount, nullptr);
     if (deviceCount == 0) {
-        terminate("vulkanCore: could not find any GPUs with vulkan support!");
+        utils::terminate("vulkanCore: could not find any GPUs with vulkan support!");
     }
-    Array(VkPhysicalDevice) physicalDevices = {};
-    arraySetSize(physicalDevices, deviceCount);
-    vkEnumeratePhysicalDevices(vulkan.instance, &deviceCount, physicalDevices);
+    std::vector<VkPhysicalDevice> physicalDevices = {};
+    physicalDevices.resize(deviceCount);
+    vkEnumeratePhysicalDevices(vulkan.instance, &deviceCount, physicalDevices.data());
 
     char found = checkDiscreteGpus(physicalDevices);
     if (!found) {
@@ -487,34 +481,33 @@ void initPhysicalDevice(void) {
         found = checkOtherGpus(physicalDevices);
     }
     if (!found) {
-        warn(
+        utils::warn(
             "------------------------------------------------------------------"
             "--------------------------");
-        warn(
+        utils::warn(
             "vulkanCore: this application needs a vulkan 1.3 device that "
             "supports the following features;");
-        warn("  - bufferDeviceAddress");
-        warn("  - descriptorIndexing");
-        warn("  - synchronization2");
-        warn("  - multiDrawIndirect");
-        warn("  - drawIndirectCount");
-        warn("  - samplerAnisotropy");
-        warn("  - sampleRateShading");
-        warn("  - tessellationShader");
-        warn("  - fillModeNonSolid");
-        error("vulkanCore: minimum supported GPU: GTX 1080 Ti or equivalent");
-        terminate("vulkanCore: could not find suitable gpu");
+        utils::warn("  - bufferDeviceAddress");
+        utils::warn("  - descriptorIndexing");
+        utils::warn("  - synchronization2");
+        utils::warn("  - multiDrawIndirect");
+        utils::warn("  - drawIndirectCount");
+        utils::warn("  - samplerAnisotropy");
+        utils::warn("  - sampleRateShading");
+        utils::warn("  - tessellationShader");
+        utils::warn("  - fillModeNonSolid");
+        utils::error("vulkanCore: minimum supported GPU: GTX 1080 Ti or equivalent");
+        utils::terminate("vulkanCore: could not find suitable gpu");
     }
 
-    arrayFree(physicalDevices);
 }
 
 void initLogicalDevice(void) {
     if (!windowSystemCreateVulkanSurface(vulkan.instance, &vulkan.surface)) {
-        terminate("vulkanCore: failed to create window surface!");
+        utils::terminate("vulkanCore: failed to create window surface!");
     }
-    Array(const char*) extensions = {};
-    arrayPut(extensions, VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+    std::vector<const char*> extensions = {};
+    extensions.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
 
     // Conditionally enable VK_AMD_device_coherent_memory if available.
     // Required by FSR 3.1 SDK: it queries this extension at runtime and,
@@ -525,26 +518,25 @@ void initLogicalDevice(void) {
     // and we only request it when the physical device reports availability.
     u32 extCount = 0;
     vkEnumerateDeviceExtensionProperties(vulkan.physicalDevice, NULL, &extCount, nullptr);
-    Array(VkExtensionProperties) exts = {};
+    std::vector<VkExtensionProperties> exts = {};
     if (extCount > 0) {
-        arraySetSize(exts, extCount);
-        vkEnumerateDeviceExtensionProperties(vulkan.physicalDevice, nullptr, &extCount, exts);
+        exts.resize(extCount);
+        vkEnumerateDeviceExtensionProperties(vulkan.physicalDevice, nullptr, &extCount, exts.data());
         for (u32 i = 0; i < extCount; i++) {
             if (strcmp(exts[i].extensionName, VK_AMD_DEVICE_COHERENT_MEMORY_EXTENSION_NAME) == 0) {
-                arrayPut(extensions, VK_AMD_DEVICE_COHERENT_MEMORY_EXTENSION_NAME);
+                extensions.push_back(VK_AMD_DEVICE_COHERENT_MEMORY_EXTENSION_NAME);
                 break;
             }
         }
     }
-    arrayFree(exts);
 
     u32 queueFamilyCount = 0;
     vkGetPhysicalDeviceQueueFamilyProperties(vulkan.physicalDevice, &queueFamilyCount, nullptr);
-    Array(VkQueueFamilyProperties) queueFamilyProperties = {};
-    arraySetSize(queueFamilyProperties, queueFamilyCount);
+    std::vector<VkQueueFamilyProperties> queueFamilyProperties = {};
+    queueFamilyProperties.resize(queueFamilyCount);
     vkGetPhysicalDeviceQueueFamilyProperties(vulkan.physicalDevice,
                                              &queueFamilyCount,
-                                             queueFamilyProperties);
+                                             queueFamilyProperties.data());
 
     int graphicsFamily = -1;
     int computeFamily  = -1;
@@ -677,7 +669,7 @@ void initLogicalDevice(void) {
     dynamicRenderingFeatures.dynamicRendering = VK_TRUE;
     dynamicRenderingFeatures.pNext            = &vulkan12Features;
 
-    if (isDebug()) {
+    if (utils::isDebug()) {
         vulkan12Features.bufferDeviceAddressCaptureReplay = VK_TRUE;
     }
 
@@ -687,24 +679,22 @@ void initLogicalDevice(void) {
     deviceCreateInfo.queueCreateInfoCount    = queueCreateInfoCount;
     deviceCreateInfo.pQueueCreateInfos       = queueCreateInfos;
     deviceCreateInfo.pEnabledFeatures        = &deviceFeatures;
-    deviceCreateInfo.enabledExtensionCount   = arraySize(extensions);
-    deviceCreateInfo.ppEnabledExtensionNames = extensions;
+    deviceCreateInfo.enabledExtensionCount   = static_cast<i32>(extensions.size());
+    deviceCreateInfo.ppEnabledExtensionNames = extensions.data();
     VkResult result =
         vkCreateDevice(vulkan.physicalDevice, &deviceCreateInfo, nullptr, &vulkan.device);
     if (result != VK_SUCCESS) {
-        terminate("vulkanCore: failed to create logical device! code: %d", result);
+        utils::terminate("vulkanCore: failed to create logical device! code: %d", result);
     }
 
     volkLoadDevice(vulkan.device);
 
     vkGetDeviceQueue(vulkan.device, graphicsFamily, 0, &vulkan.graphicsQueue);
     vulkan.graphicsFamilyIndex = graphicsFamily;
-    if (isDebug()) {
+    if (utils::isDebug()) {
         vulkanUtilsSetName(reinterpret_cast<u64>(vulkan.graphicsQueue), VK_OBJECT_TYPE_QUEUE, "queue graphics");
     }
 
-    arrayFree(queueFamilyProperties);
-    arrayFree(extensions);
 }
 
 void initVma(void) {
@@ -724,7 +714,7 @@ void initVma(void) {
     vkGetPhysicalDeviceProperties(vulkan.physicalDevice, &deviceProperties);
 
     if (vmaCreateAllocator(&allocatorCreateInfo, &vulkan.vmaAllocator) != VK_SUCCESS) {
-        terminate("vulkanCore: failed to initialize vma!");
+        utils::terminate("vulkanCore: failed to initialize vma!");
     }
 }
 
@@ -746,157 +736,157 @@ static char checkGpu(VkPhysicalDevice physicalDevice, VkPhysicalDeviceProperties
     features2.pNext                     = &vulkan12Features;
     vkGetPhysicalDeviceFeatures2(physicalDevice, &features2);
 
-    debug("vulkanCore: found gpu %s", deviceProperties.deviceName);
+    utils::debug("vulkanCore: found gpu %s", deviceProperties.deviceName);
 
     if (!deviceAddressFeatures.bufferDeviceAddress) {
-        warn(
+        utils::warn(
             "vulkanCore: this gpu does not support bufferDeviceAddress, "
             "skipping");
         return 0;
     }
     if (!indexingFeatures.descriptorBindingStorageBufferUpdateAfterBind) {
-        warn(
+        utils::warn(
             "vulkanCore: this gpu does not support "
             "descriptorBindingStorageBufferUpdateAfterBind, skipping");
         return 0;
     }
     if (!indexingFeatures.descriptorBindingStorageImageUpdateAfterBind) {
-        warn(
+        utils::warn(
             "vulkanCore: this gpu does not support "
             "descriptorBindingStorageImageUpdateAfterBind, skipping");
         return 0;
     }
     if (!indexingFeatures.descriptorBindingSampledImageUpdateAfterBind) {
-        warn(
+        utils::warn(
             "vulkanCore: this gpu does not support "
             "descriptorBindingSampledImageUpdateAfterBind, skipping");
         return 0;
     }
     if (!indexingFeatures.descriptorBindingUpdateUnusedWhilePending) {
-        warn(
+        utils::warn(
             "vulkanCore: this gpu does not support "
             "descriptorBindingUpdateUnusedWhilePending, skipping");
         return 0;
     }
     if (!indexingFeatures.runtimeDescriptorArray) {
-        warn(
+        utils::warn(
             "vulkanCore: this gpu does not support runtimeDescriptorArray, "
             "skipping");
         return 0;
     }
     if (!indexingFeatures.descriptorBindingPartiallyBound) {
-        warn(
+        utils::warn(
             "vulkanCore: this gpu does not support "
             "descriptorBindingPartiallyBound, skipping");
         return 0;
     }
     if (!indexingFeatures.shaderStorageBufferArrayNonUniformIndexing) {
-        warn(
+        utils::warn(
             "vulkanCore: this gpu does not support "
             "shaderStorageBufferArrayNonUniformIndexing, skipping");
         return 0;
     }
     if (!indexingFeatures.shaderUniformBufferArrayNonUniformIndexing) {
-        warn(
+        utils::warn(
             "vulkanCore: this gpu does not support "
             "shaderUniformBufferArrayNonUniformIndexing, skipping");
         return 0;
     }
     if (!indexingFeatures.shaderStorageImageArrayNonUniformIndexing) {
-        warn(
+        utils::warn(
             "vulkanCore: this gpu does not support "
             "shaderStorageImageArrayNonUniformIndexing, skipping");
         return 0;
     }
     if (!indexingFeatures.shaderSampledImageArrayNonUniformIndexing) {
-        warn(
+        utils::warn(
             "vulkanCore: this gpu does not support "
             "shaderSampledImageArrayNonUniformIndexing, skipping");
         return 0;
     }
 
     if (!sync2Features.synchronization2) {
-        warn("vulkanCore: this gpu does not support synchronization2, skipping");
+        utils::warn("vulkanCore: this gpu does not support synchronization2, skipping");
         return 0;
     }
 
     if (!features2.features.multiDrawIndirect) {
-        warn(
+        utils::warn(
             "vulkanCore: this gpu does not support multiDrawIndirect, "
             "skipping");
         return 0;
     }
 
     if (!features2.features.shaderInt64) {
-        warn("vulkanCore: this gpu does not support shaderInt64, skipping");
+        utils::warn("vulkanCore: this gpu does not support shaderInt64, skipping");
         return 0;
     }
 
     if (!features2.features.samplerAnisotropy) {
-        warn(
+        utils::warn(
             "vulkanCore: this gpu does not support samplerAnisotropy, "
             "skipping");
         return 0;
     }
 
     if (!features2.features.sampleRateShading) {
-        warn(
+        utils::warn(
             "vulkanCore: this gpu does not support sampleRateShading, "
             "skipping");
         return 0;
     }
 
     if (!features2.features.tessellationShader) {
-        warn(
+        utils::warn(
             "vulkanCore: this gpu does not support tessellationShader, "
             "skipping");
         return 0;
     }
 
     if (!features2.features.fillModeNonSolid) {
-        warn("vulkanCore: this gpu does not support fillModeNonSolid, skipping");
+        utils::warn("vulkanCore: this gpu does not support fillModeNonSolid, skipping");
         return 0;
     }
 
     if (!vulkan12Features.drawIndirectCount) {
-        warn(
+        utils::warn(
             "vulkanCore: this gpu does not support drawIndirectCount, "
             "skipping");
         return 0;
     }
 
     if (!features2.features.shaderImageGatherExtended) {
-        warn(
+        utils::warn(
             "vulkanCore: this gpu does not support shaderImageGatherExtended, "
             "skipping");
         return 0;
     }
 
     if (!features2.features.shaderStorageImageWriteWithoutFormat) {
-        warn(
+        utils::warn(
             "vulkanCore: this gpu does not support "
             "shaderStorageImageWriteWithoutFormat, skipping");
         return 0;
     }
 
     if (!features2.features.shaderInt16) {
-        warn("vulkanCore: this gpu does not support shaderInt16, skipping");
+        utils::warn("vulkanCore: this gpu does not support shaderInt16, skipping");
         return 0;
     }
 
     if (!vulkan12Features.shaderFloat16) {
-        info("vulkanCore: shaderFloat16 not supported, FSR will use FP32 permutations");
+        utils::info("vulkanCore: shaderFloat16 not supported, FSR will use FP32 permutations");
     }
 
     vulkan.physicalDevice   = physicalDevice;
     vulkan.deviceProperties = deviceProperties;
     vulkan.deviceFeatures2  = features2;
-    debug("vulkanCore: selected gpu %s", deviceProperties.deviceName);
+    utils::debug("vulkanCore: selected gpu %s", deviceProperties.deviceName);
     return 1;
 }
 
-char checkDiscreteGpus(Array(VkPhysicalDevice) devices) {
-    foreach (VkPhysicalDevice physicalDevice, devices) {
+char checkDiscreteGpus(const std::vector<VkPhysicalDevice>& devices) {
+    for (VkPhysicalDevice physicalDevice : devices) {
         VkPhysicalDeviceProperties deviceProperties = {};
         vkGetPhysicalDeviceProperties(physicalDevice, &deviceProperties);
         if (deviceProperties.deviceType != VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU) {
@@ -910,8 +900,8 @@ char checkDiscreteGpus(Array(VkPhysicalDevice) devices) {
     return 0;
 }
 
-char checkIntegratedGpus(Array(VkPhysicalDevice) devices) {
-    foreach (VkPhysicalDevice physicalDevice, devices) {
+char checkIntegratedGpus(const std::vector<VkPhysicalDevice>& devices) {
+    for (VkPhysicalDevice physicalDevice : devices) {
         VkPhysicalDeviceProperties deviceProperties = {};
         vkGetPhysicalDeviceProperties(physicalDevice, &deviceProperties);
         if (deviceProperties.deviceType != VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU) {
@@ -925,8 +915,8 @@ char checkIntegratedGpus(Array(VkPhysicalDevice) devices) {
     return 0;
 }
 
-char checkOtherGpus(Array(VkPhysicalDevice) devices) {
-    foreach (VkPhysicalDevice physicalDevice, devices) {
+char checkOtherGpus(const std::vector<VkPhysicalDevice>& devices) {
+    for (VkPhysicalDevice physicalDevice : devices) {
         VkPhysicalDeviceProperties deviceProperties = {};
         vkGetPhysicalDeviceProperties(physicalDevice, &deviceProperties);
         if (deviceProperties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU ||
@@ -946,10 +936,11 @@ void vulkanSetVsync(bool vsync) {
     vulkanSwapchainRecreate();
 }
 
-struct VulkanProfile* vulkanGetPassProfiles(void) {
-    return passProfiles;
+const struct VulkanProfile* vulkanGetPassProfiles(void) {
+    return passProfiles.data();
 }
 
 size_t vulkanGetPassProfileCount(void) {
-    return arraySize(passProfiles);
+    return static_cast<i32>(passProfiles.size());
 }
+}  // namespace engine

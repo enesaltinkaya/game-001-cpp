@@ -3,7 +3,7 @@
 set -e
 
 TOOLS_DIR="$(dirname "$(realpath "$0")")"
-THIRDPARTY="/home/enes/project/c/cpp-thirdparty"
+THIRDPARTY="/home/enes/Projects/c/cpp-thirdparty"
 TOOL_DIR="$TOOLS_DIR/navmesh-tester"
 SRC="$TOOL_DIR/main.cpp"
 OUT="$TOOL_DIR/navmesh-tester"

@@ -1,3 +1,4 @@
+#include "NavMeshSystem.h"
 #include "navmesh/NavMeshSystem.h"
 #include "recast_c_api.h"
 
@@ -10,46 +11,46 @@
 
 // ── Navmesh storage ──────────────────────────────────────────────────────
 
+#include <zstd.h>
+namespace game {
 static NavMeshData navMesh;
 
 // ── File loading ─────────────────────────────────────────────────────────
 
-#include <zstd.h>
 
-static void* decompressZstd(String* compressed, u32* outSize) {
+static std::vector<u8> decompressZstd(utils::String* compressed, u32* outSize) {
+    std::vector<u8> buf;
     u64 rSize = ZSTD_getFrameContentSize(compressed->data, compressed->size);
     if (rSize == ZSTD_CONTENTSIZE_ERROR || rSize == ZSTD_CONTENTSIZE_UNKNOWN) {
-        return nullptr;
+        return buf;
     }
-    void* buf = memoryAlloc(rSize);
-    u64 dSize = ZSTD_decompress(buf, rSize, compressed->data, compressed->size);
+    buf.resize(static_cast<size_t>(rSize));
+    u64 dSize = ZSTD_decompress(buf.data(), rSize, compressed->data, compressed->size);
     if (ZSTD_isError(dSize) != 0U) {
-        memoryFree(buf);
-        return nullptr;
+        return {};
     }
     *outSize = static_cast<u32>(rSize);
     return buf;
 }
 
 static bool loadNavMeshFromFile(const char* path) {
-    if (!dataManagerFileExists(path)) return false;
+    if (!utils::dataManagerFileExists(path)) return false;
 
-    info("navMesh: loading %s", path);
-    String fileData = dataManagerRead(path);
+    utils::info("navMesh: loading %s", path);
+    utils::String fileData = utils::dataManagerRead(path);
 
     u32 rawSize;
-    void* raw = decompressZstd(&fileData, &rawSize);
-    stringDestroy(&fileData);
-    if (!raw) {
-        warn("navMesh: failed to decompress %s", path);
+    std::vector<u8> raw = decompressZstd(&fileData, &rawSize);
+    utils::stringDestroy(&fileData);
+    if (raw.empty()) {
+        utils::warn("navMesh: failed to decompress %s", path);
         return false;
     }
 
-    const u8* p    = static_cast<const u8*>(raw);
+    const u8* p    = raw.data();
     const u8* end = p + rawSize;
     if (rawSize < 32 || memcmp(p, "NAVM", 4) != 0) {
-        warn("navMesh: invalid header");
-        memoryFree(raw);
+        utils::warn("navMesh: invalid header");
         return false;
     }
     p += 4; // magic
@@ -68,22 +69,18 @@ static bool loadNavMeshFromFile(const char* path) {
         memcpy(&tileWorldSize, p, sizeof(float)); p += sizeof(float);
 
         if (tileCount == 0) {
-            warn("navMesh: no tiles in %s", path);
-            memoryFree(raw);
+            utils::warn("navMesh: no tiles in %s", path);
             return false;
         }
 
-        const void** tilePtrs   = static_cast<const void**>(memoryAlloc(sizeof(void*) * tileCount));
-        u32*         tileSizes = static_cast<u32*>(memoryAlloc(sizeof(u32) * tileCount));
+        std::vector<const void*> tilePtrs(tileCount);
+        std::vector<u32>         tileSizes(tileCount);
 
         for (u32 i = 0; i < tileCount; i++) {
             u32 tileSize;
             memcpy(&tileSize, p, 4); p += 4;
             if (p + tileSize > end) {
-                warn("navMesh: truncated tile %u data", i);
-                memoryFree(tilePtrs);
-                memoryFree(tileSizes);
-                memoryFree(raw);
+                utils::warn("navMesh: truncated tile %u data", i);
                 return false;
             }
             tilePtrs[i]  = p;
@@ -91,18 +88,15 @@ static bool loadNavMeshFromFile(const char* path) {
             p += tileSize;
         }
 
-        navMesh.navMesh = rcNavMeshLoadTiled(tilePtrs, tileSizes, tileCount,
+        navMesh.navMesh = rcNavMeshLoadTiled(tilePtrs.data(), tileSizes.data(), tileCount,
                                                bmin, bmax, tileWorldSize, tileWorldSize);
-        memoryFree(tilePtrs);
-        memoryFree(tileSizes);
     } else {
         // v1 single tile
         u32 tileSize;
         memcpy(&tileSize, p, 4); p += 4;
 
         if (p + tileSize > end) {
-            warn("navMesh: truncated tile data");
-            memoryFree(raw);
+            utils::warn("navMesh: truncated tile data");
             return false;
         }
 
@@ -110,60 +104,48 @@ static bool loadNavMeshFromFile(const char* path) {
     }
 
     if (!navMesh.navMesh) {
-        warn("navMesh: failed to load navmesh");
-        memoryFree(raw);
+        utils::warn("navMesh: failed to load navmesh");
         return false;
     }
 
     navMesh.query = rcQueryCreate(navMesh.navMesh);
     if (!navMesh.query) {
-        warn("navMesh: failed to create query");
+        utils::warn("navMesh: failed to create query");
         rcNavMeshDestroy(navMesh.navMesh);
         navMesh.navMesh = nullptr;
-        memoryFree(raw);
         return false;
     }
 
-    info("navMesh: loaded %s (v%u)", path, version);
-    vulkanDebugNavMeshSetMesh(navMesh.navMesh);
-    memoryFree(raw);
+    utils::info("navMesh: loaded %s (v%u)", path, version);
+    engine::vulkanDebugNavMeshSetMesh(navMesh.navMesh);
     return true;
 }
 
 // ── System lifecycle ─────────────────────────────────────────────────────
 
-static void added(void) {
+void NavMeshSystem::added() {
     loadNavMeshFromFile("models/combined.nav.dat");
 }
 
-static void removed(void) {
-    vulkanDebugNavMeshSetMesh(nullptr);
+void NavMeshSystem::removed() {
+    engine::vulkanDebugNavMeshSetMesh(nullptr);
     if (navMesh.query)   rcQueryDestroy(navMesh.query);
     if (navMesh.navMesh) rcNavMeshDestroy(navMesh.navMesh);
     navMesh.navMesh = nullptr;
     navMesh.query   = nullptr;
 }
 
-static void update(void) {
+void NavMeshSystem::update() {
     static_cast<void>(0);
 }
 
-System navMeshSystem = {
-    .name                = "navMesh",
-    .added               = added,
-    .removed             = removed,
-    .preUpdate           = nullptr,
-    .update              = update,
-    .postUpdate          = nullptr,
-    .cpuElapsedLastFrame = 0.0,
-    .cpuElapsed          = 0.0,
-    .gpuElapsed          = 0.0,
-    .priority            = 1201,
-};
+NavMeshSystem navMeshSystem;
+
+NavMeshSystem::NavMeshSystem() : engine::System("navMesh") {}
 
 // ── Public API ───────────────────────────────────────────────────────────
 
-uint32_t navMeshFindPath(Scene* scene,
+uint32_t navMeshFindPath(engine::Scene* scene,
                           const float* startPos,
                           const float* endPos,
                           float* outPath,
@@ -177,7 +159,7 @@ uint32_t navMeshFindPath(Scene* scene,
     return 0;
 }
 
-int navMeshClosestPoint(Scene* scene, const float* pos, float* outPoint) {
+int navMeshClosestPoint(engine::Scene* scene, const float* pos, float* outPoint) {
     static_cast<void>(scene);
     if (!navMesh.query) return 0;
     return rcQueryClosestPoint(navMesh.query, pos, outPoint);
@@ -186,3 +168,4 @@ int navMeshClosestPoint(Scene* scene, const float* pos, float* outPoint) {
 RcNavMesh* navMeshGetMesh(void) {
     return navMesh.navMesh;
 }
+}  // namespace game

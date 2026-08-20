@@ -1,15 +1,16 @@
 #pragma once
 
-struct System;
+namespace engine {
+class System;
 struct Scene;
 struct Entity;
 
 struct Ecs {
-    Array(System*) systems;
+    std::vector<System*> systems;
 
-    Array(Scene*) scenes;
+    std::vector<Scene*> scenes;
     Scene* defaultScene;
-    Array(SparseSet*) components;
+    std::vector<utils::SparseSet*> components;
 
     bool showStats;
     double totalCpuElapsed;
@@ -30,3 +31,4 @@ SYSTEM
 void systemAdd(int order, System* system);     // adds system next frame
 void systemAddNow(int order, System* system);  // adds system immediately
 void systemRemove(System* system);             // removes system next frame
+}  // namespace engine

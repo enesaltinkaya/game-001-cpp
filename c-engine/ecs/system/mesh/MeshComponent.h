@@ -4,6 +4,7 @@
 #include "cgltf/git/cgltf.h"
 #include "ecs/system/scene/SceneSystem.h"
 
+namespace engine {
 struct MeshData {
     u32 positionOffset;
     u32 normalOffset;
@@ -15,28 +16,29 @@ struct MeshData {
     u32 customOffset;
 };
 
-typedef struct InstanceData {
+struct InstanceData {
     u32 entity;
-} InstanceData;
+};
 
-typedef struct Primitive {
-    Array(u32) indices;
-    Array(float) positions;
-    Array(float) colors;  // unpacked COLOR_0 (per-part colour; white = tintable)
-    Array(u8) attributes[cgltf_attribute_type_max_enum];
+struct Primitive {
+    std::vector<u32> indices;
+    std::vector<float> positions;
+    std::vector<float> colors;  // unpacked COLOR_0 (per-part colour; white = tintable)
+    std::vector<u8> attributes[cgltf_attribute_type_max_enum];
     u32 attributeMask;
 
     u32 indexCount;
     u32 vertexCount;
 
     u32 materialId;
-} Primitive;
+};
 
 REGISTER_COMPONENT(Mesh);
 
-typedef struct Mesh {
-    Array(Primitive) primitives;
-    Array(InstanceData) instances;
+struct Mesh {
+    std::vector<Primitive> primitives;
+    std::vector<InstanceData> instances;
     vec3 aabbLocal[2];  // min-max
     vec3 aabbWorld[2];  // updated when transform changes
-} Mesh;
+};
+}  // namespace engine

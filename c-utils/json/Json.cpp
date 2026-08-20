@@ -1,8 +1,9 @@
 #include "jansson/git/build-linux/include/jansson.h"
-#include "memorymanager/MemoryManager.h"
+#include <cstdlib>
 
+namespace utils {
 void jsonInit(void) {
-    json_set_alloc_funcs(memoryAlloc, memoryFree);
+    json_set_alloc_funcs(malloc, free);
 }
 
 const char* json_typeof_str(json_type type) {
@@ -16,3 +17,4 @@ const char* json_typeof_str(json_type type) {
     if (type == JSON_NULL) return "JSON_NULL";
     return "undefined";
 }
+}  // namespace utils

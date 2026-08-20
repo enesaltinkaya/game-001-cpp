@@ -1,4 +1,5 @@
 #include "VulkanVolumetricPass.h"
+#include "VulkanVolumetricPass.h"
 #include "ecs/Ecs.h"
 #include "ecs/system/System.h"
 #include "ecs/system/camera/CameraComponent.h"
@@ -10,11 +11,7 @@
 #include "renderer/vulkan/pipeline/VulkanPipe.h"
 #include "renderer/vulkan/resources/VulkanFrameResources.h"
 
-static void added(void);
-static void preUpdate(void);
-static void update(void);
-static void postUpdate(void);
-static void removed(void);
+namespace engine {
 static void destroyHistory(void);
 static void ensureHistory(u32 w, u32 h);
 
@@ -22,18 +19,9 @@ static double elapsedCPU;
 static double elapsedGPU;
 static char   volumetricDisabled;
 
-System vulkanVolumetricPass = {
-    .name                = "volumetric",
-    .added               = added,
-    .removed             = removed,
-    .preUpdate           = preUpdate,
-    .update              = update,
-    .postUpdate          = postUpdate,
-    .cpuElapsedLastFrame = 0.0,
-    .cpuElapsed          = 0.0,
-    .gpuElapsed          = 0.0,
-    .priority            = 0,
-};
+VulkanVolumetricPass vulkanVolumetricPass;
+
+VulkanVolumetricPass::VulkanVolumetricPass() : System("volumetric") {}
 
 static VulkanPipe lightSourcePipe;
 static VulkanPipe lightShaftsPipe;
@@ -93,7 +81,7 @@ static void destroyHistory(void) {
     for (int i = 0; i < 2; ++i) {
         if (historyImages[i].img) {
             vulkanDestroyImage(&historyImages[i], NULL);
-            historyImages[i] = VulkanImage{0};
+            historyImages[i] = VulkanImage{};
         }
     }
 
@@ -131,15 +119,15 @@ static void destroyImages(void) {
 
     if (lightSource.img) {
         vulkanDestroyImage(&lightSource, NULL);
-        lightSource = VulkanImage{0};
+        lightSource = VulkanImage{};
     }
     if (lightShafts.img) {
         vulkanDestroyImage(&lightShafts, NULL);
-        lightShafts = VulkanImage{0};
+        lightShafts = VulkanImage{};
     }
     if (blurTemp.img) {
         vulkanDestroyImage(&blurTemp, NULL);
-        blurTemp = VulkanImage{0};
+        blurTemp = VulkanImage{};
     }
 }
 
@@ -194,8 +182,8 @@ static void swapchainCreated(void*) {
     destroyImages();
 }
 
-static void added(void) {
-    signalSubscribe("swapchainCreated", swapchainCreated);
+void VulkanVolumetricPass::added() {
+    utils::signalSubscribe("swapchainCreated", swapchainCreated);
 
     lightSourcePipe = vulkanCreatePipe(
         .name = "volumetric_light_source",
@@ -210,7 +198,7 @@ static void added(void) {
         .comp = "shaders/pass/volumetric/spv/light_shafts_temporal.comp.spv");
 }
 
-static void preUpdate(void) {
+void VulkanVolumetricPass::preUpdate() {
     if (vulkan.skipFrame) return;
 
     VulkanImage* depth = vulkanFrameResourcesGetDepth();
@@ -225,12 +213,12 @@ static void preUpdate(void) {
     vulkanResetProfile(vulkan.currentCmd, &temporalPipe.profile, 0);
 }
 
-static void update(void) {
-    elapsedCPU = nanos();
+void VulkanVolumetricPass::update() {
+    elapsedCPU = utils::nanos();
     elapsedGPU = 0.0;
 
     if (vulkan.skipFrame) {
-        elapsedCPU = nanos() - elapsedCPU;
+        elapsedCPU = utils::nanos() - elapsedCPU;
         return;
     }
 
@@ -240,13 +228,13 @@ static void update(void) {
 
     if (!sceneColor || !depth || !lightShafts.img) {
         volumetricOutput = NULL;
-        elapsedCPU = nanos() - elapsedCPU;
+        elapsedCPU = utils::nanos() - elapsedCPU;
         return;
     }
 
     if (volumetricDisabled) {
         clearShafts(cmd);
-        elapsedCPU = nanos() - elapsedCPU;
+        elapsedCPU = utils::nanos() - elapsedCPU;
         return;
     }
 
@@ -368,15 +356,15 @@ static void update(void) {
 
     elapsedGPU = lightSourcePipe.profile.elapsed + lightShaftsPipe.profile.elapsed +
                  temporalPipe.profile.elapsed;
-    elapsedCPU = nanos() - elapsedCPU;
+    elapsedCPU = utils::nanos() - elapsedCPU;
 }
 
-static void postUpdate(void) {
+void VulkanVolumetricPass::postUpdate() {
     vulkanVolumetricPass.cpuElapsed = elapsedCPU;
     vulkanVolumetricPass.gpuElapsed = elapsedGPU;
 }
 
-static void removed(void) {
+void VulkanVolumetricPass::removed() {
     destroyImages();
     vulkanDestroyPipe(&lightSourcePipe);
     vulkanDestroyPipe(&lightShaftsPipe);
@@ -389,7 +377,7 @@ void vulkanVolumetricPassSetDisabled(char disabled) {
         historyValid      = 0;
         volumetricOutput = NULL;
     }
-    info("Volumetric fog: %s", volumetricDisabled ? "disabled" : "enabled");
+    utils::info("Volumetric fog: %s", volumetricDisabled ? "disabled" : "enabled");
 }
 
 char vulkanVolumetricPassIsDisabled(void) {
@@ -402,3 +390,4 @@ VulkanImage* vulkanVolumetricPassGetOutput(void) {
     if (lightShafts.img) return &lightShafts;
     return NULL;
 }
+}  // namespace engine

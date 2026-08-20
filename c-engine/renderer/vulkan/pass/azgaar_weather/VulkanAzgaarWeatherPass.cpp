@@ -12,25 +12,14 @@
 #include "ecs/system/camera/CameraSystem.h"
 #include "ecs/system/window/WindowSystem.h"
 #include "thread/Thread.h"
+#include <memory>
 #include <stdlib.h>
 
-static void added(void);
-static void preUpdate(void);
-static void update(void);
-static void removed(void);
+namespace engine {
 
-System vulkanAzgaarWeatherPass = {
-    .name                = "azgaar_weather",
-    .added               = added,
-    .removed             = removed,
-    .preUpdate           = preUpdate,
-    .update              = update,
-    .postUpdate          = nullptr,
-    .cpuElapsedLastFrame = 0.0,
-    .cpuElapsed          = 0.0,
-    .gpuElapsed          = 0.0,
-    .priority            = 0,
-};
+VulkanAzgaarWeatherPass vulkanAzgaarWeatherPass;
+
+VulkanAzgaarWeatherPass::VulkanAzgaarWeatherPass() : System("azgaar_weather") {}
 
 // Particle pool.  65 536 × 16 B = 1 MB of device-local memory; the dispatch
 // is 1024 work groups of 64 (≈ 0.1 ms) and the draw is one instanced call.
@@ -47,12 +36,12 @@ System vulkanAzgaarWeatherPass = {
 #define W_TYPE_LEAVES        3u
 
 // Must match the GLSL push-constant block in weather_update.comp.
-typedef struct WeatherSimPushConstants {
-    u64 particleAddress;  // GpuWeatherParticle buffer device address
-    u32 depthIndex;       // scene depth image in the global sampled pool
-    u32 maxParticles;
-    u32 _pad;
-} WeatherSimPushConstants;
+struct WeatherSimPushConstants {
+    u64 particleAddress = 0;  // GpuWeatherParticle buffer device address
+    u32 depthIndex      = 0;  // scene depth image in the global sampled pool
+    u32 maxParticles    = 0;
+    u32 _pad            = 0;
+};
 
 // Must match the GLSL push-constant block in azgaar_weather.vert/.frag.
 typedef struct WeatherDrawPushConstants {
@@ -75,7 +64,7 @@ static VulkanBuffer particleBuffer;
 static u32 particleCount = MAX_WEATHER_PARTICLES;
 
 // Pending re-seed (set on game thread, consumed on render thread).
-static Thread uploadLock = {.mutex = PTHREAD_MUTEX_INITIALIZER};
+static utils::Thread uploadLock = {.mutex = PTHREAD_MUTEX_INITIALIZER};
 static bool pendingReseed = false;
 static VulkanWeatherData pendingReseedWeather;
 
@@ -146,9 +135,9 @@ static void recreatePipelines(void) {
 
 static void destroyMaskImages(void) {
     if (maskA.img) vulkanDestroyImage(&maskA, NULL);
-    maskA = VulkanImage{0};
+    maskA = VulkanImage{};
     if (maskB.img) vulkanDestroyImage(&maskB, NULL);
-    maskB = VulkanImage{0};
+    maskB = VulkanImage{};
     maskFrame = 0;
 }
 
@@ -284,38 +273,38 @@ static void createParticleBuffer(void) {
 
     // Pre-seed through the volume with a mixed-type field so the first
     // activation doesn't spawn a "wall" of flakes at the box top.
-    vec4* seedData = static_cast<vec4*>(memoryAlloc((u64)MAX_WEATHER_PARTICLES * sizeof(vec4)));
-    buildSeedData(seedData, MAX_WEATHER_PARTICLES, NULL);
+    alignas(16) std::unique_ptr<vec4[]> seedData(new vec4[MAX_WEATHER_PARTICLES]);
+    vec4* seedPtr = static_cast<vec4*>(__builtin_assume_aligned(seedData.get(), 16));
+    buildSeedData(seedPtr, MAX_WEATHER_PARTICLES, nullptr);
     VulkanCommand* cmd = vulkanTransientBegin();
-    vulkanCopy(.cmd = cmd, .source.data = seedData, .target.buf = &particleBuffer,
+    vulkanCopy(.cmd = cmd, .source.data = seedPtr, .target.buf = &particleBuffer,
                .size = (u64)MAX_WEATHER_PARTICLES * sizeof(vec4));
     vulkanTransientEnd(cmd, 1);
-    memoryFree(seedData);
 }
 
 static void consumePendingReseed(void) {
-    threadLock(&uploadLock);
+    utils::threadLock(&uploadLock);
     bool reseed = pendingReseed;
     VulkanWeatherData weather = pendingReseedWeather;
     pendingReseed = false;
-    threadUnlock(&uploadLock);
+    utils::threadUnlock(&uploadLock);
     if (!reseed || !particleBuffer.buf) return;
 
-    vec4* seedData = static_cast<vec4*>(memoryAlloc((u64)MAX_WEATHER_PARTICLES * sizeof(vec4)));
-    buildSeedData(seedData, MAX_WEATHER_PARTICLES, &weather);
+    alignas(16) std::unique_ptr<vec4[]> seedData(new vec4[MAX_WEATHER_PARTICLES]);
+    vec4* seedPtr = static_cast<vec4*>(__builtin_assume_aligned(seedData.get(), 16));
+    buildSeedData(seedPtr, MAX_WEATHER_PARTICLES, &weather);
     VulkanCommand* cmd = vulkanTransientBegin();
-    vulkanCopy(.cmd = cmd, .source.data = seedData, .target.buf = &particleBuffer,
+    vulkanCopy(.cmd = cmd, .source.data = seedPtr, .target.buf = &particleBuffer,
                .size = (u64)MAX_WEATHER_PARTICLES * sizeof(vec4));
     vulkanTransientEnd(cmd, 1);
-    memoryFree(seedData);
 }
 
 void vulkanAzgaarWeatherReseed(const VulkanWeatherData* weather) {
-    threadLock(&uploadLock);
+    utils::threadLock(&uploadLock);
     pendingReseed = true;
     pendingReseedWeather = weather ? *weather
                                    : vulkanResourceGetWeatherData();
-    threadUnlock(&uploadLock);
+    utils::threadUnlock(&uploadLock);
 }
 
 // ── Debug: periodic GPU particle y-histogram (ENGINE_AZGAAR_WEATHER_DEBUG) ──
@@ -342,9 +331,9 @@ static void debugLogHistogram(void) {
         if (b > 7) b = 7;
         bands[b]++;
     }
-    info("azgaar_weather hist[%d] t=%.1f camY=%.1f: relY -30..+30 in 8 bands: "
+    utils::info("azgaar_weather hist[%d] t=%.1f camY=%.1f: relY -30..+30 in 8 bands: "
          "%u %u %u %u %u %u %u %u ySum=%.1f",
-         debugMoment, timer.timeSinceStart / BILLION, (double)debugCamY, ySum,
+         debugMoment, utils::timer.timeSinceStart / BILLION, (double)debugCamY, ySum,
          bands[0], bands[1], bands[2], bands[3],
          bands[4], bands[5], bands[6], bands[7], ySum);
 }
@@ -353,10 +342,10 @@ static void debugMaybeReadback(VulkanCommand* cmd) {
     if (!getenv("ENGINE_AZGAAR_WEATHER_DEBUG")) return;
     if (debugMoment >= 10) return;
     if (debugNextAt < 0.0) {
-        debugNextAt = timer.timeSinceStart / BILLION + 6.0;
+        debugNextAt = utils::timer.timeSinceStart / BILLION + 6.0;
         return;
     }
-    if (timer.timeSinceStart / BILLION < debugNextAt) return;
+    if (utils::timer.timeSinceStart / BILLION < debugNextAt) return;
     if (!debugReadback.buf) {
         debugReadback = vulkanCreateReadbackBuffer("weather_debug_readback",
                                                     (u64)MAX_WEATHER_PARTICLES * 16, 0);
@@ -370,6 +359,7 @@ static void debugMaybeReadback(VulkanCommand* cmd) {
         // observe stale data — the initial seed — forever).
         VkMemoryBarrier b = {
             .sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+            .pNext         = nullptr,
             .srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
             .dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT,
         };
@@ -377,35 +367,35 @@ static void debugMaybeReadback(VulkanCommand* cmd) {
                              VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                              VK_PIPELINE_STAGE_TRANSFER_BIT,
                              0, 1, &b, 0, NULL, 0, NULL);
-        VkBufferCopy region = {.size = (u64)MAX_WEATHER_PARTICLES * 16};
+        VkBufferCopy region = {.srcOffset = 0, .dstOffset = 0, .size = (u64)MAX_WEATHER_PARTICLES * 16};
         vkCmdCopyBuffer(cmd->cmd, particleBuffer.buf, debugReadback.buf, 1, &region);
         debugCopied = true;
-        debugNextAt = timer.timeSinceStart / BILLION + 0.05;  // read next call
+        debugNextAt = utils::timer.timeSinceStart / BILLION + 0.05;  // read next call
         return;
     }
     vkDeviceWaitIdle(vulkan.device);
     debugLogHistogram();
     debugCopied = false;
     debugMoment++;
-    debugNextAt = timer.timeSinceStart / BILLION + 5.0;
+    debugNextAt = utils::timer.timeSinceStart / BILLION + 5.0;
 }
 
 // ── System callbacks ────────────────────────────────────────────────────────
 
-static void added(void) {
-    signalSubscribe("swapchainCreated", swapchainCreated);
+void VulkanAzgaarWeatherPass::added() {
+    utils::signalSubscribe("swapchainCreated", swapchainCreated);
     recreatePipelines();
     createParticleBuffer();
     createMaskImages();
 }
 
-static void preUpdate(void) {
+void VulkanAzgaarWeatherPass::preUpdate() {
     if (vulkan.skipFrame) return;
     vulkanResetProfile(vulkan.currentCmd, &drawPipe.profile, 0);
     consumePendingReseed();
 }
 
-static void update(void) {
+void VulkanAzgaarWeatherPass::update() {
     if (vulkan.skipFrame) return;
     if (!particleBuffer.buf || !simPipe.pipe || !drawPipe.pipe) return;
 
@@ -416,10 +406,10 @@ static void update(void) {
     bool enabled = weather.look[3] >= 0.5f;
 
     static double lastDbg = -10.0;
-    double nowDbg = timer.timeSinceStart / BILLION;
+    double nowDbg = utils::timer.timeSinceStart / BILLION;
     if (getenv("ENGINE_AZGAAR_WEATHER_DEBUG") && nowDbg - lastDbg >= 2.0) {
         lastDbg = nowDbg;
-        info("azgaar_weather pass: enabled=%d types=(%.2f %.2f %.2f %.2f) dens=%.2f "
+        utils::info("azgaar_weather pass: enabled=%d types=(%.2f %.2f %.2f %.2f) dens=%.2f "
              "opac=%.2f count=%u",
              enabled,
              (double)weather.types[0], (double)weather.types[1],
@@ -472,6 +462,7 @@ static void update(void) {
         // pattern).  Covers both the mask draw and the main draw below.
         VkMemoryBarrier particleBarrier = {
             .sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+            .pNext         = nullptr,
             .srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
             .dstAccessMask = VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT,
         };
@@ -535,12 +526,12 @@ static void update(void) {
     vulkanAzgaarWeatherPass.gpuElapsed = drawPipe.profile.elapsed;
 }
 
-static void removed(void) {
-    threadLock(&uploadLock);
+void VulkanAzgaarWeatherPass::removed() {
+    utils::threadLock(&uploadLock);
     if (particleBuffer.buf) vulkanDestroyBuffer(&particleBuffer, VK_NULL_HANDLE);
-    particleBuffer = VulkanBuffer{0};
+    particleBuffer = VulkanBuffer{};
     pendingReseed = false;
-    threadUnlock(&uploadLock);
+    utils::threadUnlock(&uploadLock);
     destroyMaskImages();
     vulkanDestroyPipe(&simPipe);
     vulkanDestroyPipe(&drawPipe);
@@ -558,3 +549,4 @@ VulkanImage* vulkanAzgaarWeatherPassGetPrevMask(void) {
     if (!maskA.img || !maskB.img) return NULL;
     return (maskFrame & 1) ? &maskB : &maskA;
 }
+}  // namespace engine

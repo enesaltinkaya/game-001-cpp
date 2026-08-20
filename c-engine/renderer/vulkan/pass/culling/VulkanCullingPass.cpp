@@ -1,4 +1,5 @@
 #include "VulkanCullingPass.h"
+#include "VulkanCullingPass.h"
 #include "ecs/system/scene/Scene.h"
 #include "events/Events.h"
 #include "renderer/Renderer.h"
@@ -9,27 +10,14 @@
 #include "renderer/vulkan/scene/VulkanScene.h"
 #include "renderer/vulkan/scene/VulkanVisibleScenes.h"
 
-static void added(void);
-static void preUpdate(void);
-static void update(void);
-static void postUpdate(void);
-static void removed(void);
+namespace engine {
 
 static double elapsedCPU;
 static double elapsedGPU;
 
-System vulkanCullingPass = {
-    .name                = "culling",
-    .added               = added,
-    .removed             = removed,
-    .preUpdate           = preUpdate,
-    .update              = update,
-    .postUpdate          = postUpdate,
-    .cpuElapsedLastFrame = 0.0,
-    .cpuElapsed          = 0.0,
-    .gpuElapsed          = 0.0,
-    .priority            = 0,
-};
+VulkanCullingPass vulkanCullingPass;
+
+VulkanCullingPass::VulkanCullingPass() : System("culling") {}
 
 static VulkanPipe cullingPipe;
 
@@ -64,12 +52,12 @@ static void swapchainCreated(void*) {
     recreatePipeline();
 }
 
-static void added(void) {
-    signalSubscribe("swapchainCreated", swapchainCreated);
+void VulkanCullingPass::added() {
+    utils::signalSubscribe("swapchainCreated", swapchainCreated);
     recreatePipeline();
 }
 
-static void preUpdate(void) {
+void VulkanCullingPass::preUpdate() {
     if (vulkan.skipFrame) return;
     vulkanResetProfile(vulkan.currentCmd, &cullingPipe.profile, 0);
 }
@@ -83,6 +71,7 @@ static void dispatchCulling(VulkanCommand* cmd, VulkanScene* vs, u32 fi) {
     // Barrier: transfer → compute
     VkMemoryBarrier fillBarrier = {
         .sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+        .pNext         = nullptr,
         .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
         .dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
     };
@@ -122,6 +111,7 @@ static void dispatchCulling(VulkanCommand* cmd, VulkanScene* vs, u32 fi) {
     // Barrier: compute → draw indirect
     VkMemoryBarrier computeBarrier = {
         .sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+        .pNext         = nullptr,
         .srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
         .dstAccessMask = VK_ACCESS_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_SHADER_READ_BIT,
     };
@@ -131,7 +121,7 @@ static void dispatchCulling(VulkanCommand* cmd, VulkanScene* vs, u32 fi) {
                          0, 1, &computeBarrier, 0, NULL, 0, NULL);
 }
 
-static void update(void) {
+void VulkanCullingPass::update() {
     if (vulkan.skipFrame) return;
 
     VulkanCommand* cmd = vulkan.currentCmd;
@@ -140,14 +130,12 @@ static void update(void) {
     vulkanBeginProfile(cmd, &cullingPipe.profile, 0);
 
     u32 visibleSceneCount = 0;
-    Scene** visibleScenes = vulkanGetVisibleScenes(&visibleSceneCount);
-    u32 totalDraws = 0;
+    const Scene** visibleScenes = vulkanGetVisibleScenes(&visibleSceneCount);
     for (u32 si = 0; si < visibleSceneCount; si++) {
-        Scene* scene = visibleScenes[si];
+        const Scene* scene = visibleScenes[si];
         if (!scene->backendScene) continue;
         VulkanScene* vs  = static_cast<VulkanScene*>(scene->backendScene);
         if (!vs->totalDraws) continue;
-        totalDraws += vs->totalDraws;
         dispatchCulling(cmd, vs, fi);
     }
 
@@ -157,11 +145,12 @@ static void update(void) {
 
 }
 
-static void postUpdate(void) {
+void VulkanCullingPass::postUpdate() {
     vulkanCullingPass.cpuElapsed = elapsedCPU;
     vulkanCullingPass.gpuElapsed = elapsedGPU;
 }
 
-static void removed(void) {
+void VulkanCullingPass::removed() {
     vulkanDestroyPipe(&cullingPipe);
 }
+}  // namespace engine

@@ -29,6 +29,7 @@
 // Species ids (match the plan's table; the merged mesh carries one sub-range
 // per species in this order).  Vegetation = 0..12 (Phase 1), buildings = 13..19
 // (Phase 3, workstream D: settlement clusters placed by AzgaarSettlements).
+namespace game {
 enum AzgaarPropSpecies {
     AZGAAR_PROP_GRASS_TUFT     = 0,
     AZGAAR_PROP_CONIFER        = 1,
@@ -73,8 +74,9 @@ void azgaarPropsDestroy(void);
 // once at load; the props system keeps an owned copy, uploads it, and then
 // culls it per-instance like the tiles (frustum + per-species distance caps)
 // as the camera moves.
-void azgaarPropsRegisterGlobal(const PropInstance* instances, u32 instanceCount,
-                               const PropTileRange* ranges, u32 rangeCount,
+void azgaarPropsRegisterGlobal(const engine::PropInstance* instances, u32 instanceCount,
+                               const engine::PropTileRange* ranges, u32 rangeCount,
                                const float aabbMin[3], const float aabbMax[3],
                                bool landmarks);
 void azgaarPropsClearGlobal(bool landmarks);
+}  // namespace game

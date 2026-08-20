@@ -4,7 +4,7 @@
 #include "ecs/system/System.h"
 #include "ecs/system/mesh/MeshComponent.h"
 #include "ecs/system/transform/TransformDb.h"
-#include "container/Map.h"
+#include <unordered_map>
 #include "renderer/Renderer.h"
 #include "thread/Thread.h"
 #include "timer/Timer.h"
@@ -12,58 +12,43 @@
 // entities that had their transforms modified
 // interpolated and uploaded to gpu
 // considered active for 2 seconds
-static struct ThreadPool* threadPool;
+namespace engine {
+static struct utils::ThreadPool* threadPool;
 
-static void added(void);
-static void removed(void);
-static void update(void);
-static void postUpdate(void);
 
 static void transformSetWorldWithChildren(Scene* scene, u32 entity);
 static void transformSetWorld(Scene* scene, u32 entity, Entity* entityObj);
-static void initTransform(Scene* scene, u32 entity, void* pTransform);
 
-System transformSystem = {
-    .name                = "transform",
-    .added               = added,
-    .removed             = removed,
-    .preUpdate           = nullptr,
-    .update              = update,
-    .postUpdate          = postUpdate,
-    .cpuElapsedLastFrame = 0.0,
-    .cpuElapsed          = 0.0,
-    .gpuElapsed          = 0.0,
-    .priority            = 0,
-};
+TransformSystem transformSystem;
 
-void added(void) {
-    threadPool = threadPoolInit(10);
+TransformSystem::TransformSystem() : System("transform") {}
+
+void TransformSystem::added() {
+    threadPool = utils::threadPoolInit(10);
     transformDbInit();
 }
 
-void removed(void) {
-    threadPoolDestroy(threadPool);
+void TransformSystem::removed() {
+    utils::threadPoolDestroy(threadPool);
 }
 
-void update(void) {
+void TransformSystem::update() {
     {
-        foreach (auto scene, ecs.scenes) {
-            for (i32 i = 0, si = mapSize(scene->activeEntities); i < si; i++) {
-                auto item = scene->activeEntities[i];
-                transformSetWorldWithChildren(scene, item.key);
+        for (auto scene : ecs.scenes) {
+            for (const auto& entry : scene->activeEntities) {
+                transformSetWorldWithChildren(scene, entry.first);
             }
         }
     }
 }
 
-void postUpdate(void) {
-    foreach (auto scene, ecs.scenes) {
-        for (i32 i = 0, si = mapSize(scene->activeEntities); i < si; i++) {
-            auto item   = scene->activeEntities[i];
-            u32 entity  = item.key;
-            double time = item.value;
+void TransformSystem::postUpdate() {
+for (auto scene : ecs.scenes) {
+            for (const auto& entry : scene->activeEntities) {
+                u32 entity  = entry.first;
+                double time = entry.second;
 
-            if (millies() < time + 2000) {
+            if (utils::millies() < time + 2000) {
                 LastTransform* lastTransform   = getComponent(scene, LastTransform, entity);
                 WorldTransform* worldTransform = transformGetWorld(scene, entity);
 
@@ -71,32 +56,32 @@ void postUpdate(void) {
                     Transform lerp = {};
                     quatSlerpShortest(lastTransform->rot,
                                       worldTransform->rot,
-                                      timer.alpha,
+                                      utils::timer.alpha,
                                       lerp.rot);
-                    glm_vec3_lerp(lastTransform->pos, worldTransform->pos, timer.alpha, lerp.pos);
+                    glm_vec3_lerp(lastTransform->pos, worldTransform->pos, utils::timer.alpha, lerp.pos);
                     lerp.pos[3] =
-                        glm_lerp(lastTransform->pos[3], worldTransform->pos[3], timer.alpha);
+                        glm_lerp(lastTransform->pos[3], worldTransform->pos[3], utils::timer.alpha);
                     rendererUploadTransform(scene, entity, &lerp);
                 } else if (worldTransform) {
                     rendererUploadTransform(scene, entity, reinterpret_cast<Transform*>(worldTransform));
                 }
             } else {
-                arrayPut(scene->activeEntityRemoveList, entity);
+                scene->activeEntityRemoveList.push_back(entity);
             }
         }
 
-        foreach (auto entity, scene->activeEntityRemoveList) {
-            mapRemove(scene->activeEntities, entity);
+        for (auto entity : scene->activeEntityRemoveList) {
+            scene->activeEntities.erase(entity);
         }
-        arrayClear(scene->activeEntityRemoveList);
+        scene->activeEntityRemoveList.clear();
     }
 }
 
 static void transformActivateChildren(Scene* scene, u32 entity) {
     Entity* e = getEntity(scene, entity);
-    if (e && e->children) {
-        foreach (Entity* child, e->children) {
-            mapPut(scene->activeEntities, child->id, millies());
+    if (e && !e->children.empty()) {
+        for (Entity* child : e->children) {
+            scene->activeEntities[child->id] = utils::millies();
             transformActivateChildren(scene, child->id);
         }
     }
@@ -105,15 +90,15 @@ static void transformActivateChildren(Scene* scene, u32 entity) {
 void transformActivate(Scene* scene, u32 entity) {
     {
         Entity* e = getEntity(scene, entity);
-        mapPut(scene->activeEntities, entity, millies());
+        scene->activeEntities[entity] = utils::millies();
         if (e) {
             if (e->parent) {
                 transformActivate(scene, e->parent->id);
             }
             // Also activate children so their transforms get uploaded to the GPU
-            if (e->children) {
-                foreach (Entity* child, e->children) {
-                    mapPut(scene->activeEntities, child->id, millies());
+            if (!e->children.empty()) {
+                for (Entity* child : e->children) {
+                    scene->activeEntities[child->id] = utils::millies();
                     transformActivateChildren(scene, child->id);
                 }
             }
@@ -125,8 +110,8 @@ void transformSetWorldWithChildren(Scene* scene, u32 entity) {
     Entity* e = getEntity(scene, entity);
     transformSetWorld(scene, entity, e);
 
-    if (e && e->children) {
-        foreach (Entity* child, e->children) {
+    if (e && !e->children.empty()) {
+        for (Entity* child : e->children) {
             transformSetWorldWithChildren(scene, child->id);
         }
     }
@@ -194,8 +179,8 @@ WorldTransform* transformGetWorld(Scene* scene, u32 entity) {
 void transformSaveLast(Scene* scene, u32 entity) {
     transformActivate(scene, entity);
     Entity* e = getEntity(scene, entity);
-    if (e && e->children) {
-        foreach (Entity* child, e->children) {
+    if (e && !e->children.empty()) {
+        for (Entity* child : e->children) {
             transformSaveLast(scene, child->id);
         }
     }
@@ -218,7 +203,7 @@ void transformSaveLast(Scene* scene, u32 entity) {
  *   2. One downward pass that activates + saves for each node
  */
 static void activateAndSaveLastRecurse(Scene* scene, u32 entity) {
-    mapPut(scene->activeEntities, entity, millies());
+    scene->activeEntities[entity] = utils::millies();
 
     LastTransform* pt = getComponent(scene, LastTransform, entity);
     if (!pt) {
@@ -229,8 +214,8 @@ static void activateAndSaveLastRecurse(Scene* scene, u32 entity) {
     glm_vec4_copy(wt->pos, pt->pos);
 
     Entity* e = getEntity(scene, entity);
-    if (e && e->children) {
-        foreach (Entity* child, e->children) {
+    if (e && !e->children.empty()) {
+        for (Entity* child : e->children) {
             activateAndSaveLastRecurse(scene, child->id);
         }
     }
@@ -243,7 +228,7 @@ void transformActivateAndSaveLastSubtree(Scene* scene, u32 entity) {
         // Walk up and activate parents only (no child expansion)
         Entity* p = e->parent;
         while (p) {
-            mapPut(scene->activeEntities, p->id, millies());
+            scene->activeEntities[p->id] = utils::millies();
             p = p->parent;
         }
     }
@@ -252,8 +237,9 @@ void transformActivateAndSaveLastSubtree(Scene* scene, u32 entity) {
 }
 
 void transformGetDirection(Scene* scene, u32 entity, vec3 out) {
+    static vec3 FORWARD = {0.0f, 1.0f, 0.0f};
     WorldTransform* worldTransform = transformGetWorld(scene, entity);
-    glm_quat_rotatev(worldTransform->rot, GLM_FORWARD, out);
+    glm_quat_rotatev(worldTransform->rot, FORWARD, out);
     glm_vec3_normalize(out);
 }
 
@@ -271,6 +257,4 @@ void transformQuatToPitchYaw(versor q, float* pitch, float* yaw) {
     *pitch = asinf(world_forward[1]);
 }
 
-void initTransform(Scene* scene, u32 entity, void* _) {
-    transformSaveLast(scene, entity);
-}
+}  // namespace engine

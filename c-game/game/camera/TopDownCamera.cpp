@@ -11,6 +11,7 @@
 #include "timer/Timer.h"
 
 // Default top-down camera params
+namespace game {
 static float TD_ELEVATION          = 30 * GLM_PIf / 180.0f;  // 30 degrees in radians
 static float TD_DISTANCE           = 10.0f;  // default orbit distance from look-at point
 static float TD_MIN_DIST           = 3.0f;   // minimum zoom-in distance
@@ -31,12 +32,12 @@ static vec3 Y_UP = {0.0f, 1.0f, 0.0f};
 
 static struct {
     u32 followEntityId;
-    Scene* followScene;
+    engine::Scene* followScene;
     vec3 currentPos;
     bool initPos;
-    Entity* camEntity;
-    Camera* camera;
-    Transform* camTransform;
+    engine::Entity* camEntity;
+    engine::Camera* camera;
+    engine::Transform* camTransform;
     float yaw;             // orbit yaw angle
     float targetDistance;  // desired orbit distance (set by input)
     float distance;        // current (smoothed) orbit distance
@@ -129,7 +130,7 @@ static void topDownCameraUpdateOccluders(vec3 cameraPos, vec3 targetPos) {
         }
     }
 
-    float dt = glm_clamp(timer.dt, 0.0f, 0.1f);
+    float dt = glm_clamp(utils::timer.dt, 0.0f, 0.1f);
     for (u32 i = 0; i < tdOccluderCount;) {
         TopDownOccluderFade* occluder = &tdOccluders[i];
         float targetAlpha             = occluder->hitThisFrame ? TD_OCCLUDER_ALPHA : 1.0f;
@@ -160,7 +161,7 @@ static void topDownCameraUpdateOccluders(vec3 cameraPos, vec3 targetPos) {
         entityCount++;
     }
 
-    vulkanResourceSetCameraOccluders(entities, alphas, entityCount);
+    engine::vulkanResourceSetCameraOccluders(entities, alphas, entityCount);
 }
 
 void topDownCameraInit(void) {
@@ -171,12 +172,12 @@ void topDownCameraInit(void) {
     tdCam.targetDistance = TD_DISTANCE;
     tdCam.distance       = TD_DISTANCE;
 
-    tdCam.camEntity    = cameraGetEntity();
-    tdCam.camera       = getComponent(ecs.defaultScene, Camera, tdCam.camEntity->id);
-    tdCam.camTransform = getComponent(ecs.defaultScene, Transform, tdCam.camEntity->id);
+    tdCam.camEntity    = engine::cameraGetEntity();
+    tdCam.camera       = getComponent(engine::ecs.defaultScene, engine::Camera, tdCam.camEntity->id);
+    tdCam.camTransform = getComponent(engine::ecs.defaultScene, engine::Transform, tdCam.camEntity->id);
 }
 
-void topDownCameraSetTarget(Scene* scene, u32 entityId) {
+void topDownCameraSetTarget(engine::Scene* scene, u32 entityId) {
     tdCam.followScene    = scene;
     tdCam.followEntityId = entityId;
     tdCam.initPos        = false;
@@ -184,7 +185,7 @@ void topDownCameraSetTarget(Scene* scene, u32 entityId) {
     // Immediately snap camera to target so the first frame isn't clipped
     if (!tdCam.camEntity || !tdCam.camera || !tdCam.camTransform) return;
 
-    Transform* t = getComponent(scene, Transform, entityId);
+    engine::Transform* t = getComponent(scene, engine::Transform, entityId);
     if (!t) return;
 
     vec3 targetPos = {t->pos[0], t->pos[1], t->pos[2]};
@@ -216,8 +217,8 @@ void topDownCameraSetTarget(Scene* scene, u32 entityId) {
     glm_mat4_quat(lookMat, tdCam.camTransform->rot);
     glm_quat_inv(tdCam.camTransform->rot, tdCam.camTransform->rot);
 
-    transformSaveLast(ecs.defaultScene, tdCam.camEntity->id);
-    transformQuatToPitchYaw(tdCam.camTransform->rot, &tdCam.camera->pitch, &tdCam.camera->yaw);
+    engine::transformSaveLast(engine::ecs.defaultScene, tdCam.camEntity->id);
+    engine::transformQuatToPitchYaw(tdCam.camTransform->rot, &tdCam.camera->pitch, &tdCam.camera->yaw);
 }
 
 float topDownCameraGetYaw(void) {
@@ -226,7 +227,7 @@ float topDownCameraGetYaw(void) {
 
 void topDownCameraHandleInput(float dx) {
     if (dx != 0.0f) {
-        tdCam.yaw -= dx * TD_ROTATE_SENSITIVITY * timer.dt;
+        tdCam.yaw -= dx * TD_ROTATE_SENSITIVITY * utils::timer.dt;
     }
 }
 
@@ -252,19 +253,19 @@ void topDownCameraPreUpdate(void) {
 
 void topDownCameraUpdate(void) {
     if (!tdCam.camEntity || !tdCam.camera || !tdCam.camTransform) {
-        vulkanResourceSetCameraOccluders(nullptr, nullptr, 0);
+        engine::vulkanResourceSetCameraOccluders(nullptr, nullptr, 0);
         return;
     }
 
     // Smooth zoom: exponentially interpolate toward target distance
-    float t = 1.0f - expf(-TD_ZOOM_SPEED * timer.dt);
+    float t = 1.0f - expf(-TD_ZOOM_SPEED * utils::timer.dt);
     tdCam.distance += (tdCam.targetDistance - tdCam.distance) * t;
 
     // Get follow target position
     vec3 targetPos = {0.0f, 0.0f, 0.0f};
     bool hasTarget = false;
     if (tdCam.followScene && tdCam.followEntityId) {
-        Transform* t = getComponent(tdCam.followScene, Transform, tdCam.followEntityId);
+        engine::Transform* t = getComponent(tdCam.followScene, engine::Transform, tdCam.followEntityId);
         if (t) {
             targetPos[0] = t->pos[0];
             targetPos[1] = t->pos[1];
@@ -273,7 +274,7 @@ void topDownCameraUpdate(void) {
         }
     }
     if (!hasTarget) {
-        vulkanResourceSetCameraOccluders(nullptr, nullptr, 0);
+        engine::vulkanResourceSetCameraOccluders(nullptr, nullptr, 0);
     }
 
     // Look-at point: player feet + chest height
@@ -298,7 +299,7 @@ void topDownCameraUpdate(void) {
     // Clamp Y to prevent underground
     if (desired[1] < targetPos[1] + 1.0f) desired[1] = targetPos[1] + 1.0f;
 
-    transformSaveLast(ecs.defaultScene, tdCam.camEntity->id);
+    engine::transformSaveLast(engine::ecs.defaultScene, tdCam.camEntity->id);
 
     if (hasTarget) {
         topDownCameraUpdateOccluders(desired, targetPos);
@@ -312,9 +313,9 @@ void topDownCameraUpdate(void) {
     glm_mat4_quat(lookMat, tdCam.camTransform->rot);
     glm_quat_inv(tdCam.camTransform->rot, tdCam.camTransform->rot);
 
-    transformQuatToPitchYaw(tdCam.camTransform->rot, &tdCam.camera->pitch, &tdCam.camera->yaw);
+    engine::transformQuatToPitchYaw(tdCam.camTransform->rot, &tdCam.camera->pitch, &tdCam.camera->yaw);
 
-    vulkanShadowPassSetFocusDistance(tdCam.distance);
+    engine::vulkanShadowPassSetFocusDistance(tdCam.distance);
     tdCam.camera->zfar = 4096.0f;
 }
 
@@ -323,8 +324,8 @@ void topDownCameraUnproject(float screenX, float screenY, vec3 outOrigin, vec3 o
 
     // Use window dimensions (not render viewport) because cursor coords
     // are reported in window pixel space, not render resolution space.
-    float viewW = static_cast<float>(window.width);
-    float viewH = static_cast<float>(window.height);
+    float viewW = static_cast<float>(engine::window.width);
+    float viewH = static_cast<float>(engine::window.height);
     if (viewW <= 0 || viewH <= 0) return;
 
     // Normalize screen coords to NDC
@@ -351,3 +352,4 @@ void topDownCameraUnproject(float screenX, float screenY, vec3 outOrigin, vec3 o
     glm_vec3_sub(farWorld, nearWorld, outDir);
     glm_vec3_normalize(outDir);
 }
+}  // namespace game

@@ -1,3 +1,4 @@
+#include "PassStatsGui.h"
 #include "ecs/Ecs.h"
 #include "ecs/system/System.h"
 #include "platform/Platform.h"
@@ -8,23 +9,12 @@
 #include "rmlui/wrapper/src/crmlui.h"
 #include "timer/Timer.h"
 
-static void added(void);
-static void update(void);
-static void removed(void);
+namespace engine {
 static void onClickPassRow(void* element, const char* eventType, const char* id, EventParameter* parameter);
 
-System passStatsGui = {
-    .name                = "passStatsGui",
-    .added               = added,
-    .removed             = removed,
-    .preUpdate           = nullptr,
-    .update              = update,
-    .postUpdate          = nullptr,
-    .cpuElapsedLastFrame = 0.0,
-    .cpuElapsed          = 0.0,
-    .gpuElapsed          = 0.0,
-    .priority            = 0,
-};
+PassStatsGui passStatsGui;
+
+PassStatsGui::PassStatsGui() : System("passStatsGui") {}
 
 static void* document;
 static void* model;
@@ -82,7 +72,7 @@ static int getPassRowIndex(void* passRow) {
     return -1;
 }
 
-void added(void) {
+void PassStatsGui::added() {
     ecs.showStats = 1;
 
     document = rmlNewDocument("gui/passstats/passstats.html");
@@ -138,9 +128,9 @@ void onClickPassRow(void* element, const char* eventType, const char* id, EventP
 
         // Update cached detail data immediately for responsive UI
         if ((size_t)selectedPassIndex < passCount) {
-            struct VulkanProfile* profiles = vulkanGetPassProfiles();
-            struct VulkanProfile* prof     = &profiles[selectedPassIndex];
-            struct System* pass            = renderer.passes[selectedPassIndex];
+            const struct VulkanProfile* profiles = vulkanGetPassProfiles();
+            const struct VulkanProfile* prof = &profiles[selectedPassIndex];
+            System* pass            = renderer.passes[selectedPassIndex];
 
             snprintf(selectedPassName, sizeof(selectedPassName), "%s", pass->name);
             selectedPassGpuElapsed = prof->elapsed / MILLION;
@@ -152,7 +142,7 @@ void onClickPassRow(void* element, const char* eventType, const char* id, EventP
     }
 }
 
-void removed(void) {
+void PassStatsGui::removed() {
     ecs.showStats = 0;
     selectedPassIndex = -1;
     rmlUnloadDocument(document);
@@ -160,8 +150,8 @@ void removed(void) {
     document = nullptr;
 }
 
-void update(void) {
-    double now = nanos();
+void PassStatsGui::update() {
+    double now = utils::nanos();
     if (now > lastUpdate + BILLION / 2.) {  // twice per second
         passCount = vulkanGetPassProfileCount();
 
@@ -181,9 +171,9 @@ void update(void) {
 
         // Update selected pass data
         if (selectedPassIndex >= 0 && (size_t)selectedPassIndex < passCount) {
-            struct VulkanProfile* profiles = vulkanGetPassProfiles();
-            struct VulkanProfile* prof     = &profiles[selectedPassIndex];
-            struct System* pass            = renderer.passes[selectedPassIndex];
+            const struct VulkanProfile* profiles = vulkanGetPassProfiles();
+            const struct VulkanProfile* prof = &profiles[selectedPassIndex];
+            System* pass            = renderer.passes[selectedPassIndex];
 
             snprintf(selectedPassName, sizeof(selectedPassName), "%s", pass->name);
             selectedPassGpuElapsed = prof->elapsed / MILLION;
@@ -202,8 +192,8 @@ void passListInfo(int index, int type, char* out) {
         return;
     }
 
-    struct VulkanProfile* profiles = vulkanGetPassProfiles();
-    struct VulkanProfile* prof     = &profiles[index];
+    const struct VulkanProfile* profiles = vulkanGetPassProfiles();
+    const struct VulkanProfile* prof = &profiles[index];
 
     if (type == 0) {
         // Pass name
@@ -274,3 +264,4 @@ void passStatsGuiToggle(void) {
         guiManagerAddGuiNextFrame(&passStatsGui);
     }
 }
+}  // namespace engine

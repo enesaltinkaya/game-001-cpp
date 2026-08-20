@@ -9,32 +9,21 @@
 #include "settings/Settings.h"
 #include "renderer/vulkan/pass/rmlui/VulkanRmluiPass.h"
 
-static void added(void);
-static void removed(void);
-static void postUpdate(void);
+namespace engine {
 
-System guiManagerRmlUi = {
-    .name                = "gui",
-    .added               = added,
-    .removed             = removed,
-    .preUpdate           = nullptr,
-    .update              = nullptr,
-    .postUpdate          = postUpdate,
-    .cpuElapsedLastFrame = 0.0,
-    .cpuElapsed          = 0.0,
-    .gpuElapsed          = 0.0,
-    .priority            = 0,
-};
+GuiManagerRmlUi guiManagerRmlUi;
+
+GuiManagerRmlUi::GuiManagerRmlUi() : System("gui") {}
 
 static RmlParams rmlParams;
 static void gmWindowResized(void* _);
 
-struct System** rmluiGuis;  // stb array
+std::vector<System*> rmluiGuis;
 
-void added(void) {
+void GuiManagerRmlUi::added() {
     char version[20] = {};
     rmlGetVersion(version);
-    debug("rmlui: RmlUi %s", version);
+    utils::debug("rmlui: RmlUi %s", version);
 
     rmlParams = RmlParams{
         .window =
@@ -49,20 +38,21 @@ void added(void) {
                 .setCursorFn      = windowSystemGetSetCursorFn(),
             },
         .luaState = luaGetState(),
+        .enableDebugger = 0,
         .log =
             {
-                .debugFn = debugRml,
-                .errorFn = errorRml,
-                .infoFn  = infoRml,
-                .warnFn  = warnRml,
+                .debugFn = utils::debugRml,
+                .errorFn = utils::errorRml,
+                .infoFn  = utils::infoRml,
+                .warnFn  = utils::warnRml,
             },
         .file =
             {
-                .fileOpenFn  = dmRmlopen,
-                .fileCloseFn = dmRmlclose,
-                .fileReadFn  = dmRmlread,
-                .fileSeekFn  = dmRmlseek,
-                .fileTellFn  = dmRmltell,
+                .fileOpenFn  = utils::dmRmlopen,
+                .fileCloseFn = utils::dmRmlclose,
+                .fileReadFn  = utils::dmRmlread,
+                .fileSeekFn  = utils::dmRmlseek,
+                .fileTellFn  = utils::dmRmltell,
             },
         .vulkan =
             {
@@ -71,6 +61,7 @@ void added(void) {
                 .renderGeometry      = rmlRenderGeometry,
                 .compileGeometry     = rmlCompileGeometry,
                 .releaseGeometry     = rmlReleaseGeometry,
+                .renderCompiledGeometry = nullptr,
                 .loadTexture         = rmlLoadTexture,
                 .generateTexture     = rmlGenerateTexture,
                 .releaseTexture      = rmlReleaseTexture,
@@ -82,19 +73,19 @@ void added(void) {
 
     };
 
-    if (isDebug()) {
+    if (utils::isDebug()) {
         rmlParams.enableDebugger = 1;
     }
 
     rmlInitVulkan(&rmlParams);
 
-    float scale = settingsGetDouble("uiScale");
+    float scale = utils::settingsGetDouble("uiScale");
     rmlSetDimensions(window.width, window.height, scale);
 
-    signalSubscribe("swapchainCreated", gmWindowResized);
-    signalSubscribe("uiScaleChanged", gmWindowResized);
+    utils::signalSubscribe("swapchainCreated", gmWindowResized);
+    utils::signalSubscribe("uiScaleChanged", gmWindowResized);
 
-    if (settingsGetBool("showFps")) {
+    if (utils::settingsGetBool("showFps")) {
         guiManagerAddGuiNextFrame(&rmluiShowFpsGui);
     }
 
@@ -102,7 +93,7 @@ void added(void) {
     // passStatsGuiToggle();
 }
 
-void postUpdate(void) {
+void GuiManagerRmlUi::postUpdate() {
     if (input.ctrl && input.pressed == KEY_D && windowSystemIsCursorVisible()) {
         statsGuiToggle();
     }
@@ -123,7 +114,7 @@ void postUpdate(void) {
 
     if (!input.skip) {
         bool cursorWasVisible = windowSystemIsCursorVisible();
-        for (i32 i = 0, si = arraySize(input.events); i < si; i++) {
+        for (i32 i = 0, si = static_cast<i32>(input.events.size()); i < si; i++) {
             InputEvent* ev = &input.events[i];
 
             // Ignore the first few motion events until pointer state stabilizes.
@@ -150,69 +141,62 @@ void postUpdate(void) {
     // layout so Rml::Context::Update() sees the current frame's values.
     // Previously rmlUpdate() ran before GUI updates, causing a one-frame
     // lag in element positions (e.g. enemy HP bars lagging behind rotation).
-    foreach (struct System* gui, rmluiGuis) {
-        if (gui->update) {
-            gui->update();
-        }
+    for (System* gui : rmluiGuis) {
+        gui->update();
     }
 
     rmlUpdate();
     rmlRenderVulkan();
 }
 
-void removed(void) {
-    foreach (struct System* gui, rmluiGuis) {
-        warn("remove gui (guimanager removed): %s", gui->name);
-        if (gui->removed) {
-            gui->removed();
-        }
+void GuiManagerRmlUi::removed() {
+    for (System* gui : rmluiGuis) {
+        utils::warn("remove gui (guimanager removed): %s", gui->name);
+        gui->removed();
     }
-    for (i32 i = 0, si = arraySize(input.events); i < si; i++) {
+    for (i32 i = 0, si = static_cast<i32>(input.events.size()); i < si; i++) {
         rmlSendInputEvent(&input.events[i]);
     }
     rmlUpdate();
 
-    warn("RML SHUTDOWN");
+    utils::warn("RML SHUTDOWN");
     rmlDestroy();
-    arrayFree(rmluiGuis);
 }
 
 void gmWindowResized(void* _) {
-    rmlSetDimensions(window.width, window.height, settingsGetDouble("uiScale"));
+    rmlSetDimensions(window.width, window.height, utils::settingsGetDouble("uiScale"));
 }
 
 static void addGui(void* pGui) {
-    struct System* gui  = static_cast<struct System*>(pGui);
-    debug("rmlui: showing %s", gui->name);
-    arrayPut(rmluiGuis, gui);
+    System* gui  = static_cast<System*>(pGui);
+    utils::debug("rmlui: showing %s", gui->name);
+    rmluiGuis.push_back(gui);
     gui->added();
 }
 
 static void removeGui(void* pGui) {
-    struct System* gui  = static_cast<struct System*>(pGui);
-    debug("rmlui: removing gui %s", gui->name);
+    System* gui  = static_cast<System*>(pGui);
+    utils::debug("rmlui: removing gui %s", gui->name);
 
-    for (int i = 0, si = arraySize(rmluiGuis); i < si; i++) {
+    for (int i = 0, si = static_cast<i32>(rmluiGuis.size()); i < si; i++) {
         if (gui == rmluiGuis[i]) {
-            arrayDeleteSlow(rmluiGuis, i);
-            if (gui->removed) {
-                gui->removed();
-            }
+            rmluiGuis.erase(rmluiGuis.begin() + i);
+            gui->removed();
             break;
         }
     }
 }
 
-void guiManagerAddGuiNextFrame(struct System* gui) {
-    futureTaskAdd(0, addGui, gui);
+void guiManagerAddGuiNextFrame(System* gui) {
+    utils::futureTaskAdd(0, addGui, gui);
 }
 
-void guiManagerRemoveGuiNextFrame(struct System* gui) {
-    futureTaskAdd(0, removeGui, gui);
+void guiManagerRemoveGuiNextFrame(System* gui) {
+    utils::futureTaskAdd(0, removeGui, gui);
 }
 
 void guiManagerUpdateScale(void) {
-    rmlSetDimensions(window.width, window.height, settingsGetDouble("uiScale"));
+    rmlSetDimensions(window.width, window.height, utils::settingsGetDouble("uiScale"));
 }
 
 void guiManagerUpdateCursors(void) {
@@ -223,7 +207,7 @@ void guiManagerUpdateCursors(void) {
 }
 
 void guiManagerToggleShowFps(void) {
-    if (settingsGetBool("showFps")) {
+    if (utils::settingsGetBool("showFps")) {
         guiManagerAddGuiNextFrame(&rmluiShowFpsGui);
     } else {
         guiManagerRemoveGuiNextFrame(&rmluiShowFpsGui);
@@ -237,3 +221,4 @@ void guiManagerReleaseTexture(const char* name) {
 void guiManagerReleaseAllTextures(void) {
     rmlReleaseAllTextures();
 }
+}  // namespace engine

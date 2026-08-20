@@ -4,16 +4,15 @@
 #include <atomic>
 #include <algorithm>
 #include <stdio.h>
-#include "memorymanager/MemoryManager.h"
+#include <cstdlib>
 #include "string/String.h"
 
+namespace utils {
 static void maybeGrow(String* string, u32 grow);
 
 String* stringNew(const char* format, ...) {
-    String* string = static_cast<String*>(memoryAlloc(sizeof *string));
-    string->allocated = 0;
-    string->data      = nullptr;
-    string->onHeap    = true;
+    String* string = new String{};
+    string->onHeap = true;
 
     va_list args;
     String message = {};
@@ -33,7 +32,7 @@ String* stringNew(const char* format, ...) {
 
 void stringDestroy(String* string) {
     if (string->data != nullptr) {
-        memoryFree(string->data);
+        free(string->data);
         string->data = nullptr;
     }
 
@@ -41,7 +40,7 @@ void stringDestroy(String* string) {
     string->allocated = 0;
 
     if (string->onHeap) {
-        memoryFree(string);
+        delete string;
     }
 }
 
@@ -53,7 +52,7 @@ void maybeGrow(String* string, u32 grow) {
             string->allocated = 10;
         }
         u32 newSize       = static_cast<u32>(std::max<double>(string->allocated * 1.5, grow + 1));  // +1 is for \0 for
-        char* temp        = static_cast<char*>(memoryRealloc(string->data, newSize));
+        char* temp        = static_cast<char*>(realloc(string->data, newSize));
         string->data      = temp;
         string->allocated = newSize;
     }
@@ -92,7 +91,7 @@ void stringReplace(String* string, const char* find, const char* replace) {
     char* replaced = strReplace(string->data, find, replace);
     stringClear(string);
     stringAppend(string, replaced);
-    memoryFree(replaced);
+    free(replaced);
 }
 
 void stringClear(String* string) {
@@ -188,7 +187,7 @@ char* strReplace(const char* source, const char* find, const char* replace) {
             i += oldWlen - 1;
         }
     }
-    result = static_cast<char*>(memoryAlloc(i + (cnt * (newWlen - oldWlen)) + 1));
+    result = static_cast<char*>(malloc(i + (cnt * (newWlen - oldWlen)) + 1));
 
     i = 0;
     while (*source != 0) {
@@ -239,15 +238,15 @@ char* strtmp(const char* format, ...) {
 //     return buf;
 // }
 
-Array(String*) stringSplit(String* string, const char* delim) {
-    Array(String*) result = {};
+std::vector<String*> stringSplit(String* string, const char* delim) {
+    std::vector<String*> result = {};
 
     if (string == nullptr || string->data == nullptr || string->size == 0) {
         return result;
     }
 
     if (delim == nullptr || *delim == '\0') {
-        arrayPut(result, stringDuplicate(string));
+        result.push_back(stringDuplicate(string));
         return result;
     }
 
@@ -257,41 +256,39 @@ Array(String*) stringSplit(String* string, const char* delim) {
 
     while ((delim_ptr = strstr(start_ptr, delim)) != NULL) {
         u32 token_len = delim_ptr - start_ptr;
-        arrayPut(result, static_cast<String*>(stringNew("%.*s", token_len, start_ptr)));
+        result.push_back(static_cast<String*>(stringNew("%.*s", token_len, start_ptr)));
         start_ptr = delim_ptr + delim_len;
     }
 
     u32 last_token_len = string->size - (start_ptr - string->data);
-    arrayPut(result, static_cast<String*>(stringNew("%.*s", last_token_len, start_ptr)));
+    result.push_back(static_cast<String*>(stringNew("%.*s", last_token_len, start_ptr)));
     return result;
 }
 
-void stringArrayDestroy(Array(String*) array) {
-    for (i32 i = 0, si = arraySize(array); i < si; i++) {
+void stringArrayDestroy(std::vector<String*> array) {
+    for (i32 i = 0, si = static_cast<i32>(array.size()); i < si; i++) {
         stringDestroy(array[i]);
     }
-    arrayFree(array);
 }
 
 bool strContains(const char* haystack, const char* needle) {
     return (strstr(haystack, needle) != nullptr);
 }
 
-Array(char*) strSplit(const char* input, const char* delimiter) {
-    Array(char*) result = {};
+std::vector<char*> strSplit(const char* input, const char* delimiter) {
+    std::vector<char*> result = {};
     char* str           = strdup(input);
     for (char* token = strtok(str, delimiter); token; token = strtok(NULL, delimiter)) {
-        arrayPut(result, strdup(token));
+        result.push_back(strdup(token));
     }
     free(str);
     return result;
 }
 
-void strSplitFree(Array(char*) result) {
-    for (u32 i = 0; i < arraySize(result); i++) {
+void strSplitFree(std::vector<char*> result) {
+    for (i32 i = 0; i < static_cast<i32>(result.size()); i++) {
         free(result[i]);
     }
-    arrayFree(result);
 }
 
 const char* strBaseName(const char* path) {
@@ -316,3 +313,4 @@ void strToUpperInPlace(char* s) {
         s++;
     }
 }
+}  // namespace utils

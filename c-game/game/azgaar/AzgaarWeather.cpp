@@ -9,14 +9,15 @@
 
 // ── State ───────────────────────────────────────────────────────────────────
 
+namespace game {
 static const AzgaarWorld* g_world       = nullptr;
 static bool g_initialized               = false;
 static bool g_debug                     = false;
 static AzgaarWeatherCondition g_forced  = AZGAAR_WEATHER_NONE;  // env override
 static bool g_forcedActive              = false;
 
-static VulkanWeatherData g_current;      // live, cross-faded state
-static VulkanWeatherData g_target;       // per-condition target
+static engine::VulkanWeatherData g_current;      // live, cross-faded state
+static engine::VulkanWeatherData g_target;       // per-condition target
 static AzgaarWeatherCondition g_condition = AZGAAR_WEATHER_NONE;
 static bool g_reseeded                   = false;
 
@@ -93,7 +94,7 @@ static AzgaarWeatherCondition sampleCondition(float camX, float camZ) {
 }
 
 static void buildTarget(AzgaarWeatherCondition c, float camX, float camZ) {
-    VulkanWeatherData t = g_target;
+    engine::VulkanWeatherData t = g_target;
 
     // Types / density / box / fade / turbulence per the plan's parameter
     // table.  NONE keeps the type weights (cross-fade-out: old-type
@@ -174,7 +175,7 @@ void azgaarWeatherInit(const AzgaarWorld* world) {
     // Start from the engine's disabled default; the first condition sample
     // (immediately on the first update) builds the target and the 4 s
     // cross-fade brings the field in.
-    g_current = vulkanResourceGetWeatherData();
+    g_current = engine::vulkanResourceGetWeatherData();
     g_current.look[0] = 0.0f;  // fade opacity in
     g_current.look[3] = 0.0f;
     g_current.params[2] = 0.0f;
@@ -183,12 +184,12 @@ void azgaarWeatherInit(const AzgaarWorld* world) {
     g_condition     = AZGAAR_WEATHER_NONE;
     g_reseeded      = false;
     g_lastSampleTime = -1e9;
-    g_lastFrameTime  = timer.timeSinceStart / BILLION;  // nanos -> seconds
+    g_lastFrameTime  = utils::timer.timeSinceStart / BILLION;  // nanos -> seconds
 
-    vulkanResourceSetWeather(&g_current);
+    engine::vulkanResourceSetWeather(&g_current);
     g_initialized = true;
 
-    info("azgaarWeather: init (%s)%s",
+    utils::info("azgaarWeather: init (%s)%s",
          conditionName(g_forced),
          g_forcedActive ? " [forced]" : "");
 }
@@ -199,7 +200,7 @@ void azgaarWeatherUpdate(float camX, float camY, float camZ) {
 
     // timer.timeSinceStart counts NANOseconds; everything below (gust
     // sines, dt clamp, 500 ms sampling) assumes seconds.
-    double now = timer.timeSinceStart / BILLION;
+    double now = utils::timer.timeSinceStart / BILLION;
     float dt = static_cast<float>(now - g_lastFrameTime);
     g_lastFrameTime = now;
     if (dt < 0.0f) dt = 0.0f;
@@ -211,7 +212,7 @@ void azgaarWeatherUpdate(float camX, float camY, float camZ) {
         AzgaarWeatherCondition c = g_forcedActive ? g_forced : sampleCondition(camX, camZ);
         if (c != g_condition || !g_reseeded) {
             if (c != g_condition) {
-                info("azgaarWeather: condition %s -> %s",
+                utils::info("azgaarWeather: condition %s -> %s",
                      conditionName(g_condition), conditionName(c));
             }
             g_condition = c;
@@ -223,7 +224,7 @@ void azgaarWeatherUpdate(float camX, float camY, float camZ) {
             // to their target too — nothing was on screen before, so there is
             // no pop to smooth; the 4 s cross-fade is for condition CHANGES.
             if (!g_reseeded && c != AZGAAR_WEATHER_NONE) {
-                vulkanAzgaarWeatherReseed(&g_target);
+                engine::vulkanAzgaarWeatherReseed(&g_target);
                 memcpy(g_current.types, g_target.types, sizeof(g_current.types));
                 memcpy(g_current.params, g_target.params, sizeof(g_current.params));
                 g_current.look[0] = g_target.look[0];
@@ -243,7 +244,7 @@ void azgaarWeatherUpdate(float camX, float camY, float camZ) {
     updateGust(now);
 
     // Cross-fade every scalar toward its target at 0.25 / s.
-    VulkanWeatherData cur = g_current;
+    engine::VulkanWeatherData cur = g_current;
     for (int i = 0; i < 4; i++) {
         cur.types[i]  = approach(cur.types[i],  g_target.types[i],  dt);
         cur.params[i] = approach(cur.params[i], g_target.params[i], dt);
@@ -270,13 +271,13 @@ void azgaarWeatherUpdate(float camX, float camY, float camZ) {
     }
 
     g_current = cur;
-    vulkanResourceSetWeather(&g_current);
+    engine::vulkanResourceSetWeather(&g_current);
 
     if (g_debug) {
         static double lastLog = -10.0;
         if (now - lastLog >= 2.0) {
             lastLog = now;
-            info("azgaarWeather: cond=%s types=(%.2f %.2f %.2f %.2f) dens=%.2f "
+            utils::info("azgaarWeather: cond=%s types=(%.2f %.2f %.2f %.2f) dens=%.2f "
                  "opac=%.2f wind=(%.2f %.2f @ %.1f m/s)",
                  conditionName(g_condition),
                  static_cast<double>(cur.types[0]), static_cast<double>(cur.types[1]),
@@ -289,14 +290,14 @@ void azgaarWeatherUpdate(float camX, float camY, float camZ) {
 
 void azgaarWeatherDestroy(void) {
     if (!g_initialized) return;
-    VulkanWeatherData defaultWeather = {
+    engine::VulkanWeatherData defaultWeather = {
         .wind   = {1.0f, 0.0f, 3.5f, 0.5f},
         .types  = {0.0f, 0.0f, 0.0f, 0.0f},
         .params = {90.0f, 30.0f, 0.0f, 1.0f},
         .look   = {0.0f, 1.0f, 60.0f, 0.0f},  // disabled
         .tint   = {1.0f, 1.0f, 1.0f, 0.0f},
     };
-    vulkanResourceSetWeather(&defaultWeather);
+    engine::vulkanResourceSetWeather(&defaultWeather);
     g_initialized = false;
     g_world = nullptr;
     g_condition = AZGAAR_WEATHER_NONE;
@@ -314,3 +315,4 @@ bool azgaarWeatherGetWind(float* outDirX, float* outDirZ, float* outSpeed) {
 AzgaarWeatherCondition azgaarWeatherGetCondition(void) {
     return g_condition;
 }
+}  // namespace game

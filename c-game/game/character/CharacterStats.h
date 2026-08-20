@@ -2,6 +2,7 @@
 
 #include "ecs/system/scene/SceneSystem.h"
 
+namespace game {
 enum DamageType {
     DAMAGE_TYPE_PHYSICAL = 0,
     DAMAGE_TYPE_FIRE,
@@ -26,3 +27,4 @@ struct CharacterStats {
 };
 
 REGISTER_COMPONENT(CharacterStats);
+}  // namespace game

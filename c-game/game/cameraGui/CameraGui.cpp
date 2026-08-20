@@ -1,28 +1,17 @@
+#include "CameraGui.h"
 #include "Utils.h"
 #include "ecs/Ecs.h"
 #include "ecs/system/System.h"
 #include "ecs/system/camera/CameraSystem.h"
 #include "ecs/system/transform/TransformComponent.h"
 #include "ecs/system/transform/TransformSystem.h"
-#include "memorymanager/MemoryManager.h"
 #include "rmlui/wrapper/src/crmlui.h"
 
-static void added(void);
-static void update(void);
-static void removed(void);
+namespace game {
 
-System cameraGui = {
-    .name                = "cameraGui",
-    .added               = added,
-    .removed             = removed,
-    .preUpdate           = nullptr,
-    .update              = update,
-    .postUpdate          = nullptr,
-    .cpuElapsedLastFrame = 0.0,
-    .cpuElapsed          = 0.0,
-    .gpuElapsed          = 0.0,
-    .priority            = 0,
-};
+CameraGui cameraGui;
+
+CameraGui::CameraGui() : engine::System("cameraGui") {}
 
 static void* document;
 static void* model;
@@ -30,7 +19,7 @@ static float posX, posY, posZ;
 static float dirX, dirY, dirZ;
 static float rotX, rotY, rotZ, rotW;
 
-static void added(void) {
+void CameraGui::added() {
     document = rmlNewDocument("gui/camera/camera.html");
     model    = rmlCreateModel("camera");
     rmlBindFloat(model, "posX", &posX);
@@ -48,18 +37,18 @@ static void added(void) {
     rmlShowDocument(document);
 }
 
-static void removed(void) {
+void CameraGui::removed() {
     rmlUnloadDocument(document);
     rmlUnloadModel(model);
 }
 
-static void update(void) {
+void CameraGui::update() {
     static double lastShown;
-    double now = millies();
+    double now = utils::millies();
     if (now > lastShown + 50) {  // 50ms
 
-        Entity* camEntity         = cameraGetEntity();
-        WorldTransform* transform = transformGetWorld(camEntity->scene, camEntity->id);
+        engine::Entity* camEntity         = engine::cameraGetEntity();
+        engine::WorldTransform* transform = engine::transformGetWorld(camEntity->scene, camEntity->id);
 
         posX = transform->pos[0];
         posY = transform->pos[1];
@@ -81,3 +70,4 @@ static void update(void) {
         rmlUpdateDirtyAll(model);
     }
 }
+}  // namespace game

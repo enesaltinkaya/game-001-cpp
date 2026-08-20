@@ -10,6 +10,7 @@
 #include "logger/Logger.h"
 #include "timer/Timer.h"
 
+namespace engine {
 static const char* vulkanToStringMessageSeverity(
     VkDebugUtilsMessageSeverityFlagBitsEXT s);
 static const char* vulkanToStringMessageType(VkDebugUtilsMessageTypeFlagsEXT s);
@@ -20,7 +21,7 @@ unsigned int vulkanValidationLog(
     const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData,
     void* _) {
     if (messageSeverity == VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT) {
-        debug("%llu %s", timer.frameCounter, pCallbackData->pMessage);
+        utils::debug("%llu %s", utils::timer.frameCounter, pCallbackData->pMessage);
         return VK_FALSE;
     }
 
@@ -31,15 +32,15 @@ unsigned int vulkanValidationLog(
     // unused vertex attribute locations) fire at pipeline creation on every
     // run and are informational only. Warnings are logged, not aborted.
     if (messageSeverity != VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT) {
-        warn("%s - %s: %s [frame %llu]", severity, type, pCallbackData->pMessage, timer.frameCounter);
+        utils::warn("%s - %s: %s [frame %llu]", severity, type, pCallbackData->pMessage, utils::timer.frameCounter);
         return VK_FALSE;
     }
 
-    terminate("---------\n%s - %s\n%s\nframeCounter: %llu\n",
+    utils::terminate("---------\n%s - %s\n%s\nframeCounter: %llu\n",
               severity,
               type,
               pCallbackData->pMessage,
-              timer.frameCounter);
+              utils::timer.frameCounter);
     return VK_FALSE;
 }
 
@@ -115,7 +116,7 @@ VkFormat vulkanFindSupportedFormat(const VkFormat* candidates,
         }
     }
 
-    terminate("Failed to find supported depth format!");
+    utils::terminate("Failed to find supported depth format!");
     return VK_FORMAT_UNDEFINED;
 }
 
@@ -129,7 +130,7 @@ VkFormat vulkanFindSupportedFormat(const VkFormat* candidates,
 void vulkanScreenshotRecord(VulkanImage* swapImg, VulkanBuffer* outReadback) {
     *outReadback = VulkanBuffer{};
     if (!swapImg || !swapImg->img) {
-        warn("vulkanScreenshotRecord: no swapchain image available");
+        utils::warn("vulkanScreenshotRecord: no swapchain image available");
         return;
     }
 
@@ -153,7 +154,7 @@ void vulkanScreenshotRecord(VulkanImage* swapImg, VulkanBuffer* outReadback) {
 void vulkanScreenshotWriteJpg(const VulkanBuffer* readback, const VulkanImage* swapImg,
                               const char* path) {
     if (!readback || !readback->buf) {
-        warn("vulkanScreenshotWriteJpg: no readback buffer");
+        utils::warn("vulkanScreenshotWriteJpg: no readback buffer");
         return;
     }
 
@@ -169,9 +170,9 @@ void vulkanScreenshotWriteJpg(const VulkanBuffer* readback, const VulkanImage* s
     }
 
     if (stbi_write_jpg(path, (int)w, (int)h, 4, pixels, 80)) {
-        info("vulkanScreenshot: saved %s (%ux%u)", path, w, h);
+        utils::info("vulkanScreenshot: saved %s (%ux%u)", path, w, h);
     } else {
-        warn("vulkanScreenshot: failed to write %s", path);
+        utils::warn("vulkanScreenshot: failed to write %s", path);
     }
 }
 
@@ -219,7 +220,7 @@ static int formatChannelCount(VkFormat fmt) {
 
 void vulkanSaveImage(VulkanImage* img, const char* path) {
     if (!img || !img->img) {
-        warn("vulkanSaveImage: null image");
+        utils::warn("vulkanSaveImage: null image");
         return;
     }
 
@@ -260,7 +261,7 @@ void vulkanSaveImage(VulkanImage* img, const char* path) {
             }
         }
 
-        info("vulkanSaveImage: float range ch0=[%.4f,%.4f] ch1=[%.4f,%.4f] ch2=[%.4f,%.4f] ch3=[%.4f,%.4f]",
+        utils::info("vulkanSaveImage: float range ch0=[%.4f,%.4f] ch1=[%.4f,%.4f] ch2=[%.4f,%.4f] ch3=[%.4f,%.4f]",
              minV[0], maxV[0], minV[1], maxV[1], minV[2], maxV[2], minV[3], maxV[3]);
 
         // Remap each channel: [min, max] -> [0, 255]
@@ -289,9 +290,9 @@ void vulkanSaveImage(VulkanImage* img, const char* path) {
     }
 
     if (ok) {
-        info("vulkanSaveImage: saved %s (%ux%u, fmt=%d, ch=%d)", path, w, h, img->format, channels);
+        utils::info("vulkanSaveImage: saved %s (%ux%u, fmt=%d, ch=%d)", path, w, h, img->format, channels);
     } else {
-        warn("vulkanSaveImage: failed to write %s", path);
+        utils::warn("vulkanSaveImage: failed to write %s", path);
     }
 
     vulkanDestroyBuffer(&readback, nullptr);
@@ -336,8 +337,9 @@ static void doCapture(void* pRenderDoc) {
 void captureFrameRenderDoc(void) {
     RENDERDOC_API_1_1_2* renderDoc  = static_cast<RENDERDOC_API_1_1_2*>(initRenderDocAPI());
     if (renderDoc) {
-        futureTaskAdd(1000, doCapture, renderDoc);
+        utils::futureTaskAdd(1000, doCapture, renderDoc);
     }
 }
 #endif
 #endif
+}  // namespace engine

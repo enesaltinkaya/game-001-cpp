@@ -1,40 +1,32 @@
+#include "Credits.h"
 #include "ecs/system/System.h"
 #include "ecs/system/lua/LuaSystem.h"
 #include "renderer/gui/rmlui/GuiManagerRmlUi.h"
 #include "rmlui/wrapper/src/crmlui.h"
-static void added(void);
-static void removed(void);
+namespace game {
 
-System creditsGui = {
-    .name                = "creditsGui",
-    .added               = added,
-    .removed             = removed,
-    .preUpdate           = nullptr,
-    .update              = nullptr,
-    .postUpdate          = nullptr,
-    .cpuElapsedLastFrame = 0.0,
-    .cpuElapsed          = 0.0,
-    .gpuElapsed          = 0.0,
-    .priority            = 0,
-};
+CreditsGui creditsGui;
+
+CreditsGui::CreditsGui() : engine::System("creditsGui") {}
 
 static void* document;
 
 static int creditsClose(void* _);
 
-void added(void) {
-    luaRegisterFunction("creditsClose", creditsClose);
+void CreditsGui::added() {
+    engine::luaRegisterFunction("creditsClose", creditsClose);
     document = rmlNewDocument("gui/credits/credits.html");
     rmlLoadDocument(document);
     rmlShowDocument(document);
 }
 
-void removed(void) {
+void CreditsGui::removed() {
     rmlUnloadDocument(document);
     document = nullptr;
 }
 
 int creditsClose(void* _) {
-    guiManagerRemoveGuiNextFrame(&creditsGui);
+    engine::guiManagerRemoveGuiNextFrame(&creditsGui);
     return 0;
 }
+}  // namespace game

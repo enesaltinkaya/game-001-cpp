@@ -27,6 +27,7 @@
 // the terrain mesh is built from: natural + fBm detail + D8 plateau).  Each
 // building's Y is sampled through it so houses sit flush with the ground
 // instead of floating.
+namespace game {
 void azgaarSettlementsInit(const AzgaarWorld* world,
                             float (*groundAt)(void* userData, float wx, float wz),
                             void* groundUserData);
@@ -40,3 +41,4 @@ float azgaarSettlementsPlateauY(const AzgaarWorld* world, float wx, float wz, fl
 // The closest settlement whose footprint (radiusM + 30 m) contains (wx, wz),
 // or nullptr when none does.  Used by the zone banner.
 const AzgaarSettlement* azgaarSettlementsNearest(const AzgaarWorld* world, float wx, float wz);
+}  // namespace game

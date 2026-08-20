@@ -20,6 +20,7 @@
 //   azgaarWeatherUpdate(camX, camY, camZ) — every frame with the camera pos
 //   azgaarWeatherDestroy()                — on teardown
 
+namespace game {
 enum AzgaarWeatherCondition {
     AZGAAR_WEATHER_NONE   = 0,
     AZGAAR_WEATHER_SNOW   = 1,
@@ -40,3 +41,4 @@ bool azgaarWeatherGetWind(float* outDirX, float* outDirZ, float* outSpeed);
 
 // Debug (ENGINE_AZGAAR_WEATHER_DEBUG): condition + cross-fade state.
 AzgaarWeatherCondition azgaarWeatherGetCondition(void);
+}  // namespace game

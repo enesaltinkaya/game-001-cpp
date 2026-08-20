@@ -3,7 +3,6 @@
 #include <stdio.h>
 #include <time.h>
 #include "Utils.h"
-#include "memorymanager/MemoryManager.h"
 #include "platform/Platform.h"
 #include "logger/Logger.h"
 #include "string/String.h"
@@ -16,6 +15,7 @@
 
 #define MAX_LOG_LINE 1024
 
+namespace utils {
 static struct {
     LogLevel min_level;
     FILE* file;
@@ -110,7 +110,6 @@ void loggerInit(void) {
     info("logger: initializing");
     debug("logger: app path  %s", platform.cwd);
     debug("logger: log path  %s", path);
-    debug("logger: allocator %s", getMemoryAllocType() == ALLOCATOR_SYSTEM ? "System" : "Buddy");
 }
 
 void loggerDestroy(void) {
@@ -181,3 +180,4 @@ void infoRml(const char* message) {
 void warnRml(const char* message) {
     warn(message);
 }
+}  // namespace utils

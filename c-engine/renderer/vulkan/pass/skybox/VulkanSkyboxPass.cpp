@@ -1,4 +1,5 @@
 #include "VulkanSkyboxPass.h"
+#include "VulkanSkyboxPass.h"
 #include "ecs/system/camera/CameraComponent.h"
 #include "ecs/system/camera/CameraSystem.h"
 #include "renderer/Renderer.h"
@@ -8,27 +9,14 @@
 #include "renderer/vulkan/resources/VulkanFrameResources.h"
 #include "renderer/vulkan/swapchain/VulkanSwapchain.h"
 
-static void added(void);
-static void preUpdate(void);
-static void update(void);
-static void postUpdate(void);
-static void removed(void);
+namespace engine {
 
 static double elapsedCPU;
 static double elapsedGPU;
 
-System vulkanSkyboxPass = {
-    .name                = "skybox",
-    .added               = added,
-    .removed             = removed,
-    .preUpdate           = preUpdate,
-    .update              = update,
-    .postUpdate          = postUpdate,
-    .cpuElapsedLastFrame = 0.0,
-    .cpuElapsed          = 0.0,
-    .gpuElapsed          = 0.0,
-    .priority            = 0,
-};
+VulkanSkyboxPass vulkanSkyboxPass;
+
+VulkanSkyboxPass::VulkanSkyboxPass() : System("skybox") {}
 
 static VulkanPipe skyboxPipe;
 
@@ -55,12 +43,12 @@ static void swapchainCreated(void*) {
         .noCull                 = 1);
 }
 
-static void added(void) {
-    signalSubscribe("swapchainCreated", swapchainCreated);
+void VulkanSkyboxPass::added() {
+    utils::signalSubscribe("swapchainCreated", swapchainCreated);
     swapchainCreated(NULL);
 }
 
-static void preUpdate(void) {
+void VulkanSkyboxPass::preUpdate() {
     if (vulkan.skipFrame) return;
 
     /* The skybox appends camera-motion velocity to the velocity buffer, so
@@ -75,7 +63,7 @@ static void preUpdate(void) {
     vulkanResetProfile(vulkan.currentCmd, &skyboxPipe.profile, 0);
 }
 
-static void update(void) {
+void VulkanSkyboxPass::update() {
     if (vulkan.skipFrame) return;
 
     VulkanCommand* cmd = vulkan.currentCmd;
@@ -116,11 +104,12 @@ static void update(void) {
     elapsedGPU = skyboxPipe.profile.elapsed;
 }
 
-static void postUpdate(void) {
+void VulkanSkyboxPass::postUpdate() {
     vulkanSkyboxPass.cpuElapsed = elapsedCPU;
     vulkanSkyboxPass.gpuElapsed = elapsedGPU;
 }
 
-static void removed(void) {
+void VulkanSkyboxPass::removed() {
     vulkanDestroyPipe(&skyboxPipe);
 }
+}  // namespace engine

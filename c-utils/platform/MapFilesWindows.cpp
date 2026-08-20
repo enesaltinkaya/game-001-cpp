@@ -1,11 +1,11 @@
-#include "memorymanager/MemoryManager.h" // IWYU pragma: keep
 #include "platform/Platform.h" // IWYU pragma: keep
 
 #ifdef _WIN32
 #include <windows.h>
 
+namespace utils {
 MappedFile* map_file(const char* path, u64 size, bool create_and_resize) {
-    MappedFile* out_map = static_cast<MappedFile*>(memoryAlloc(sizeof *out_map));
+    MappedFile* out_map = new MappedFile{};
 
     // --- WINDOWS IMPLEMENTATION ---
     DWORD access     = GENERIC_READ;
@@ -72,6 +72,7 @@ void unmap_file(MappedFile* map) {
 
     map->data = nullptr;
     map->size = 0;
-    memoryFree(map);
+    delete map;
 }
+}  // namespace utils
 #endif

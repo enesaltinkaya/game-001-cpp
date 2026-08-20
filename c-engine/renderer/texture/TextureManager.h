@@ -1,8 +1,9 @@
 #pragma once
 
+namespace engine {
 struct Texture {
-    Image image;
-    String name;
+    utils::Image image;
+    utils::String name;
     void* backendImg;
     int id;  // also poolIndex into global vulkan texture array
     bool nearest;
@@ -18,3 +19,4 @@ Texture* createTextureFromData(const char* name, const u8* data, u64 size, const
 
 void textureManagerInit();
 void textureManagerDestroy();
+}  // namespace engine

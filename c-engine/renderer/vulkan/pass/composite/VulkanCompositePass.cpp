@@ -1,4 +1,5 @@
 #include "VulkanCompositePass.h"
+#include "VulkanCompositePass.h"
 #include "renderer/vulkan/pass/azgaar_weather/VulkanAzgaarWeatherPass.h"
 #include "renderer/vulkan/pass/volumetric/VulkanVolumetricPass.h"
 #include "ecs/system/System.h"
@@ -8,28 +9,15 @@
 #include "renderer/vulkan/resources/VulkanFrameResources.h"
 #include "renderer/vulkan/resources/VulkanResourceManager.h"
 
-static void added(void);
-static void preUpdate(void);
-static void update(void);
-static void postUpdate(void);
-static void removed(void);
+namespace engine {
 
 static VulkanPipe pipeline;
 static double     elapsedCPU;
 static double     elapsedGPU;
 
-System vulkanCompositePass = {
-    .name                = "composite",
-    .added               = added,
-    .removed             = removed,
-    .preUpdate           = preUpdate,
-    .update              = update,
-    .postUpdate          = postUpdate,
-    .cpuElapsedLastFrame = 0.0,
-    .cpuElapsed          = 0.0,
-    .gpuElapsed          = 0.0,
-    .priority            = 0,
-};
+VulkanCompositePass vulkanCompositePass;
+
+VulkanCompositePass::VulkanCompositePass() : System("composite") {}
 
 typedef struct CompositePushConstants {
     u32 sceneColorIndex;
@@ -44,22 +32,22 @@ typedef struct CompositePushConstants {
     u32 height;
 } CompositePushConstants;
 
-static void added(void) {
+void VulkanCompositePass::added() {
     pipeline = vulkanCreatePipe(
         .name = "composite",
         .comp = "shaders/pass/composite/spv/composite.comp.spv");
 
 }
 
-static void preUpdate(void) {
+void VulkanCompositePass::preUpdate() {
     vulkanResetProfile(vulkan.currentCmd, &pipeline.profile, 0);
 }
 
-static void update(void) {
-    elapsedCPU = nanos();
+void VulkanCompositePass::update() {
+    elapsedCPU = utils::nanos();
 
     if (vulkan.skipFrame) {
-        elapsedCPU = nanos() - elapsedCPU;
+        elapsedCPU = utils::nanos() - elapsedCPU;
         return;
     }
 
@@ -76,7 +64,7 @@ static void update(void) {
      * fog from erasing particles that float in front of fogged geometry. */
     VulkanImage   *weatherMask = vulkanAzgaarWeatherPassGetMask();
     if (!sceneColor || !depth || !reflColor || !normals || !material || !composite) {
-        elapsedCPU = nanos() - elapsedCPU;
+        elapsedCPU = utils::nanos() - elapsedCPU;
         return;
     }
 
@@ -118,14 +106,15 @@ static void update(void) {
     vulkanTransition(cmd, composite, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
 
     elapsedGPU = pipeline.profile.elapsed;
-    elapsedCPU = nanos() - elapsedCPU;
+    elapsedCPU = utils::nanos() - elapsedCPU;
 }
 
-static void postUpdate(void) {
+void VulkanCompositePass::postUpdate() {
     vulkanCompositePass.cpuElapsed = elapsedCPU;
     vulkanCompositePass.gpuElapsed = elapsedGPU;
 }
 
-static void removed(void) {
+void VulkanCompositePass::removed() {
     vulkanDestroyPipe(&pipeline);
 }
+}  // namespace engine

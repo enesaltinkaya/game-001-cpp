@@ -22,7 +22,17 @@
  * was removed in the heightmap cutover).
  */
 
-extern struct System vulkanHeightmapTerrainPass;
+namespace engine {
+class VulkanHeightmapTerrainPass : public System {
+public:
+    VulkanHeightmapTerrainPass();
+    void added() override;
+    void removed() override;
+    void preUpdate() override;
+    void update() override;
+};
+
+extern VulkanHeightmapTerrainPass vulkanHeightmapTerrainPass;
 
 bool vulkanHeightmapTerrainIsWireFrameEnabled(void);
 void vulkanHeightmapTerrainSetWireFrameEnabled(bool enabled);
@@ -35,3 +45,4 @@ void vulkanHeightmapTerrainSetDebugHeightRampEnabled(bool enabled);
 // after it has begun its render pass.  No-op unless an active HeightmapTerrain
 // exists with uploaded tiles.
 void vulkanHeightmapTerrainDrawPrepass(void);
+}  // namespace engine

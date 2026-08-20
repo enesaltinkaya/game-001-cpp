@@ -1,10 +1,16 @@
 #pragma once
+#include "ecs/system/System.h"
 
+#include <vector>
 #include "shared/InputEventShared.h"
 
+struct GLFWwindow;
+struct SDL_Window;
+
+namespace engine {
 struct Window {
-    struct GLFWwindow* glfwWindowHandle;
-    struct SDL_Window* sdlWindowHandle;
+    ::GLFWwindow* glfwWindowHandle;
+    ::SDL_Window* sdlWindowHandle;
 
     int width;
     int height;
@@ -20,43 +26,52 @@ struct Window {
 
 struct Input {
     // keyboard
-    i32 key;
-    i32 scancode;
-    i32 action;
-    i32 mods;
-    i32 pressed, released;
-    u32 character;
-    char repeating[KEY_COUNT];
-    char ctrl, shift, alt;
+    i32 key = 0;
+    i32 scancode = 0;
+    i32 action = 0;
+    i32 mods = 0;
+    i32 pressed = 0, released = 0;
+    u32 character = 0;
+    char repeating[KEY_COUNT] = {};
+    char ctrl = 0, shift = 0, alt = 0;
 
     // mouse
-    float lastX;
-    float lastY;
-    float deltaX;
-    float deltaY;
-    float xpos;
-    float ypos;
-    i32 mouseButton;
-    i32 mouseAction;
-    i32 mouseMods;
-    float scrollY;
-    float scrollX;
+    float lastX = 0.0f;
+    float lastY = 0.0f;
+    float deltaX = 0.0f;
+    float deltaY = 0.0f;
+    float xpos = 0.0f;
+    float ypos = 0.0f;
+    i32 mouseButton = 0;
+    i32 mouseAction = 0;
+    i32 mouseMods = 0;
+    float scrollY = 0.0f;
+    float scrollX = 0.0f;
 
     // gamepad
-    u32 gamepadButtonPressed[64];
-    u32 gamepadButtonReleased[64];
+    u32 gamepadButtonPressed[64] = {};
+    u32 gamepadButtonReleased[64] = {};
 
-    char focused;
-    char skip;
+    char focused = 0;
+    char skip = 0;
 
-    InputEvent* events;  // stb_array
+    std::vector<InputEvent> events = {};
 
 };
 
 extern struct Window window;
 extern struct Input input;
 
-extern struct System windowSystem;
+class WindowSystem : public System {
+public:
+    WindowSystem();
+    void added() override;
+    void removed() override;
+    void preUpdate() override;
+    void postUpdate() override;
+};
+
+extern WindowSystem windowSystem;
 
 void windowSystemHide(void);
 void windowSystemShow(void);
@@ -89,3 +104,4 @@ SetCursorFn windowSystemGetSetCursorFn(void);
 
 void inputReset(void);
 char inputShouldProcess(void);
+}  // namespace engine

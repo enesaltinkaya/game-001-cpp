@@ -7,6 +7,9 @@
 #include "renderer/vulkan/resources/VulkanResourceManager.h"
 #include "timer/Timer.h"
 
+namespace engine {
+static vec3 Y_UP   = {0.0f, 1.0f, 0.0f};
+static vec3 X_AXIS = {1.0f, 0.0f, 0.0f};
 static void checkKeyboardMovement(u32 cameraEntity);
 static void checkMouseMovement(u32 cameraEntity);
 static void stutterTest(u32 cameraEntity);
@@ -221,7 +224,7 @@ void flyingCameraPostUpdate(void) {
     if (!flyingCameraGameplayLoaded) return;
 
     static double lastSave;
-    double now = millies();
+    double now = utils::millies();
     if (now > lastSave + 1000) {
         lastSave = now;
         flyingCameraSaveStatus(flying);
@@ -231,10 +234,10 @@ void flyingCameraPostUpdate(void) {
 static void printSpeed(Transform* transform) {
     static double lastPrinted;
     static vec3 last;
-    double now = millies();
+    double now = utils::millies();
     if (now > lastPrinted + 1000) {
         float distance = glm_vec3_distance(transform->pos, last);
-        if (distance) info("change in a second %.2lf", distance);
+        if (distance) utils::info("change in a second %.2lf", distance);
         lastPrinted = now;
         glm_vec3_copy(transform->pos, last);
     }
@@ -247,7 +250,7 @@ void checkKeyboardMovement(u32 cameraEntity) {
             flySpeedMultiplier = 50.F;
         }
         if (flySpeedMultiplier < 350.F) {
-            flySpeedMultiplier += timer.dt * 10.F;
+            flySpeedMultiplier += utils::timer.dt * 10.F;
         }
     } else {
         flySpeedMultiplier = 5.0F;
@@ -267,27 +270,27 @@ void checkKeyboardMovement(u32 cameraEntity) {
     transformGetDirection(scene, cameraEntity, direction);
 
     if (input.repeating[KEY_A]) {
-        glm_vec3_cross(direction, GLM_YUP, temp);
-        glm_vec3_muladds(temp, -flySpeed * flySpeedMultiplier * timer.dt, transform->pos);
+        glm_vec3_cross(direction, Y_UP, temp);
+        glm_vec3_muladds(temp, -flySpeed * flySpeedMultiplier * utils::timer.dt, transform->pos);
     }
 
     if (input.repeating[KEY_W]) {
-        glm_vec3_muladds(direction, flySpeed * flySpeedMultiplier * timer.dt, transform->pos);
+        glm_vec3_muladds(direction, flySpeed * flySpeedMultiplier * utils::timer.dt, transform->pos);
     }
 
     if (input.repeating[KEY_S]) {
-        glm_vec3_muladds(direction, -flySpeed * flySpeedMultiplier * timer.dt, transform->pos);
+        glm_vec3_muladds(direction, -flySpeed * flySpeedMultiplier * utils::timer.dt, transform->pos);
     }
 
     if (input.repeating[KEY_D]) {
-        glm_vec3_cross(direction, GLM_YUP, temp);
-        glm_vec3_muladds(temp, flySpeed * flySpeedMultiplier * timer.dt, transform->pos);
+        glm_vec3_cross(direction, Y_UP, temp);
+        glm_vec3_muladds(temp, flySpeed * flySpeedMultiplier * utils::timer.dt, transform->pos);
     }
     if (input.repeating[KEY_SPACE]) {
-        transform->pos[1] += flySpeed * flySpeedMultiplier * timer.dt;
+        transform->pos[1] += flySpeed * flySpeedMultiplier * utils::timer.dt;
     }
     if (input.repeating[KEY_X]) {
-        transform->pos[1] -= flySpeed * flySpeedMultiplier * timer.dt;
+        transform->pos[1] -= flySpeed * flySpeedMultiplier * utils::timer.dt;
     }
 }
 
@@ -308,7 +311,7 @@ void checkMouseMovement(u32 cameraEntity) {
     auto camera    = getComponent(ecs.defaultScene, Camera, cameraEntity);
 
     if (!transform) {
-        terminate("camera should have a transform kek");
+        utils::terminate("camera should have a transform kek");
         return;
     }
 
@@ -323,8 +326,8 @@ void checkMouseMovement(u32 cameraEntity) {
         return;
     }
 
-    float yaw_delta_rad   = glm_rad(-mouse_dx * sensitivity * timer.dt);
-    float pitch_delta_rad = glm_rad(-mouse_dy * sensitivity * timer.dt);
+    float yaw_delta_rad   = glm_rad(-mouse_dx * sensitivity * utils::timer.dt);
+    float pitch_delta_rad = glm_rad(-mouse_dy * sensitivity * utils::timer.dt);
 
     camera->yaw += yaw_delta_rad;
     camera->pitch += pitch_delta_rad;
@@ -334,8 +337,8 @@ void checkMouseMovement(u32 cameraEntity) {
 
     versor q_pitch = {};
     versor q_yaw   = {};
-    glm_quatv(q_pitch, camera->pitch, (vec3){1.0F, 0.0F, 0.0F});
-    glm_quatv(q_yaw, camera->yaw, (vec3){0.0F, 1.0F, 0.0F});
+    glm_quatv(q_pitch, camera->pitch, X_AXIS);
+    glm_quatv(q_yaw, camera->yaw, Y_UP);
     glm_quat_mul(q_yaw, q_pitch, transform->rot);
     glm_quat_normalize(transform->rot);
 }
@@ -426,7 +429,7 @@ void toggleStutterTest(u32 cameraEntity) {
             glm_vec3_copy(touch, stutterTestCircleAround);
 
             stutterTestDistance = glm_vec3_distance(stutterTestCircleAround, transform->pos);
-            info("yup you touch my tralala %f %f %f dist:%f",
+            utils::info("yup you touch my tralala %f %f %f dist:%f",
                  touch[0],
                  touch[1],
                  touch[2],
@@ -443,7 +446,7 @@ void toggleStutterTest(u32 cameraEntity) {
 
 void look_at(vec3 objectLocation, vec3 target, versor objectRotationOut) {
     mat4 lookAtMatrix;
-    glm_lookat(objectLocation, target, GLM_YUP, lookAtMatrix);
+    glm_lookat(objectLocation, target, Y_UP, lookAtMatrix);
     glm_mat4_inv(lookAtMatrix, lookAtMatrix);
     glm_mat4_quat(lookAtMatrix, objectRotationOut);
 }
@@ -451,7 +454,7 @@ void look_at(vec3 objectLocation, vec3 target, versor objectRotationOut) {
 void shimmerTest(u32 cameraEntity) {
     auto transform = getComponent(ecs.defaultScene, Transform, cameraEntity);
 
-    shimmerTestTimer += timer.dt;
+    shimmerTestTimer += utils::timer.dt;
 
     // Oscillation period: 4 seconds total
     // 0-2s: move forward (0 -> 1)
@@ -482,7 +485,7 @@ void stutterTest(u32 cameraEntity) {
     if (input.repeating[KEY_W]) {
         vec3 direction;
         transformGetDirection(scene, cameraEntity, direction);
-        glm_vec3_scale(direction, timer.dt / 10, direction);
+        glm_vec3_scale(direction, utils::timer.dt / 10, direction);
         glm_vec3_add(transform->pos, direction, transform->pos);
 
         vec3 temp1;
@@ -500,7 +503,7 @@ void stutterTest(u32 cameraEntity) {
         stutterTestDistance += 5.F;
     }
 
-    stutterTestAngle += timer.dt * stutterTestSpeed;
+    stutterTestAngle += utils::timer.dt * stutterTestSpeed;
     if (stutterTestAngle > 2.0F * M_PI) {
         stutterTestAngle -= 2.0F * M_PI;
     }
@@ -509,7 +512,7 @@ void stutterTest(u32 cameraEntity) {
     transform->pos[2] = stutterTestCircleAround[2] + cosf(stutterTestAngle) * stutterTestDistance;
 
     mat4 lookAtMatrix;
-    glm_lookat(transform->pos, stutterTestCircleAround, GLM_YUP, lookAtMatrix);
+    glm_lookat(transform->pos, stutterTestCircleAround, Y_UP, lookAtMatrix);
     glm_mat4_quat(lookAtMatrix, transform->rot);
     glm_quat_inv(transform->rot, transform->rot);
 }
@@ -519,8 +522,8 @@ char flyingCameraIsActive(void) {
 }
 
 static void flyingCameraDbInit(void) {
-    if (!sqliteTableExists("flying_camera")) {
-        sqliteExecute(
+    if (!utils::sqliteTableExists("flying_camera")) {
+        utils::sqliteExecute(
             "CREATE TABLE IF NOT EXISTS flying_camera ("
             "name TEXT PRIMARY KEY, "
             "data BLOB);");
@@ -561,7 +564,7 @@ void flyingCameraLoadForGameplay(void) {
         windowSystemHideCursor();
         float dummyX, dummyY;
         windowSystemGetRelativeMouseDelta(&dummyX, &dummyY);
-        info("flying camera: restored active state for gameplay");
+        utils::info("flying camera: restored active state for gameplay");
     } else if (wasFlying) {
         windowSystemShowCursor();
     }
@@ -572,11 +575,11 @@ static void flyingCameraSaveStatus(char saveTransform) {
         .active = flying ? 1 : 0,
     };
 
-    void* stmt = sqliteStatement("REPLACE INTO flying_camera (name, data) VALUES (?, ?);");
-    sqliteBindText(stmt, 1, "status");
-    sqliteBindBlob(stmt, 2, &data, sizeof(data));
-    sqliteStep(stmt);
-    sqliteFinalize(stmt);
+    void* stmt = utils::sqliteStatement("REPLACE INTO flying_camera (name, data) VALUES (?, ?);");
+    utils::sqliteBindText(stmt, 1, "status");
+    utils::sqliteBindBlob(stmt, 2, &data, sizeof(data));
+    utils::sqliteStep(stmt);
+    utils::sqliteFinalize(stmt);
 
     if (saveTransform && scene && flyingCameraEntity) {
         Transform* transform = getComponent(scene, Transform, flyingCameraEntity);
@@ -587,13 +590,13 @@ static void flyingCameraSaveStatus(char saveTransform) {
 static char flyingCameraLoadStatus(char* activeOut) {
     if (!activeOut) return 0;
 
-    void* stmt  = sqliteStatement("SELECT data, length(data) FROM flying_camera WHERE name = ?;");
+    void* stmt  = utils::sqliteStatement("SELECT data, length(data) FROM flying_camera WHERE name = ?;");
     char result = 0;
-    sqliteBindText(stmt, 1, "status");
-    if (sqliteStep(stmt)) {
+    utils::sqliteBindText(stmt, 1, "status");
+    if (utils::sqliteStep(stmt)) {
         FlyingCameraDb data = {};
-        void* blob          = sqliteGetBlob(stmt, 0);
-        int blobSize        = sqliteGetInt(stmt, 1);
+        void* blob          = utils::sqliteGetBlob(stmt, 0);
+        int blobSize        = utils::sqliteGetInt(stmt, 1);
         if (blob && blobSize > 0) {
             size_t copySize = (size_t)blobSize;
             if (copySize > sizeof(data)) copySize = sizeof(data);
@@ -602,7 +605,7 @@ static char flyingCameraLoadStatus(char* activeOut) {
             result     = 1;
         }
     }
-    sqliteFinalize(stmt);
+    utils::sqliteFinalize(stmt);
     return result;
 }
 
@@ -618,3 +621,4 @@ void saveOriginalRT(u32 cameraEntity) {
         originalPitch = camera->pitch;
     }
 }
+}  // namespace engine

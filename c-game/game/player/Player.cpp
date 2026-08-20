@@ -1,4 +1,5 @@
 #include "Player.h"
+#include "Player.h"
 #include <algorithm>
 #include "events/Events.h"
 #include "azgaar/AzgaarWater.h"
@@ -68,38 +69,25 @@
 #include "combat/AttackHitbox.h"
 #include "character/CharacterStats.h"
 #include "json/Json.h"
-#include "container/Map.h"
+#include <unordered_map>
 #include "timer/Timer.h"
 
-static void added(void);
-static void removed(void);
-static void preUpdate(void);
-static void update(void);
-static void postUpdate(void);
+namespace game {
 static void playerMovementTopDownOnly(void);
-static void playerLightCreate(Entity* playerEntity);
+static void playerLightCreate(engine::Entity* playerEntity);
 static void playerLightUpdate(void);
 
-System playerSystem = {
-    .name                = "player",
-    .added               = added,
-    .removed             = removed,
-    .preUpdate           = preUpdate,
-    .update              = update,
-    .postUpdate          = postUpdate,
-    .cpuElapsedLastFrame = 0.0,
-    .cpuElapsed          = 0.0,
-    .gpuElapsed          = 0.0,
-    .priority            = 0,
-};
+PlayerSystem playerSystem;
 
-static Scene* playerScene;
+PlayerSystem::PlayerSystem() : engine::System("player") {}
+
+static engine::Scene* playerScene;
 
 static vec3 Y_UP = {0.0f, 1.0f, 0.0f};
 static u32 playerEntityId;
 static bool playerReady;
 
-Scene* getPlayerScene(void) {
+engine::Scene* getPlayerScene(void) {
     return playerScene;
 }
 
@@ -116,7 +104,7 @@ bool playerGetFacingYaw(float* yaw) {
 bool playerGetRotation(versor outRot) {
     if (!outRot || !playerReady || !playerScene) return false;
 
-    Transform* transform = getComponent(playerScene, Transform, playerEntityId);
+    engine::Transform* transform = getComponent(playerScene, engine::Transform, playerEntityId);
     if (!transform) return false;
 
     glm_quat_copy(transform->rot, outRot);
@@ -152,7 +140,7 @@ bool playerGetStats(float* hp, float* maxHp, float* mana, float* maxMana, u32* l
 bool playerGetPosition(vec3 outPos) {
     if (!outPos || !playerReady || !playerScene) return false;
 
-    Transform* transform = getComponent(playerScene, Transform, playerEntityId);
+    engine::Transform* transform = getComponent(playerScene, engine::Transform, playerEntityId);
     if (!transform) return false;
 
     outPos[0] = transform->pos[0];
@@ -164,11 +152,11 @@ bool playerGetPosition(vec3 outPos) {
 bool playerTeleportTo(vec3 pos) {
     if (!pos || !playerReady || !playerScene) return false;
 
-    Transform* transform = getComponent(playerScene, Transform, playerEntityId);
+    engine::Transform* transform = getComponent(playerScene, engine::Transform, playerEntityId);
     Player* player       = getComponent(playerScene, Player, playerEntityId);
     if (!transform || !player) return false;
 
-    transformActivateAndSaveLastSubtree(playerScene, playerEntityId);
+    engine::transformActivateAndSaveLastSubtree(playerScene, playerEntityId);
     glm_vec3_copy(pos, transform->pos);
 
     if (player->character) joltCharacterSetPosition(player->character, transform->pos);
@@ -184,19 +172,19 @@ void playerGetSpawn(vec3 outPos) {
     outPos[1] = 511.55f;
     outPos[2] = 1691.46f;
 }
-static Sound* kickSound;
-static Sound* bicycleKickSound;
-static Sound* jumpSound;
-static Sound* stepSound;
-static Sound* hitSound;
+static engine::Sound* kickSound;
+static engine::Sound* bicycleKickSound;
+static engine::Sound* jumpSound;
+static engine::Sound* stepSound;
+static engine::Sound* hitSound;
 static const char* castingAnim;                   // animation name of the active ability
 static int castingRepeatsLeft;                    // how many more times to replay the animation
-static Entity* kickHitboxEntity;                  // hitbox entity for kick damage
-static Entity* kickLightEntity;                   // bone entity carrying the kick point light
+static engine::Entity* kickHitboxEntity;                  // hitbox entity for kick damage
+static engine::Entity* kickLightEntity;                   // bone entity carrying the kick point light
 static float kickLightFade;                       // >0 while fading out (counts down to 0)
 static const float kickLightFadeDuration = 2.0f;  // seconds
 static const float kickLightIntensity    = 15.0f;
-static Entity* playerLightEntity;                // soft point light following the player
+static engine::Entity* playerLightEntity;                // soft point light following the player
 static const float playerLightHeight    = 3.0f;  // meters above the player origin
 static const float playerLightIntensity = 50.0f;
 static bool isTposing;  // playing eve_t emote
@@ -211,15 +199,15 @@ static CameraMode gCameraMode = CAM_MODE_ISO;
 
 // ── Fireball state ──────────────────────────────────────────────────────────
 struct Fireball {
-    Entity* entity;
-    Entity* hitboxEntity;  // combat hitbox that follows the fireball
+    engine::Entity* entity;
+    engine::Entity* hitboxEntity;  // combat hitbox that follows the fireball
     vec3 velocity;
     float lifetime;  // remaining seconds
 };
 
 static Fireball fireballs[FIREBALL_MAX];
 static int fireballCount = 0;
-static Entity* fireballDestroyList[FIREBALL_MAX];  // entities to destroy in postUpdate
+static engine::Entity* fireballDestroyList[FIREBALL_MAX];  // entities to destroy in postUpdate
 static int fireballDestroyCount = 0;
 
 // ── Player DB (persist camera angles + distance across runs) ────────────────
@@ -238,8 +226,8 @@ static CameraMode playerDbSanitizeCameraMode(int cameraMode) {
 }
 
 static void playerDbInit(void) {
-    if (!sqliteTableExists("player")) {
-        sqliteExecute(
+    if (!utils::sqliteTableExists("player")) {
+        utils::sqliteExecute(
             "CREATE TABLE IF NOT EXISTS player ("
             "name TEXT PRIMARY KEY, "
             "data BLOB);");
@@ -247,24 +235,24 @@ static void playerDbInit(void) {
 }
 
 static void playerDbSave(const char* name, PlayerDb* data) {
-    void* stmt = sqliteStatement("REPLACE INTO player (name, data) VALUES (?, ?);");
-    sqliteBindText(stmt, 1, name);
-    sqliteBindBlob(stmt, 2, data, sizeof(PlayerDb));
-    sqliteStep(stmt);
-    sqliteFinalize(stmt);
+    void* stmt = utils::sqliteStatement("REPLACE INTO player (name, data) VALUES (?, ?);");
+    utils::sqliteBindText(stmt, 1, name);
+    utils::sqliteBindBlob(stmt, 2, data, sizeof(PlayerDb));
+    utils::sqliteStep(stmt);
+    utils::sqliteFinalize(stmt);
 }
 
 static bool playerDbLoad(const char* name, PlayerDb* data) {
-    void* stmt  = sqliteStatement("SELECT data, length(data) FROM player WHERE name = ?;");
+    void* stmt  = utils::sqliteStatement("SELECT data, length(data) FROM player WHERE name = ?;");
     bool result = false;
-    sqliteBindText(stmt, 1, name);
-    if (sqliteStep(stmt)) {
-        void* blob   = sqliteGetBlob(stmt, 0);
-        int blobSize = sqliteGetInt(stmt, 1);
+    utils::sqliteBindText(stmt, 1, name);
+    if (utils::sqliteStep(stmt)) {
+        void* blob   = utils::sqliteGetBlob(stmt, 0);
+        int blobSize = utils::sqliteGetInt(stmt, 1);
         memcpy(data, blob, std::min(static_cast<size_t>(blobSize), sizeof(PlayerDb)));
         result = true;
     }
-    sqliteFinalize(stmt);
+    utils::sqliteFinalize(stmt);
     return result;
 }
 
@@ -318,15 +306,15 @@ static void tempCameraOrbitOverride(void) {
         p->moveYaw     = yaw;
         p->facingYaw   = yaw;
     }
-    Entity* camEntity = cameraGetEntity();
-    Camera* camera    = camEntity ? getComponent(ecs.defaultScene, Camera, camEntity->id) : nullptr;
+    engine::Entity* camEntity = engine::cameraGetEntity();
+    engine::Camera* camera    = camEntity ? getComponent(engine::ecs.defaultScene, engine::Camera, camEntity->id) : nullptr;
     if (camera) {
         camera->yaw   = yaw;
         camera->pitch = pitch;
     }
     thirdPersonCameraSetTarget(playerScene, playerEntityId);
     thirdPersonCameraSetAngles(yaw, pitch);
-    info("TEMP camera forced to orbit (yaw %.0f deg, pitch %.0f deg)", yawDeg, pitchDeg);
+    utils::info("TEMP camera forced to orbit (yaw %.0f deg, pitch %.0f deg)", yawDeg, pitchDeg);
 }
 
 // ── Player capsule dimensions (meters) ──────────────────────────────────────
@@ -359,12 +347,12 @@ static bool piPrevMiddleMouse;
 
 // ── scene-load callback ─────────────────────────────────────────────────────
 
-static void playerSceneLoaded(Scene* scene, void*) {
+static void playerSceneLoaded(engine::Scene* scene, void*) {
     scene->alwaysVisible = true;
     playerScene          = scene;
-    for (i32 i = 0, n = mapSize(scene->extras); i < n; i++) {
-        u32 entityId = scene->extras[i].key;
-        Json* extras = scene->extras[i].value;
+    for (const auto& entry : scene->extras) {
+        u32 entityId = entry.first;
+        Json* extras = entry.second;
 
         json_t* p = json_object_get(extras, "player");
         if (p) {
@@ -379,14 +367,14 @@ static void playerSceneLoaded(Scene* scene, void*) {
             player->isJumping   = false;
             // player->autoRun     = true;
 
-            Entity* playerEntity = getEntity(scene, entityId);
-            info("player: tagged entity '%s' (id %u) as player",
+            engine::Entity* playerEntity = engine::getEntity(scene, entityId);
+            utils::info("player: tagged entity '%s' (id %u) as player",
                  playerEntity ? playerEntity->name : "(null)",
                  entityId);
 
-            animationPlay(playerEntity, ANIM_IDLE, ANIM_SPEED_IDLE, true);
+            engine::animationPlay(playerEntity, ANIM_IDLE, ANIM_SPEED_IDLE, true);
 
-            Transform* transform = getComponent(scene, Transform, playerEntity->id);
+            engine::Transform* transform = getComponent(scene, engine::Transform, playerEntity->id);
             glm_quat_copy(transform->rot, player->baseRot);
 
             // Default spawn position
@@ -394,12 +382,12 @@ static void playerSceneLoaded(Scene* scene, void*) {
 
             // Load saved player state (position + camera angles)
             playerDbInit();
-            Transform savedTransform;
-            if (transformDbLoad("player", &savedTransform)) {
+            engine::Transform savedTransform;
+            if (engine::transformDbLoad("player", &savedTransform)) {
                 glm_vec3_copy(savedTransform.pos, transform->pos);
                 glm_quat_copy(savedTransform.rot, transform->rot);
                 // transform->pos[1] += 10;
-                info("player: loaded saved transform");
+                utils::info("player: loaded saved transform");
             }
             bool loadedPlayerDb       = false;
             float savedCameraDistance = 10.0f;  // default, matches ThirdPersonCamera.c
@@ -418,7 +406,7 @@ static void playerSceneLoaded(Scene* scene, void*) {
                 savedCameraDistance = savedPlayer.cameraDistance;
                 gCameraMode         = playerDbSanitizeCameraMode(savedPlayer.cameraMode);
                 loadedPlayerDb      = true;
-                info("player: loaded saved camera state (%s)",
+                utils::info("player: loaded saved camera state (%s)",
                      (gCameraMode == CAM_MODE_ISO) ? "isometric" : "orbit");
             }
 
@@ -437,15 +425,15 @@ static void playerSceneLoaded(Scene* scene, void*) {
             // (mesh) world the active heightmap is nullptr, so this clears on the
             // first update and the character moves normally.
             player->waitingForGround = true;
-            info("player: created character controller");
+            utils::info("player: created character controller");
 
-            vulkanDebugPhysicsRegisterCharacter(player->character);
+            engine::vulkanDebugPhysicsRegisterCharacter(player->character);
 
-            kickSound        = soundLoad("sound/player/depdep.ogg");
-            bicycleKickSound = soundLoad("sound/player/bicycle_kick.ogg");
-            jumpSound        = soundLoad("sound/player/jump-mono.ogg");
-            stepSound        = soundLoad("sound/player/step-mono.ogg");
-            hitSound         = soundLoad("sound/player/hit.ogg");
+            kickSound        = engine::soundLoad("sound/player/depdep.ogg");
+            bicycleKickSound = engine::soundLoad("sound/player/bicycle_kick.ogg");
+            jumpSound        = engine::soundLoad("sound/player/jump-mono.ogg");
+            stepSound        = engine::soundLoad("sound/player/step-mono.ogg");
+            hitSound         = engine::soundLoad("sound/player/hit.ogg");
 
             playerEntityId = entityId;
             playerReady    = true;
@@ -469,9 +457,9 @@ static void playerSceneLoaded(Scene* scene, void*) {
             for (int i = 0; i < 3; i++) stats->elementalResist[i] = 0.0f;
 
             // Initialize camera behind player
-            Entity* camEntity = cameraGetEntity();
-            Camera* camera    = getComponent(ecs.defaultScene, Camera, camEntity->id);
-            if (!flyingCameraIsActive()) {
+            engine::Entity* camEntity = engine::cameraGetEntity();
+            engine::Camera* camera    = getComponent(engine::ecs.defaultScene, engine::Camera, camEntity->id);
+            if (!engine::flyingCameraIsActive()) {
                 camera->yaw   = player->cameraYaw;
                 camera->pitch = player->cameraPitch;
             }
@@ -500,34 +488,34 @@ static void playerSceneLoaded(Scene* scene, void*) {
 }
 
 static void waitAsecondTemp(void*) {
-    sceneLoadCb("models/eve.dat", playerSceneLoaded, nullptr);
+    engine::sceneLoadCb("models/eve.dat", playerSceneLoaded, nullptr);
 }
 
 static void animationsLoaded(void*) {
-    futureTaskAdd(1000, waitAsecondTemp, nullptr);
+    utils::futureTaskAdd(1000, waitAsecondTemp, nullptr);
 }
 
-void added(void) {
-    signalSubscribe("animationsLoaded", animationsLoaded);
+void PlayerSystem::added() {
+    utils::signalSubscribe("animationsLoaded", animationsLoaded);
 }
 
-void removed(void) {
-    signalRemoveSubscription("animationsLoaded", animationsLoaded);
+void PlayerSystem::removed() {
+    utils::signalRemoveSubscription("animationsLoaded", animationsLoaded);
     if (playerReady && playerScene) {
         // The HeightmapTerrain component lives in the player scene: clear the
         // active pointer and free its tile data while the component is still
         // valid. Pending future tasks (grid verification, screenshots) or the
         // heightmap streaming system must never touch a dangling instance
         // after the scene is destroyed below.
-        HeightmapTerrain* hm = heightmapTerrainGetActive();
+        engine::HeightmapTerrain* hm = engine::heightmapTerrainGetActive();
         if (hm) {
-            heightmapTerrainSetActive(nullptr);
-            heightmapTerrainDestroyData(hm);
+            engine::heightmapTerrainSetActive(nullptr);
+            engine::heightmapTerrainDestroyData(hm);
         }
 
         Player* player = getComponent(playerScene, Player, playerEntityId);
         if (player && player->character) {
-            vulkanDebugPhysicsUnregisterCharacter(player->character);
+            engine::vulkanDebugPhysicsUnregisterCharacter(player->character);
             joltCharacterDestroy(player->character);
             player->character = nullptr;
         }
@@ -535,16 +523,16 @@ void removed(void) {
             joltBodyDestroy(player->sensorBody);
             player->sensorBody = nullptr;
         }
-        rendererSceneDestroy(playerScene);
-        sceneDestroy(playerScene);
+        engine::rendererSceneDestroy(playerScene);
+        engine::sceneDestroy(playerScene);
     }
     playerLightEntity = nullptr;
     playerScene       = nullptr;
     playerReady       = false;
 }
 
-void preUpdate(void) {
-    if (!playerReady || flyingCameraIsActive()) {
+void PlayerSystem::preUpdate() {
+    if (!playerReady || engine::flyingCameraIsActive()) {
         // Don't drain SDL relative-mouse state here — the flying camera's
         // preUpdate needs to read it when it is active.
         return;
@@ -552,13 +540,13 @@ void preUpdate(void) {
     tempCameraOrbitOverride();
 
     // ── One-shot key events (OR-accumulate) — both camera modes ──────
-    if (input.pressed == KEY_1) playerInput.ability1 = true;
-    if (input.pressed == KEY_2) playerInput.ability2 = true;
-    if (input.pressed == KEY_5) playerInput.ability5 = true;
-    if (input.pressed == KEY_T) playerInput.tKey = true;
+    if (engine::input.pressed == KEY_1) playerInput.ability1 = true;
+    if (engine::input.pressed == KEY_2) playerInput.ability2 = true;
+    if (engine::input.pressed == KEY_5) playerInput.ability5 = true;
+    if (engine::input.pressed == KEY_T) playerInput.tKey = true;
 
     // ── Camera mode toggle (C key) ────────────────────────────────────
-    if (input.pressed == KEY_C) {
+    if (engine::input.pressed == KEY_C) {
         float currentCameraDistance = (gCameraMode == CAM_MODE_ISO)
                                           ? topDownCameraGetDistance()
                                           : thirdPersonCameraGetDistance();
@@ -570,14 +558,14 @@ void preUpdate(void) {
                 p->moveYaw   = topDownCameraGetYaw();
                 p->facingYaw = p->moveYaw;
             }
-            info("camera: switched to isometric");
+            utils::info("camera: switched to isometric");
         } else {
-            info("camera: switched to orbit");
+            utils::info("camera: switched to orbit");
         }
     }
 
     // ── Middle-mouse auto-run toggle — both camera modes ─────────────
-    bool middleDown = windowSystemIsMiddleMouseDown();
+    bool middleDown = engine::windowSystemIsMiddleMouseDown();
     if (middleDown && !piPrevMiddleMouse) playerInput.autoRunToggle = true;
     piPrevMiddleMouse = middleDown;
 
@@ -591,10 +579,10 @@ void preUpdate(void) {
     // In top-down mode, delegate camera to TopDownCamera system
     if (gCameraMode == CAM_MODE_ISO) {
         topDownCameraPreUpdate();
-        playerInput.scrollY += input.scrollY;
+        playerInput.scrollY += engine::input.scrollY;
 
-        playerInput.leftMouse  = windowSystemIsLeftMouseDown();
-        playerInput.rightMouse = windowSystemIsRightMouseDown();
+        playerInput.leftMouse  = engine::windowSystemIsLeftMouseDown();
+        playerInput.rightMouse = engine::windowSystemIsRightMouseDown();
 
         piPrevLeftMouse  = playerInput.leftMouse;
         piPrevRightMouse = playerInput.rightMouse;
@@ -602,24 +590,24 @@ void preUpdate(void) {
         goto read_held_keys;
     }
 
-    if (input.pressed == KEY_5) {
+    if (engine::input.pressed == KEY_5) {
         // windowSystemWarpCenter();
         // float x, y;
         // SDL_GetMouseState(&x, &y);
         // info("%f %f", x, y);
-        SDL_SetWindowMouseGrab(window.sdlWindowHandle,
-                               !SDL_GetWindowMouseGrab(window.sdlWindowHandle));
+        SDL_SetWindowMouseGrab(engine::window.sdlWindowHandle,
+                               !SDL_GetWindowMouseGrab(engine::window.sdlWindowHandle));
     }
 
     // Drain relative-mouse state so deltas never go stale.
-    windowSystemGetRelativeMouseDelta(&rawDx, &rawDy);
+    engine::windowSystemGetRelativeMouseDelta(&rawDx, &rawDy);
 
     // ── Scroll wheel (sum) ───────────────────────────────────────────
-    playerInput.scrollY += input.scrollY;
+    playerInput.scrollY += engine::input.scrollY;
 
     // ── Mouse buttons ────────────────────────────────────────────────
-    playerInput.rightMouse = windowSystemIsRightMouseDown();
-    playerInput.leftMouse  = windowSystemIsLeftMouseDown();
+    playerInput.rightMouse = engine::windowSystemIsRightMouseDown();
+    playerInput.leftMouse  = engine::windowSystemIsLeftMouseDown();
     anyDragNow  = playerInput.rightMouse || playerInput.leftMouse;
     anyDragBefore = piPrevRightMouse || piPrevLeftMouse;
 
@@ -628,11 +616,11 @@ void preUpdate(void) {
     // is not supported) and automatically restores the cursor position
     // when the mode is exited.
     if (anyDragNow && !anyDragBefore) {
-        windowSystemHideCursor();
+        engine::windowSystemHideCursor();
         // Drain any stale delta from the mode switch.
-        windowSystemGetRelativeMouseDelta(&rawDx, &rawDy);
+        engine::windowSystemGetRelativeMouseDelta(&rawDx, &rawDy);
     } else if (!anyDragNow && anyDragBefore) {
-        windowSystemShowCursor();
+        engine::windowSystemShowCursor();
     }
 
     // Accumulate relative mouse only during an ongoing drag.
@@ -646,14 +634,14 @@ void preUpdate(void) {
 
     // ── Held keys (latest state — these persist across frames) ───────
 read_held_keys:
-    playerInput.moveW = input.repeating[KEY_W];
-    playerInput.moveS = input.repeating[KEY_S];
-    playerInput.moveA = input.repeating[KEY_A];
-    playerInput.moveD = input.repeating[KEY_D];
-    playerInput.jump  = input.repeating[KEY_SPACE];
-    playerInput.shift = input.shift;
-    playerInput.alt   = input.alt;
-    playerInput.ctrl  = input.ctrl;
+    playerInput.moveW = engine::input.repeating[KEY_W];
+    playerInput.moveS = engine::input.repeating[KEY_S];
+    playerInput.moveA = engine::input.repeating[KEY_A];
+    playerInput.moveD = engine::input.repeating[KEY_D];
+    playerInput.jump  = engine::input.repeating[KEY_SPACE];
+    playerInput.shift = engine::input.shift;
+    playerInput.alt   = engine::input.alt;
+    playerInput.ctrl  = engine::input.ctrl;
 }
 
 // ── Abilities ───────────────────────────────────────────────────────────────
@@ -662,9 +650,9 @@ read_held_keys:
 static const float footRayLength = 0.15f;  // short downward ray from foot
 static const float stepVolume    = 0.05f;
 
-static bool footOnGround(Entity* footBone) {
+static bool footOnGround(engine::Entity* footBone) {
     if (!footBone) return false;
-    WorldTransform* w = getComponent(footBone->scene, WorldTransform, footBone->id);
+    engine::WorldTransform* w = getComponent(footBone->scene, engine::WorldTransform, footBone->id);
     if (!w) return false;
 
     vec3 origin = {w->pos[0], w->pos[1], w->pos[2]};
@@ -673,20 +661,20 @@ static bool footOnGround(Entity* footBone) {
     return joltCastRay(origin, down, footRayLength, hit);
 }
 
-static void playerFootsteps(Entity* playerEntity, bool isMoving) {
+static void playerFootsteps(engine::Entity* playerEntity, bool isMoving) {
     if (!stepSound || !isMoving) return;
 
     static bool leftWasUp  = true;
     static bool rightWasUp = true;
 
-    Entity* leftFoot  = animationGetBoneEntity(playerEntity, "mixamorig:LeftFoot");
-    Entity* rightFoot = animationGetBoneEntity(playerEntity, "mixamorig:RightFoot");
+    engine::Entity* leftFoot  = engine::animationGetBoneEntity(playerEntity, "mixamorig:LeftFoot");
+    engine::Entity* rightFoot = engine::animationGetBoneEntity(playerEntity, "mixamorig:RightFoot");
 
     bool leftDown  = footOnGround(leftFoot);
     bool rightDown = footOnGround(rightFoot);
 
-    if (leftWasUp && leftDown) soundPlay(stepSound, stepVolume, 0);
-    if (rightWasUp && rightDown) soundPlay(stepSound, stepVolume, 0);
+    if (leftWasUp && leftDown) engine::soundPlay(stepSound, stepVolume, 0);
+    if (rightWasUp && rightDown) engine::soundPlay(stepSound, stepVolume, 0);
 
     leftWasUp  = !leftDown;
     rightWasUp = !rightDown;
@@ -696,12 +684,12 @@ static void playerFootsteps(Entity* playerEntity, bool isMoving) {
 static const float kickHitRadius = 0.3f;   // sphere around the foot
 static const float kickImpulse   = 20.0f;  // impulse strength (kg·m/s)
 
-static void kickHitDetection(Entity* playerEntity) {
-    Entity* footBone = animationGetBoneEntity(playerEntity, "mixamorig:LeftFoot");
+static void kickHitDetection(engine::Entity* playerEntity) {
+    engine::Entity* footBone = engine::animationGetBoneEntity(playerEntity, "mixamorig:LeftFoot");
     if (!footBone) return;
 
     // Get foot world position from the bone's world transform
-    WorldTransform* footWorld = getComponent(playerEntity->scene, WorldTransform, footBone->id);
+    engine::WorldTransform* footWorld = getComponent(playerEntity->scene, engine::WorldTransform, footBone->id);
     if (!footWorld) return;
 
     vec3 footPos;
@@ -717,8 +705,8 @@ static void kickHitDetection(Entity* playerEntity) {
         glm_vec3_sub(hits[i].contactPoint, footPos, dir);
         if (glm_vec3_norm2(dir) < 0.0001f) {
             // Fallback: push outward from player center
-            Transform* playerTransform =
-                getComponent(playerEntity->scene, Transform, playerEntity->id);
+            engine::Transform* playerTransform =
+                getComponent(playerEntity->scene, engine::Transform, playerEntity->id);
             glm_vec3_sub(hits[i].contactPoint, playerTransform->pos, dir);
         }
         if (glm_vec3_norm2(dir) < 0.0001f) continue;
@@ -732,41 +720,41 @@ static void kickHitDetection(Entity* playerEntity) {
         glm_vec3_scale(dir, kickImpulse, impulse);
 
         if (joltBodyAddImpulseAt(hits[i].bodyId, impulse, hits[i].contactPoint)) {
-            if (hitSound) soundPlay(hitSound, 1.0f, 0);
+            if (hitSound) engine::soundPlay(hitSound, 1.0f, 0);
         }
     }
 }
 
-static void kickLightAttach(Entity* playerEntity) {
-    Entity* foot = animationGetBoneEntity(playerEntity, "mixamorig:LeftFoot");
+static void kickLightAttach(engine::Entity* playerEntity) {
+    engine::Entity* foot = engine::animationGetBoneEntity(playerEntity, "mixamorig:LeftFoot");
     if (!foot) return;
 
     // If already fading from a previous kick, reuse the existing component
     if (kickLightEntity && kickLightEntity->id == foot->id) {
-        Light* light = getComponent(foot->scene, Light, foot->id);
+        engine::Light* light = getComponent(foot->scene, engine::Light, foot->id);
         if (light) {
             light->intensity = kickLightIntensity;
             kickLightFade    = 0.0f;  // no longer fading
-            lightMarkDirty(foot->scene, foot->id);
+            engine::lightMarkDirty(foot->scene, foot->id);
             return;
         }
     }
 
     // Remove any stale light from a different entity
     if (kickLightEntity) {
-        F_sceneRemoveComponent(kickLightEntity->scene, kickLightEntity->id, &Light_id);
-        lightMarkDirty(kickLightEntity->scene, kickLightEntity->id);
+        engine::F_sceneRemoveComponent(kickLightEntity->scene, kickLightEntity->id, &engine::Light_id);
+        engine::lightMarkDirty(kickLightEntity->scene, kickLightEntity->id);
         kickLightEntity = nullptr;
     }
 
-    Light* light     = createComponent(foot->scene, Light, foot->id);
-    light->lightType = LIGHT_POINT;
+    engine::Light* light     = createComponent(foot->scene, engine::Light, foot->id);
+    light->lightType = engine::LIGHT_POINT;
     vec3 kickLightColor = {1.0f, 0.6f, 0.2f};
     glm_vec3_copy(kickLightColor, light->color);  // warm orange
     light->intensity = kickLightIntensity;
     light->range     = 8.0f;
     kickLightFade    = 0.0f;
-    lightMarkDirty(foot->scene, foot->id);
+    engine::lightMarkDirty(foot->scene, foot->id);
     kickLightEntity = foot;
 }
 
@@ -779,61 +767,61 @@ static void kickLightStartFade(void) {
 static void kickLightUpdate(void) {
     if (!kickLightEntity || kickLightFade <= 0.0f) return;
 
-    kickLightFade -= timer.dt;
+    kickLightFade -= utils::timer.dt;
     if (kickLightFade <= 0.0f) {
         // Fully faded — remove the light
         kickLightFade = 0.0f;
-        Scene* scene  = kickLightEntity->scene;
+        engine::Scene* scene  = kickLightEntity->scene;
         u32 id        = kickLightEntity->id;
-        F_sceneRemoveComponent(scene, id, &Light_id);
-        lightMarkDirty(scene, id);
+        engine::F_sceneRemoveComponent(scene, id, &engine::Light_id);
+        engine::lightMarkDirty(scene, id);
         kickLightEntity = nullptr;
         return;
     }
 
     // Dim intensity proportionally
-    Light* light = getComponent(kickLightEntity->scene, Light, kickLightEntity->id);
+    engine::Light* light = getComponent(kickLightEntity->scene, engine::Light, kickLightEntity->id);
     if (light) {
         float t          = kickLightFade / kickLightFadeDuration;  // 1→0
         light->intensity = kickLightIntensity * t * t;             // quadratic ease-out
-        lightMarkDirty(kickLightEntity->scene, kickLightEntity->id);
+        engine::lightMarkDirty(kickLightEntity->scene, kickLightEntity->id);
     }
 }
 
 // ── Player follow light ───────────────────────────────────────────────────
 [[maybe_unused]]
-static void playerLightCreate(Entity* playerEntity) {
+static void playerLightCreate(engine::Entity* playerEntity) {
     if (!playerEntity || playerLightEntity) return;
 
-    Transform* playerTransform = getComponent(playerEntity->scene, Transform, playerEntity->id);
+    engine::Transform* playerTransform = getComponent(playerEntity->scene, engine::Transform, playerEntity->id);
     if (!playerTransform) return;
 
-    playerLightEntity = createEntity(playerEntity->scene, "player_light");
+    playerLightEntity = engine::createEntity(playerEntity->scene, "player_light");
 
-    Transform* transform = createComponent(playerEntity->scene, Transform, playerLightEntity->id);
+    engine::Transform* transform = createComponent(playerEntity->scene, engine::Transform, playerLightEntity->id);
     glm_quat_identity(transform->rot);
     glm_vec3_copy(playerTransform->pos, transform->pos);
     transform->pos[0] += 1.0f;
     transform->pos[1] += playerLightHeight;
     transform->pos[3] = 1.0f;
 
-    Light* light        = createComponent(playerEntity->scene, Light, playerLightEntity->id);
-    light->lightType    = LIGHT_POINT;
+    engine::Light* light        = createComponent(playerEntity->scene, engine::Light, playerLightEntity->id);
+    light->lightType    = engine::LIGHT_POINT;
     light->color[0]     = 1.0f;
     light->color[1]     = 0.86f;
     light->color[2]     = 0.65f;
     light->intensity    = playerLightIntensity;
     light->range        = 6.0f;
     light->castsShadows = false;
-    lightMarkDirty(playerEntity->scene, playerLightEntity->id);
+    engine::lightMarkDirty(playerEntity->scene, playerLightEntity->id);
 }
 
 static void playerLightUpdate(void) {
     if (!playerLightEntity || !playerReady || !playerScene) return;
 
-    Transform* playerTransform = getComponent(playerScene, Transform, playerEntityId);
-    Transform* lightTransform =
-        getComponent(playerLightEntity->scene, Transform, playerLightEntity->id);
+    engine::Transform* playerTransform = getComponent(playerScene, engine::Transform, playerEntityId);
+    engine::Transform* lightTransform =
+        getComponent(playerLightEntity->scene, engine::Transform, playerLightEntity->id);
     if (!playerTransform || !lightTransform) return;
 
     glm_vec3_copy(playerTransform->pos, lightTransform->pos);
@@ -847,7 +835,7 @@ static void fireballCreate(void) {
     if (fireballCount >= FIREBALL_MAX) return;
 
     Player* player       = getComponent(playerScene, Player, playerEntityId);
-    Transform* transform = getComponent(playerScene, Transform, playerEntityId);
+    engine::Transform* transform = getComponent(playerScene, engine::Transform, playerEntityId);
     if (!player || !transform) return;
 
     // Spawn position: slightly above and in front of the player
@@ -863,24 +851,24 @@ static void fireballCreate(void) {
     glm_vec3_scale(forward, FIREBALL_SPEED, velocity);
 
     // Create entity in the player's scene
-    Entity* entity = createEntity(playerScene, "fireball");
+    engine::Entity* entity = engine::createEntity(playerScene, "fireball");
 
     // Add Transform
-    Transform* t = createComponent(playerScene, Transform, entity->id);
+    engine::Transform* t = createComponent(playerScene, engine::Transform, entity->id);
     glm_quat_identity(t->rot);
     glm_vec3_copy(spawnPos, t->pos);
     t->pos[3] = 1.0f;
 
     // Add a point light (orange-yellow fireball glow)
-    Light* light        = createComponent(playerScene, Light, entity->id);
-    light->lightType    = LIGHT_POINT;
+    engine::Light* light        = createComponent(playerScene, engine::Light, entity->id);
+    light->lightType    = engine::LIGHT_POINT;
     light->color[0]     = 1.0f;
     light->color[1]     = 0.5f;
     light->color[2]     = 0.1f;
     light->intensity    = FIREBALL_INTENSITY;
     light->range        = FIREBALL_RANGE;
     light->castsShadows = false;
-    lightMarkDirty(playerScene, entity->id);
+    engine::lightMarkDirty(playerScene, entity->id);
 
     // Store in fireball array
     Fireball* fb = &fireballs[fireballCount++];
@@ -897,15 +885,15 @@ static void fireballUpdate(void) {
         Fireball* fb = &fireballs[read];
         if (!fb->entity) continue;
 
-        fb->lifetime -= timer.dt;
+        fb->lifetime -= utils::timer.dt;
         if (fb->lifetime <= 0.0f) {
             // Destroy hitbox
             if (fb->hitboxEntity) {
-                Scene* hbScene = fb->hitboxEntity->scene;
+                engine::Scene* hbScene = fb->hitboxEntity->scene;
                 u32 hbId       = fb->hitboxEntity->id;
-                F_sceneRemoveComponent(hbScene, hbId, &AttackHitbox_id);
-                F_sceneRemoveComponent(hbScene, hbId, &Transform_id);
-                destroyEntity(fb->hitboxEntity);
+                engine::F_sceneRemoveComponent(hbScene, hbId, &AttackHitbox_id);
+                engine::F_sceneRemoveComponent(hbScene, hbId, &engine::Transform_id);
+                engine::destroyEntity(fb->hitboxEntity);
                 fb->hitboxEntity = nullptr;
             }
             // Queue entity for destruction in postUpdate (safe to call destroyEntity there)
@@ -915,24 +903,24 @@ static void fireballUpdate(void) {
         }
 
         // Move the fireball
-        Transform* t = getComponent(fb->entity->scene, Transform, fb->entity->id);
+        engine::Transform* t = getComponent(fb->entity->scene, engine::Transform, fb->entity->id);
         if (t) {
-            t->pos[0] += fb->velocity[0] * timer.dt;
-            t->pos[1] += fb->velocity[1] * timer.dt;
-            t->pos[2] += fb->velocity[2] * timer.dt;
+            t->pos[0] += fb->velocity[0] * utils::timer.dt;
+            t->pos[1] += fb->velocity[1] * utils::timer.dt;
+            t->pos[2] += fb->velocity[2] * utils::timer.dt;
         }
 
         // Update hitbox position to follow the fireball
         if (fb->hitboxEntity) {
-            Transform* hbTransform =
-                getComponent(fb->hitboxEntity->scene, Transform, fb->hitboxEntity->id);
+            engine::Transform* hbTransform =
+                getComponent(fb->hitboxEntity->scene, engine::Transform, fb->hitboxEntity->id);
             if (hbTransform && t) {
                 glm_vec3_copy(t->pos, hbTransform->pos);
             }
         }
 
         // Pulse and fade the light
-        Light* light = getComponent(fb->entity->scene, Light, fb->entity->id);
+        engine::Light* light = getComponent(fb->entity->scene, engine::Light, fb->entity->id);
         if (light) {
             float lifeRatio = fb->lifetime / FIREBALL_LIFETIME;  // 1→0
             // Pulse: sine wave modulated by lifetime
@@ -942,7 +930,7 @@ static void fireballUpdate(void) {
             light->color[0] = 1.0f;
             light->color[1] = 0.5f + 0.3f * lifeRatio;
             light->color[2] = 0.1f * lifeRatio;
-            lightMarkDirty(fb->entity->scene, fb->entity->id);
+            engine::lightMarkDirty(fb->entity->scene, fb->entity->id);
         }
 
         // Keep compact array (pack alive fireballs to front)
@@ -955,7 +943,7 @@ static void fireballUpdate(void) {
 static void playerAbilities(void) {
     Player* player        = getComponent(playerScene, Player, playerEntityId);
     CharacterStats* stats = getComponent(playerScene, CharacterStats, playerEntityId);
-    Entity* playerEntity  = getEntity(playerScene, playerEntityId);
+    engine::Entity* playerEntity  = engine::getEntity(playerScene, playerEntityId);
     if (!player || !playerEntity) return;
 
     // If a cast is in progress, check whether the animation finished
@@ -966,25 +954,25 @@ static void playerAbilities(void) {
         // Restart slightly before the animation finishes so the reset
         // happens while it is still in motion (avoids a one-frame pause
         // since playerSystem runs before animationSystem each frame).
-        bool nearEnd = animationIsNearEnd(playerEntity, castingAnim, 0.05f);
+        bool nearEnd = engine::animationIsNearEnd(playerEntity, castingAnim, 0.05f);
 
         if (nearEnd && castingRepeatsLeft > 0) {
             // Replay early to avoid the one-frame pause at the end pose
             castingRepeatsLeft--;
-            animationRestart(playerEntity, castingAnim, ANIM_SPEED_CAST_REPLAY);
-        } else if (animationIsFinished(playerEntity, castingAnim)) {
+            engine::animationRestart(playerEntity, castingAnim, ANIM_SPEED_CAST_REPLAY);
+        } else if (engine::animationIsFinished(playerEntity, castingAnim)) {
             if (castingRepeatsLeft > 0) {
                 // Safety fallback: animation finished but repeats remain
                 castingRepeatsLeft--;
-                animationRestart(playerEntity, castingAnim, ANIM_SPEED_CAST_REPLAY);
+                engine::animationRestart(playerEntity, castingAnim, ANIM_SPEED_CAST_REPLAY);
             } else {
                 // Destroy kick damage hitbox
                 if (kickHitboxEntity) {
-                    Scene* hbScene = kickHitboxEntity->scene;
+                    engine::Scene* hbScene = kickHitboxEntity->scene;
                     u32 hbId       = kickHitboxEntity->id;
-                    F_sceneRemoveComponent(hbScene, hbId, &AttackHitbox_id);
-                    F_sceneRemoveComponent(hbScene, hbId, &Transform_id);
-                    destroyEntity(kickHitboxEntity);
+                    engine::F_sceneRemoveComponent(hbScene, hbId, &AttackHitbox_id);
+                    engine::F_sceneRemoveComponent(hbScene, hbId, &engine::Transform_id);
+                    engine::destroyEntity(kickHitboxEntity);
                     kickHitboxEntity = nullptr;
                 }
                 player->isCasting = false;
@@ -992,19 +980,19 @@ static void playerAbilities(void) {
                 kickLightStartFade();
                 // Transition back to idle/move
                 if (player->isMoving)
-                    animationPlayBlended(playerEntity, ANIM_RUN, ANIM_SPEED_RUN, true, 0.2f);
+                    engine::animationPlayBlended(playerEntity, ANIM_RUN, ANIM_SPEED_RUN, true, 0.2f);
                 else
-                    animationPlayBlended(playerEntity, ANIM_IDLE, ANIM_SPEED_IDLE, true, 0.2f);
+                    engine::animationPlayBlended(playerEntity, ANIM_IDLE, ANIM_SPEED_IDLE, true, 0.2f);
             }
         }
         // Update kick hitbox position to follow the foot bone
         if (kickHitboxEntity) {
-            Entity* footBone = animationGetBoneEntity(playerEntity, "mixamorig:LeftFoot");
+            engine::Entity* footBone = engine::animationGetBoneEntity(playerEntity, "mixamorig:LeftFoot");
             if (footBone) {
-                WorldTransform* footWorld =
-                    getComponent(playerEntity->scene, WorldTransform, footBone->id);
-                Transform* hbTransform =
-                    getComponent(kickHitboxEntity->scene, Transform, kickHitboxEntity->id);
+                engine::WorldTransform* footWorld =
+                    getComponent(playerEntity->scene, engine::WorldTransform, footBone->id);
+                engine::Transform* hbTransform =
+                    getComponent(kickHitboxEntity->scene, engine::Transform, kickHitboxEntity->id);
                 if (footWorld && hbTransform) {
                     glm_vec3_copy(footWorld->pos, hbTransform->pos);
                 }
@@ -1019,8 +1007,8 @@ static void playerAbilities(void) {
         player->isCasting  = true;
         castingAnim        = ANIM_HURRICANE_KICK;
         castingRepeatsLeft = 1;
-        animationPlayBlended(playerEntity, castingAnim, ANIM_SPEED_HURRICANE_KICK, false, 0.15f);
-        if (kickSound) soundPlay(kickSound, 1.0f, 0);
+        engine::animationPlayBlended(playerEntity, castingAnim, ANIM_SPEED_HURRICANE_KICK, false, 0.15f);
+        if (kickSound) engine::soundPlay(kickSound, 1.0f, 0);
         kickLightAttach(playerEntity);
         kickHitboxEntity = combatCreateHitbox(playerEntity,
                                               kickHitRadius,
@@ -1037,8 +1025,8 @@ static void playerAbilities(void) {
         player->isCasting  = true;
         castingAnim        = ANIM_BICYCLE_KICK;
         castingRepeatsLeft = 2;  // plays once + 2 repeats = 3 total
-        animationPlayBlended(playerEntity, castingAnim, ANIM_SPEED_BICYCLE_KICK, false, 0.15f);
-        if (bicycleKickSound) soundPlay(bicycleKickSound, 1.0f, 0);
+        engine::animationPlayBlended(playerEntity, castingAnim, ANIM_SPEED_BICYCLE_KICK, false, 0.15f);
+        if (bicycleKickSound) engine::soundPlay(bicycleKickSound, 1.0f, 0);
         kickHitboxEntity = combatCreateHitbox(playerEntity,
                                               kickHitRadius,
                                               stats->damage,
@@ -1065,27 +1053,27 @@ static const char* playerLocomotionClips[] = {
 
 static bool playerIsLocomotionClip(const char* clipName) {
     for (size_t i = 0; i < sizeof(playerLocomotionClips) / sizeof(playerLocomotionClips[0]); i++) {
-        if (strequals(clipName, playerLocomotionClips[i])) return true;
+        if (utils::strequals(clipName, playerLocomotionClips[i])) return true;
     }
     return false;
 }
 
-static AnimationInstance* playerFindAnimationInstance(Animator* animator, const char* clipName) {
+static engine::AnimationInstance* playerFindAnimationInstance(engine::Animator* animator, const char* clipName) {
     if (!animator) return nullptr;
-    for (i32 i = static_cast<i32>(arraySize(animator->activeInstances)) - 1; i >= 0; i--) {
-        AnimationInstance* instance = animator->activeInstances[i];
+    for (i32 i = static_cast<i32>(static_cast<i32>(animator->activeInstances.size())) - 1; i >= 0; i--) {
+        engine::AnimationInstance* instance = animator->activeInstances[i];
         if (instance && !instance->markedForRemoval &&
-            strequals(instance->clip->name.data, clipName)) {
+            utils::strequals(instance->clip->name.data, clipName)) {
             return instance;
         }
     }
     return nullptr;
 }
 
-static float playerLocomotionPhase(Animator* animator) {
+static float playerLocomotionPhase(engine::Animator* animator) {
     if (!animator) return 0.0f;
     for (size_t i = 0; i < sizeof(playerLocomotionClips) / sizeof(playerLocomotionClips[0]); i++) {
-        AnimationInstance* instance =
+        engine::AnimationInstance* instance =
             playerFindAnimationInstance(animator, playerLocomotionClips[i]);
         if (instance && instance->clip->duration > 0.0f) {
             return fmodf(instance->currentTime / instance->clip->duration, 1.0f);
@@ -1094,31 +1082,30 @@ static float playerLocomotionPhase(Animator* animator) {
     return 0.0f;
 }
 
-static void playerSetAnimationWeight(Animator* animator,
+static void playerSetAnimationWeight(engine::Animator* animator,
                                      const char* clipName,
                                      float speed,
                                      float targetWeight,
                                      float blendDuration,
                                      float phase) {
-    AnimationInstance* instance = playerFindAnimationInstance(animator, clipName);
+    engine::AnimationInstance* instance = playerFindAnimationInstance(animator, clipName);
     if (!instance && targetWeight <= 0.001f) return;
 
     if (!instance) {
-        AnimationClip* clip = animationGet(clipName);
+        engine::AnimationClip* clip = engine::animationGet(clipName);
         if (!clip) {
-            warn("player: locomotion clip '%s' not found", clipName);
+            utils::warn("player: locomotion clip '%s' not found", clipName);
             return;
         }
 
-        instance  = static_cast<AnimationInstance*>(memoryAlloc(sizeof(AnimationInstance)));
-        memset(instance, 0, sizeof(AnimationInstance));
+        instance  = new engine::AnimationInstance{};
         instance->clip             = clip;
         instance->currentTime      = phase * clip->duration;
         instance->speed            = speed;
         instance->loop             = true;
         instance->weight           = 0.0f;
         instance->markedForRemoval = false;
-        arrayPut(animator->activeInstances, instance);
+        animator->activeInstances.push_back(instance);
     }
 
     instance->speed             = speed;
@@ -1129,11 +1116,11 @@ static void playerSetAnimationWeight(Animator* animator,
     instance->blendElapsed      = 0.0f;
 }
 
-static bool playerCursorYawAtTransform(Transform* transform, float* outYaw) {
+static bool playerCursorYawAtTransform(engine::Transform* transform, float* outYaw) {
     if (!transform || !outYaw || gCameraMode != CAM_MODE_ISO) return false;
 
     vec3 rayOrigin, rayDir;
-    topDownCameraUnproject(input.xpos, input.ypos, rayOrigin, rayDir);
+    topDownCameraUnproject(engine::input.xpos, engine::input.ypos, rayOrigin, rayDir);
 
     // Intersect with horizontal ground plane at player's Y level.
     if (fabsf(rayDir[1]) <= 0.001f) return false;
@@ -1156,21 +1143,21 @@ static bool playerCursorYawAtTransform(Transform* transform, float* outYaw) {
     return true;
 }
 
-static void playerPlayLocomotionBlend(Entity* entity,
+static void playerPlayLocomotionBlend(engine::Entity* entity,
                                       float facingYaw,
                                       vec3 velocity,
                                       float speed,
                                       float blendDuration) {
-    Animator* animator = getComponent(entity->scene, Animator, entity->id);
+    engine::Animator* animator = getComponent(entity->scene, engine::Animator, entity->id);
     if (!animator) {
-        animator          = createComponent(entity->scene, Animator, entity->id);
+        animator          = createComponent(entity->scene, engine::Animator, entity->id);
         animator->entity  = entity;
         animator->mapping = nullptr;
     }
 
     // Fade out idle/emotes/etc.  Ability and jump animations do not call this path.
-    for (size_t i = 0; i < arraySize(animator->activeInstances); i++) {
-        AnimationInstance* instance = animator->activeInstances[i];
+    for (size_t i = 0; i < animator->activeInstances.size(); i++) {
+        engine::AnimationInstance* instance = animator->activeInstances[i];
         if (!instance || instance->markedForRemoval) continue;
         if (playerIsLocomotionClip(instance->clip->name.data)) continue;
 
@@ -1224,10 +1211,10 @@ static void playerPlayLocomotionBlend(Entity* entity,
 // Movement-only variant for ISO camera mode (no camera positioning)
 static void playerMovementTopDownOnly(void) {
     Player* player             = getComponent(playerScene, Player, playerEntityId);
-    Transform* transform       = getComponent(playerScene, Transform, playerEntityId);
-    Entity* cameraEntity       = cameraGetEntity();
-    Camera* camera             = getComponent(ecs.defaultScene, Camera, cameraEntity->id);
-    Transform* cameraTransform = getComponent(ecs.defaultScene, Transform, cameraEntity->id);
+    engine::Transform* transform       = getComponent(playerScene, engine::Transform, playerEntityId);
+    engine::Entity* cameraEntity       = engine::cameraGetEntity();
+    engine::Camera* camera             = getComponent(engine::ecs.defaultScene, engine::Camera, cameraEntity->id);
+    engine::Transform* cameraTransform = getComponent(engine::ecs.defaultScene, engine::Transform, cameraEntity->id);
 
     if (!player || !transform || !camera || !cameraTransform || !player->character) return;
 
@@ -1235,15 +1222,15 @@ static void playerMovementTopDownOnly(void) {
     // Saving after the movement update makes the root snap to the new pose
     // immediately, which breaks render-frame interpolation and reads as
     // shaky character motion.
-    transformActivateAndSaveLastSubtree(playerScene, playerEntityId);
+    engine::transformActivateAndSaveLastSubtree(playerScene, playerEntityId);
 
     // ── Mouse look (deltas accumulated in preUpdate) ──────────────────
     {
         float dx = playerInput.mouseDx;
         float dy = playerInput.mouseDy;
         if (dx != 0.0f || dy != 0.0f) {
-            player->cameraYaw -= dx * cameraSensitivity * timer.dt;
-            player->cameraPitch += dy * cameraSensitivity * timer.dt;
+            player->cameraYaw -= dx * cameraSensitivity * utils::timer.dt;
+            player->cameraPitch += dy * cameraSensitivity * utils::timer.dt;
             player->cameraPitch = glm_clamp(player->cameraPitch, pitchMin, pitchMax);
         }
     }
@@ -1318,7 +1305,7 @@ static void playerMovementTopDownOnly(void) {
     bool onGround   = (groundState == JOLT_GROUND_STATE_ON_GROUND);
     if (onGround && playerInput.jump) {
         desiredVel[1] = jumpSpeed;
-        if (jumpSound) soundPlay(jumpSound, 1.0f, 0);
+        if (jumpSound) engine::soundPlay(jumpSound, 1.0f, 0);
     }
 
     // Update Jolt character
@@ -1328,12 +1315,12 @@ static void playerMovementTopDownOnly(void) {
     // collision data is ready. In the regular (mesh) world the active
     // heightmap is nullptr, so this clears on the first update.
     if (player->waitingForGround) {
-        HeightmapTerrain* hm = heightmapTerrainGetActive();
+        engine::HeightmapTerrain* hm = engine::heightmapTerrainGetActive();
         if (!hm) {
             player->waitingForGround = false;  // no heightmap world: ground is a mesh
-        } else if (heightmapTerrainHasBodyAt(hm, transform->pos[0], transform->pos[2])) {
+        } else if (engine::heightmapTerrainHasBodyAt(hm, transform->pos[0], transform->pos[2])) {
             player->waitingForGround = false;
-            info("player: ground body ready, releasing character");
+            utils::info("player: ground body ready, releasing character");
         } else {
             // No ground yet: keep the character pinned at its spawn position.
             if (player->sensorBody) {
@@ -1342,7 +1329,7 @@ static void playerMovementTopDownOnly(void) {
             return;
         }
     }
-    joltCharacterUpdate(player->character, desiredVel, timer.dt);
+    joltCharacterUpdate(player->character, desiredVel, utils::timer.dt);
 
     // Read back position from Jolt
     float charPos[3];
@@ -1388,21 +1375,21 @@ static void playerMovementTopDownOnly(void) {
             glm_quatv(yawQuat, targetYaw, Y_UP);
             versor targetRot;
             glm_quat_mul(yawQuat, player->baseRot, targetRot);
-            quatSlerpShortest(transform->rot,
+            engine::quatSlerpShortest(transform->rot,
                               targetRot,
-                              glm_clamp(player->turnSpeed * timer.dt, 0.0f, 1.0f),
+                              glm_clamp(player->turnSpeed * utils::timer.dt, 0.0f, 1.0f),
                               transform->rot);
             glm_quat_normalize(transform->rot);
         }
     }
 
     // ── Animation state (skip while casting an ability) ────────────────
-    Entity* playerEntity = getEntity(playerScene, playerEntityId);
+    engine::Entity* playerEntity = engine::getEntity(playerScene, playerEntityId);
 
     if (!player->isCasting) {
         // Jump takes priority over ground animations
         if (!onGround && !player->isJumping) {
-            animationPlayBlended(playerEntity, ANIM_JUMP, ANIM_SPEED_JUMP, false, 0.25f);
+            engine::animationPlayBlended(playerEntity, ANIM_JUMP, ANIM_SPEED_JUMP, false, 0.25f);
             player->isJumping = true;
         } else if (onGround && player->isJumping) {
             // Landed — transition back to the appropriate ground animation
@@ -1415,9 +1402,9 @@ static void playerMovementTopDownOnly(void) {
                                               ANIM_SPEED_RUN,
                                               0.2f);
                 else
-                    animationPlayBlended(playerEntity, ANIM_WALK, ANIM_SPEED_WALK, true, 0.2f);
+                    engine::animationPlayBlended(playerEntity, ANIM_WALK, ANIM_SPEED_WALK, true, 0.2f);
             } else {
-                animationPlayBlended(playerEntity, ANIM_IDLE, ANIM_SPEED_IDLE, true, 0.2f);
+                engine::animationPlayBlended(playerEntity, ANIM_IDLE, ANIM_SPEED_IDLE, true, 0.2f);
             }
         }
 
@@ -1425,7 +1412,7 @@ static void playerMovementTopDownOnly(void) {
         if (!player->isJumping) {
             // T-key emote: play eve_t until the character moves
             if (playerInput.tKey && !moving && !isTposing) {
-                animationPlayBlended(playerEntity, ANIM_TPOSE, ANIM_SPEED_TPOSE, true, 0.3f);
+                engine::animationPlayBlended(playerEntity, ANIM_TPOSE, ANIM_SPEED_TPOSE, true, 0.3f);
                 isTposing = true;
             }
             if (moving && isTposing) {
@@ -1440,11 +1427,11 @@ static void playerMovementTopDownOnly(void) {
                                               ANIM_SPEED_RUN,
                                               0.2f);
                 } else {
-                    animationPlayBlended(playerEntity, ANIM_WALK, ANIM_SPEED_WALK, true, 0.2f);
+                    engine::animationPlayBlended(playerEntity, ANIM_WALK, ANIM_SPEED_WALK, true, 0.2f);
                 }
                 player->isMoving = true;
             } else if (!moving && player->isMoving) {
-                animationPlayBlended(playerEntity, ANIM_IDLE, ANIM_SPEED_IDLE, true, 0.2f);
+                engine::animationPlayBlended(playerEntity, ANIM_IDLE, ANIM_SPEED_IDLE, true, 0.2f);
                 player->isMoving = false;
             } else if (moving) {
                 if (!playerInput.shift) {
@@ -1454,8 +1441,8 @@ static void playerMovementTopDownOnly(void) {
                                               ANIM_SPEED_RUN,
                                               0.2f);
                 } else {
-                    if (!animationIsPlaying(playerEntity, ANIM_WALK)) {
-                        animationPlayBlended(playerEntity, ANIM_WALK, ANIM_SPEED_WALK, true, 0.2f);
+                    if (!engine::animationIsPlaying(playerEntity, ANIM_WALK)) {
+                        engine::animationPlayBlended(playerEntity, ANIM_WALK, ANIM_SPEED_WALK, true, 0.2f);
                     }
                 }
             }
@@ -1493,10 +1480,10 @@ static void playerMovement(void) {
 
 static void playerFollowFlyingCamera(void) {
     Player* player       = getComponent(playerScene, Player, playerEntityId);
-    Transform* transform = getComponent(playerScene, Transform, playerEntityId);
-    Entity* camEntity    = cameraGetEntity();
-    Camera* camera       = getComponent(ecs.defaultScene, Camera, camEntity->id);
-    Transform* camT      = getComponent(ecs.defaultScene, Transform, camEntity->id);
+    engine::Transform* transform = getComponent(playerScene, engine::Transform, playerEntityId);
+    engine::Entity* camEntity    = engine::cameraGetEntity();
+    engine::Camera* camera       = getComponent(engine::ecs.defaultScene, engine::Camera, camEntity->id);
+    engine::Transform* camT      = getComponent(engine::ecs.defaultScene, engine::Transform, camEntity->id);
     if (!player || !transform || !camT) return;
 
     vec3 direction = {};
@@ -1522,7 +1509,7 @@ static void playerFollowFlyingCamera(void) {
 
     // Keep orbit camera angles in sync with the engine camera so the
     // transition back to player control is seamless.
-    Camera* cam = getComponent(ecs.defaultScene, Camera, camEntity->id);
+    engine::Camera* cam = getComponent(engine::ecs.defaultScene, engine::Camera, camEntity->id);
     if (cam) {
         player->cameraYaw   = cam->yaw;
         player->cameraPitch = glm_clamp(cam->pitch, pitchMin, pitchMax);
@@ -1534,16 +1521,16 @@ static void playerFollowFlyingCamera(void) {
     // playerLightUpdate();
 }
 
-void update(void) {
+void PlayerSystem::update() {
     if (!playerReady) return;
 
     // Track the active camera for the water grid recentering and the GPU
     // weather state machine (the weather pass reads cameras[0] directly on
     // the GPU; this drives the climate→condition cross-fade + shared gust).
     // Weather runs first so the water update below sees this frame's gust.
-    Entity* camEntity = cameraGetEntity();
+    engine::Entity* camEntity = engine::cameraGetEntity();
     if (camEntity) {
-        Camera* cam = getComponent(ecs.defaultScene, Camera, camEntity->id);
+        engine::Camera* cam = getComponent(engine::ecs.defaultScene, engine::Camera, camEntity->id);
         if (cam) {
             azgaarWeatherUpdate(cam->cameraUbo.renderLocation[0],
                                 cam->cameraUbo.renderLocation[1],
@@ -1553,7 +1540,7 @@ void update(void) {
         }
     }
 
-    if (flyingCameraIsActive()) {
+    if (engine::flyingCameraIsActive()) {
         return;
     }
 
@@ -1594,17 +1581,17 @@ void update(void) {
     playerInput.mouseDy       = 0.0f;
 }
 
-void postUpdate(void) {
+void PlayerSystem::postUpdate() {
     // Destroy expired fireball entities (safe in postUpdate)
     for (int i = 0; i < fireballDestroyCount; i++) {
-        Entity* entity = fireballDestroyList[i];
+        engine::Entity* entity = fireballDestroyList[i];
         if (entity) {
-            Scene* scene = entity->scene;
+            engine::Scene* scene = entity->scene;
             u32 id       = entity->id;
-            F_sceneRemoveComponent(scene, id, &Light_id);
-            F_sceneRemoveComponent(scene, id, &Transform_id);
-            lightMarkDirty(scene, id);
-            destroyEntity(entity);
+            engine::F_sceneRemoveComponent(scene, id, &engine::Light_id);
+            engine::F_sceneRemoveComponent(scene, id, &engine::Transform_id);
+            engine::lightMarkDirty(scene, id);
+            engine::destroyEntity(entity);
         }
     }
     fireballDestroyCount = 0;
@@ -1612,14 +1599,14 @@ void postUpdate(void) {
     if (!playerReady) return;
 
     static double lastSave;
-    double now = millies();
+    double now = utils::millies();
 
-    if (flyingCameraIsActive()) {
+    if (engine::flyingCameraIsActive()) {
         playerFollowFlyingCamera();
         if (now > lastSave + 1000) {
             lastSave             = now;
-            Transform* transform = getComponent(playerScene, Transform, playerEntityId);
-            if (transform) transformDbSave("player", transform);
+            engine::Transform* transform = getComponent(playerScene, engine::Transform, playerEntityId);
+            if (transform) engine::transformDbSave("player", transform);
         }
         return;
     }
@@ -1627,11 +1614,12 @@ void postUpdate(void) {
     if (now > lastSave + 1000) {
         lastSave = now;
 
-        Transform* transform = getComponent(playerScene, Transform, playerEntityId);
-        transformDbSave("player", transform);
+        engine::Transform* transform = getComponent(playerScene, engine::Transform, playerEntityId);
+        engine::transformDbSave("player", transform);
 
         float cameraDistance = (gCameraMode == CAM_MODE_ISO) ? topDownCameraGetDistance()
                                                              : thirdPersonCameraGetDistance();
         playerDbSaveCameraState(cameraDistance);
     }
 }
+}  // namespace game

@@ -1,18 +1,20 @@
 #include "VulkanVisibleScenes.h"
 #include "ecs/system/scene/Scene.h"
 
-static Array(Scene*) storedVisibleScenes;
+namespace engine {
+static std::vector<const Scene*> storedVisibleScenes;
 static u32 storedVisibleSceneCount;
 
 void vulkanSetVisibleScenes(Scene** scenes, u32 count) {
-    arrayClear(storedVisibleScenes);
+    storedVisibleScenes.clear();
     for (u32 i = 0; i < count; i++) {
-        arrayPut(storedVisibleScenes, scenes[i]);
+        storedVisibleScenes.push_back(scenes[i]);
     }
     storedVisibleSceneCount = count;
 }
 
-Scene** vulkanGetVisibleScenes(u32* outCount) {
+const struct Scene** vulkanGetVisibleScenes(u32* outCount) {
     if (outCount) *outCount = storedVisibleSceneCount;
-    return storedVisibleScenes;
+    return storedVisibleScenes.data();
 }
+}  // namespace engine

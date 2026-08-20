@@ -1,3 +1,4 @@
+#include "VulkanRmluiPass.h"
 #include "ecs/system/System.h"
 #include "ecs/system/window/WindowSystem.h"
 #include "image/Image.h"
@@ -9,37 +10,25 @@
 #include "renderer/vulkan/resources/VulkanResourceManager.h"
 #include "renderer/vulkan/swapchain/VulkanSwapchain.h"
 #include "rmlui/wrapper/src/crmlui.h"
-#include "container/Map.h"
+#include <unordered_map>
 
 #include "renderer/vulkan/command/VulkanCommand.h"
 #include "renderer/vulkan/resources/VulkanBuffer.h"
 #include "renderer/vulkan/pipeline/VulkanPipe.h"
 
-static void added(void);
-static void preUpdate(void);
-static void postUpdate(void);
-static void removed(void);
+namespace engine {
 
 static double elapsedCPU;
 static double elapsedGPU;
 
-System vulkanRmluiPass = {
-    .name                = "rmlui",
-    .added               = added,
-    .removed             = removed,
-    .preUpdate           = preUpdate,
-    .update              = nullptr,
-    .postUpdate          = postUpdate,
-    .cpuElapsedLastFrame = 0.0,
-    .cpuElapsed          = 0.0,
-    .gpuElapsed          = 0.0,
-    .priority            = 0,
-};
+VulkanRmluiPass vulkanRmluiPass;
+
+VulkanRmluiPass::VulkanRmluiPass() : System("rmlui") {}
 
 ////////////////////////////////////////////////////////////////////
 #define RML_BUFFER_SIZE (1024L * 1024 * 5)
 #define MAX_CACHED_RML_GEOMETRY 1000
-Map(uintptr_t, void*) rmlManagedTextures;
+std::unordered_map<uintptr_t, void*> rmlManagedTextures;
 
 typedef struct RmlInstanceData {
     mat4 transform;
@@ -68,7 +57,7 @@ static void createBuffers(void);
 static void createPipeline(void);
 static void freeRemovedGeometries(void);
 
-static Array(uintptr_t) geometriesToRemove;
+static std::vector<uintptr_t> geometriesToRemove;
 static VulkanPipe pipeline;
 
 static VulkanBuffer vertexBuffer;
@@ -77,15 +66,15 @@ static VulkanBuffer instanceBuffer;
 static VulkanBuffer indirectDrawScissor[FRAMES_IN_FLIGHT];
 static VulkanBuffer indirectDrawNoScissor[FRAMES_IN_FLIGHT];
 
-static Array(VkDrawIndexedIndirectCommand) drawCommandsScissor;
-static Array(VkDrawIndexedIndirectCommand) drawCommandsNoScissor;
+static std::vector<VkDrawIndexedIndirectCommand> drawCommandsScissor;
+static std::vector<VkDrawIndexedIndirectCommand> drawCommandsNoScissor;
 
 static int viewportW, viewportH;
 static int scissorEnabled, scissorX, scissorY, scissorW, scissorH;
 static u32 drawCalls, instanceCount, triangleCount;
 static mat4 projection, model;
 
-void added(void) {
+void VulkanRmluiPass::added() {
     glm_mat4_identity(model);
     glm_ortho(0, window.width, 0, window.height, -10000, 10000, projection);
 
@@ -137,8 +126,8 @@ void rmlEndFrame(void) {
     if (vulkan.skipFrame) {
         return;
     }
-    assert(arraySize(drawCommandsNoScissor) > 500 || "syke!");
-    assert(arraySize(drawCommandsScissor) > 500 || "syke!");
+    assert(static_cast<i32>(drawCommandsNoScissor.size()) > 500 || "syke!");
+    assert(static_cast<i32>(drawCommandsScissor.size()) > 500 || "syke!");
 
     VulkanCommand* cmd = vulkan.currentCmd;
     vulkanBeginProfile(cmd, &pipeline.profile, 0);
@@ -151,44 +140,44 @@ void rmlEndFrame(void) {
                       .pipe   = &pipeline,
                       .color1 = vulkanSwapchain.currentSwapchainImage);
 
-    if (arraySize(drawCommandsNoScissor) > 0) {
+    if (static_cast<i32>(drawCommandsNoScissor.size()) > 0) {
         vulkanScissor(cmd, 0, 0, window.width, window.height);
         vulkanCopy(.target.buf  = &indirectDrawNoScissor[renderer.flightIndex],
-                   .source.data = drawCommandsNoScissor,
-                   .size = static_cast<u32>(sizeof(VkDrawIndexedIndirectCommand) * arraySize(drawCommandsNoScissor)));
+                   .source.data = drawCommandsNoScissor.data(),
+                   .size = static_cast<u32>(sizeof(VkDrawIndexedIndirectCommand) * static_cast<i32>(drawCommandsNoScissor.size())));
         vulkanDrawIndexedIndirect(cmd,
                                   &indirectDrawNoScissor[renderer.flightIndex],
-                                  arraySize(drawCommandsNoScissor),
+                                  static_cast<i32>(drawCommandsNoScissor.size()),
                                   sizeof(VkDrawIndexedIndirectCommand));
-        drawCalls += arraySize(drawCommandsNoScissor);
-        instanceCount += arraySize(drawCommandsNoScissor);
+        drawCalls += static_cast<i32>(drawCommandsNoScissor.size());
+        instanceCount += static_cast<i32>(drawCommandsNoScissor.size());
     }
 
-    if (arraySize(drawCommandsScissor) > 0) {
+    if (static_cast<i32>(drawCommandsScissor.size()) > 0) {
         vulkanScissor(cmd, scissorX, scissorY, scissorW, scissorH);
 
         vulkanCopy(.target.buf  = &indirectDrawScissor[renderer.flightIndex],
-                   .source.data = drawCommandsScissor,
-                   .size = static_cast<u32>(sizeof(VkDrawIndexedIndirectCommand) * arraySize(drawCommandsScissor)));
+                   .source.data = drawCommandsScissor.data(),
+                   .size = static_cast<u32>(sizeof(VkDrawIndexedIndirectCommand) * static_cast<i32>(drawCommandsScissor.size())));
 
         vulkanDrawIndexedIndirect(cmd,
                                   &indirectDrawScissor[renderer.flightIndex],
-                                  arraySize(drawCommandsScissor),
+                                  static_cast<i32>(drawCommandsScissor.size()),
                                   sizeof(VkDrawIndexedIndirectCommand));
-        drawCalls += arraySize(drawCommandsScissor);
-        instanceCount += arraySize(drawCommandsScissor);
+        drawCalls += static_cast<i32>(drawCommandsScissor.size());
+        instanceCount += static_cast<i32>(drawCommandsScissor.size());
     }
     vulkanEndRender(cmd);
 
     vulkanEndProfile(vulkan.currentCmd, &pipeline.profile, 0);
     elapsedGPU = pipeline.profile.elapsed;
 
-    arrayClear(drawCommandsNoScissor);
-    arrayClear(drawCommandsScissor);
+    drawCommandsNoScissor.clear();
+    drawCommandsScissor.clear();
 }
 
 uintptr_t rmlLoadTexture(int* outX, int* outY, const char* path) {
-    if (strStartsWith(path, "fb-")) {
+    if (utils::strStartsWith(path, "fb-")) {
         Texture* texture = getTextureByName(path);
         if (!texture) {
             return 0;
@@ -200,19 +189,18 @@ uintptr_t rmlLoadTexture(int* outX, int* outY, const char* path) {
             *outY = texture->image.height;
         }
         if (!texture) {
-            warn("could not find %s returning dummy image", path);
+            utils::warn("could not find %s returning dummy image", path);
             return (uintptr_t)&vulkanResources.dummyImage;
         }
         return (uintptr_t)texture->backendImg;
     }
 
-    Image image = imageLoad(path);
+    utils::Image image = utils::imageLoad(path);
 
-    VulkanImage* img = static_cast<VulkanImage*>(memoryAlloc(sizeof(VulkanImage)));
-    *img = vulkanCreateImage(.name   = path,  //
+    VulkanImage* img = new VulkanImage{vulkanCreateImage(.name   = path,  //
                              .width  = image.width,
                              .height = image.height,
-                             .format = static_cast<VkFormat>(image.vkFormat ? image.vkFormat : VK_FORMAT_R8G8B8A8_UNORM));
+                             .format = static_cast<VkFormat>(image.vkFormat ? image.vkFormat : VK_FORMAT_R8G8B8A8_UNORM))};
     VulkanCommand* cmd = vulkanTransientBegin();
     vulkanTransition(cmd, img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 0, 1);
     vulkanCopy(.cmd = cmd, .target.img = img, .source.data = (void*)image.data, .size = static_cast<u32>(image.size));
@@ -220,7 +208,7 @@ uintptr_t rmlLoadTexture(int* outX, int* outY, const char* path) {
     vulkanTransientEnd(cmd, 0);
 
     uintptr_t texKey = (uintptr_t)img->img;
-    mapPut(rmlManagedTextures, texKey, 0);
+    rmlManagedTextures[texKey] = 0;
 
     if (outX) {
         *outX = image.width;
@@ -229,15 +217,14 @@ uintptr_t rmlLoadTexture(int* outX, int* outY, const char* path) {
         *outY = image.height;
     }
 
-    imageDestory(&image);
+    utils::imageDestory(&image);
     return (uintptr_t)img;
 }
 
 uintptr_t rmlGenerateTexture(const unsigned char* data, size_t size, int x, int y) {
     static int counter;
-    const char* name   = strtmp("rml generated: %d", counter++);
-    VulkanImage* img = static_cast<VulkanImage*>(memoryAlloc(sizeof(VulkanImage)));
-    *img               = vulkanCreateImage(.name = name, .width = x, .height = y);
+    const char* name   = utils::strtmp("rml generated: %d", counter++);
+    VulkanImage* img = new VulkanImage{vulkanCreateImage(.name = name, .width = x, .height = y)};
     VulkanCommand* cmd = vulkanTransientBegin();
     vulkanTransition(cmd, img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 0, 1);
     vulkanCopy(.cmd = cmd, .target.img = img, .source.data = (void*)data, .size = static_cast<u32>(size));
@@ -245,17 +232,17 @@ uintptr_t rmlGenerateTexture(const unsigned char* data, size_t size, int x, int 
     vulkanTransientEnd(cmd, 0);
 
     uintptr_t texKey = (uintptr_t)img->img;
-    mapPut(rmlManagedTextures, texKey, 0);
+    rmlManagedTextures[texKey] = 0;
     return (uintptr_t)img;
 }
 
 void rmlReleaseTexture(uintptr_t textureHandleOut) {
     VulkanImage* img = (VulkanImage*)textureHandleOut;
     uintptr_t texKey = (uintptr_t)img->img;
-    if (mapContainsKey(rmlManagedTextures, texKey)) {
+    if (rmlManagedTextures.contains(texKey)) {
         vulkanDestroyImage(img, NULL);
-        mapRemove(rmlManagedTextures, texKey);
-        memoryFree(img);
+        rmlManagedTextures.erase(texKey);
+        delete img;
     }
 }
 
@@ -306,7 +293,7 @@ uintptr_t rmlCompileGeometry(RmlVertex* vertices,
 }
 
 void rmlReleaseGeometry(uintptr_t geometryHandle) {
-    arrayPut(geometriesToRemove, geometryHandle);
+    geometriesToRemove.push_back(geometryHandle);
 }
 
 void rmlRenderGeometry(uintptr_t rmlGeometryHandle,
@@ -345,9 +332,9 @@ void rmlRenderGeometry(uintptr_t rmlGeometryHandle,
     triangleCount += rmlGeometry->numIndices / 3;
 
     if (scissorEnabled) {
-        arrayPut(drawCommandsScissor, command);
+        drawCommandsScissor.push_back(command);
     } else {
-        arrayPut(drawCommandsNoScissor, command);
+        drawCommandsNoScissor.push_back(command);
     }
 }
 
@@ -375,17 +362,17 @@ void rmlSetViewport(int width, int height) {
     viewportH = height;
 }
 
-void preUpdate(void) {
+void VulkanRmluiPass::preUpdate() {
     vulkanResetProfile(vulkan.currentCmd, &pipeline.profile, 0);
 }
 
-static void postUpdate(void) {
+void VulkanRmluiPass::postUpdate() {
     freeRemovedGeometries();
     glm_ortho(0, window.width, window.height, 0, -10000, 10000, projection);
 
     vulkanRmluiPass.cpuElapsed = elapsedCPU;
     vulkanRmluiPass.gpuElapsed = elapsedGPU;
-    elapsedCPU                 = nanos();
+    elapsedCPU                 = utils::nanos();
     guiManagerRmlUi.postUpdate();
 
     renderer.drawCalls     += drawCalls;
@@ -396,10 +383,10 @@ static void postUpdate(void) {
     instanceCount = 0;
     triangleCount = 0;
 
-    elapsedCPU = nanos() - elapsedCPU;
+    elapsedCPU = utils::nanos() - elapsedCPU;
 }
 
-void removed(void) {
+void VulkanRmluiPass::removed() {
     guiManagerRmlUi.removed();
 
     freeRemovedGeometries();
@@ -414,18 +401,15 @@ void removed(void) {
 
     vulkanDestroyPipe(&pipeline);
 
-    arrayFree(drawCommandsNoScissor);
-    arrayFree(drawCommandsScissor);
-    arrayFree(geometriesToRemove);
-    mapFree(rmlManagedTextures);
 }
 
 void freeRemovedGeometries(void) {
-    for (int i = 0, si = arraySize(geometriesToRemove); i < si; i++) {
+    for (int i = 0, si = static_cast<i32>(geometriesToRemove.size()); i < si; i++) {
         RmlGeometry* rmlGeometry = (RmlGeometry*)geometriesToRemove[i];
         vulkanBufferDestroyVirtual(&rmlGeometry->indexVirtualBuf);
         vulkanBufferDestroyVirtual(&rmlGeometry->vertexVirtualBuf);
         *rmlGeometry = RmlGeometry{};
     }
-    arrayClear(geometriesToRemove);
+    geometriesToRemove.clear();
 }
+}  // namespace engine

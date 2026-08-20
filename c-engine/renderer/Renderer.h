@@ -1,6 +1,16 @@
 #pragma once
+#include "ecs/system/System.h"
 
-extern struct System renderSystem;
+namespace engine {
+class RenderSystem : public System {
+public:
+    RenderSystem();
+    void added() override;
+    void removed() override;
+    void postUpdate() override;
+};
+
+extern RenderSystem renderSystem;
 
 struct Material;
 struct Texture;
@@ -38,7 +48,7 @@ struct RendererSunLight {
 #define CONTRAST 1.0
 
 struct Renderer {
-    Array(struct System*) passes;
+    std::vector<System*> passes;
     u32 drawCalls;
     u32 instanceCount;
     u32 triangleCount;
@@ -165,3 +175,4 @@ typedef enum TonemapMode {
 
 void rendererSetTonemapMode(TonemapMode mode);
 TonemapMode rendererGetTonemapMode(void);
+}  // namespace engine

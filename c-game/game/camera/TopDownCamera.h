@@ -3,10 +3,11 @@
 #include "ecs/system/scene/SceneSystem.h"
 
 // Initialize and attach to the active camera entity
+namespace game {
 void topDownCameraInit(void);
 
 // Set the entity the top-down camera should follow
-void topDownCameraSetTarget(Scene* scene, u32 entityId);
+void topDownCameraSetTarget(engine::Scene* scene, u32 entityId);
 
 // Set the orbit distance from target (meters)
 void topDownCameraSetDistance(float distance);
@@ -31,3 +32,4 @@ void topDownCameraUpdate(void);
 
 // Unproject screen coordinates to world-space ground ray origin + direction
 void topDownCameraUnproject(float screenX, float screenY, vec3 outOrigin, vec3 outDir);
+}  // namespace game

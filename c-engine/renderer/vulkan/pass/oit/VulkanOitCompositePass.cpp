@@ -1,31 +1,19 @@
 #include "VulkanOitCompositePass.h"
+#include "VulkanOitCompositePass.h"
 #include "renderer/vulkan/Vulkan.h"
 #include "renderer/vulkan/command/VulkanCommand.h"
 #include "renderer/vulkan/pipeline/VulkanPipe.h"
 #include "renderer/vulkan/resources/VulkanFrameResources.h"
 
-static void added(void);
-static void preUpdate(void);
-static void update(void);
-static void postUpdate(void);
-static void removed(void);
+namespace engine {
 
 static VulkanPipe pipeline;
 static double     elapsedCPU;
 static double     elapsedGPU;
 
-System vulkanOitCompositePass = {
-    .name                = "oit_composite",
-    .added               = added,
-    .removed             = removed,
-    .preUpdate           = preUpdate,
-    .update              = update,
-    .postUpdate          = postUpdate,
-    .cpuElapsedLastFrame = 0.0,
-    .cpuElapsed          = 0.0,
-    .gpuElapsed          = 0.0,
-    .priority            = 0,
-};
+VulkanOitCompositePass vulkanOitCompositePass;
+
+VulkanOitCompositePass::VulkanOitCompositePass() : System("oit_composite") {}
 
 typedef struct OitCompositePushConstants {
     u32 oitAccumIndex;
@@ -35,17 +23,17 @@ typedef struct OitCompositePushConstants {
     u32 height;
 } OitCompositePushConstants;
 
-static void added(void) {
+void VulkanOitCompositePass::added() {
     pipeline = vulkanCreatePipe(
         .name = "oit_composite",
         .comp = "shaders/pass/oit/spv/oit_composite.comp.spv");
 }
 
-static void preUpdate(void) {
+void VulkanOitCompositePass::preUpdate() {
     vulkanResetProfile(vulkan.currentCmd, &pipeline.profile, 0);
 }
 
-static void update(void) {
+void VulkanOitCompositePass::update() {
     if (vulkan.skipFrame) return;
 
     VulkanCommand* cmd       = vulkan.currentCmd;
@@ -83,13 +71,14 @@ static void update(void) {
     elapsedGPU = pipeline.profile.elapsed;
 }
 
-static void postUpdate(void) {
+void VulkanOitCompositePass::postUpdate() {
     vulkanOitCompositePass.cpuElapsed = elapsedCPU;
     vulkanOitCompositePass.gpuElapsed = elapsedGPU;
-    elapsedCPU                        = nanos();
-    elapsedCPU                        = nanos() - elapsedCPU;
+    elapsedCPU                        = utils::nanos();
+    elapsedCPU                        = utils::nanos() - elapsedCPU;
 }
 
-static void removed(void) {
+void VulkanOitCompositePass::removed() {
     vulkanDestroyPipe(&pipeline);
 }
+}  // namespace engine

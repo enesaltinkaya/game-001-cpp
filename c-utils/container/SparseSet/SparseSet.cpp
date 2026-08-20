@@ -3,6 +3,7 @@
 #include <cstring>
 #include "Utils.h"
 
+namespace utils {
 SparseSet* ssNew(u32 elementSize) {
     SparseSet* ss = new SparseSet();
     ss->elementSize = elementSize;
@@ -97,4 +98,4 @@ void ssClear(SparseSet* ss) {
     ss->size = 0;
     ss->dense.clear();
     ss->sparse.clear();
-}
+}}  // namespace utils

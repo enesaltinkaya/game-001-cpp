@@ -1,3 +1,4 @@
+#include "DebugGui.h"
 #include "ecs/system/System.h"
 #include "ecs/system/lua/LuaSystem.h"
 #include "renderer/Renderer.h"
@@ -15,22 +16,11 @@
 #include "rmlui/wrapper/src/crmlui.h"
 #include <stdio.h>
 
-static void added(void);
-static void update(void);
-static void removed(void);
+namespace engine {
 
-System debugGui = {
-    .name                = "debugGui",
-    .added               = added,
-    .removed             = removed,
-    .preUpdate           = nullptr,
-    .update              = update,
-    .postUpdate          = nullptr,
-    .cpuElapsedLastFrame = 0.0,
-    .cpuElapsed          = 0.0,
-    .gpuElapsed          = 0.0,
-    .priority            = 0,
-};
+DebugGui debugGui;
+
+DebugGui::DebugGui() : System("debugGui") {}
 
 static void* document;
 static void* model;
@@ -277,7 +267,7 @@ static int aaCasNext(void* _) {
     return 0;
 }
 
-void added(void) {
+void DebugGui::added() {
     syncFromPasses();
 
     luaRegisterFunction("debugToggleShadows", toggleShadows);
@@ -326,13 +316,13 @@ void added(void) {
     rmlShowDocumentWithoutFocus(document);
 }
 
-void removed(void) {
+void DebugGui::removed() {
     rmlUnloadDocument(document);
     rmlUnloadModel(model);
     document = nullptr;
 }
 
-void update(void) {
+void DebugGui::update() {
     syncFromPasses();
     rmlUpdateDirtyAll(model);
 }
@@ -344,3 +334,4 @@ void debugGuiToggle(void) {
         guiManagerAddGuiNextFrame(&debugGui);
     }
 }
+}  // namespace engine

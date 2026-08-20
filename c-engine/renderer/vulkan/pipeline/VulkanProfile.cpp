@@ -6,6 +6,7 @@
 #include "renderer/vulkan/command/VulkanCommand.h"
 #include "renderer/vulkan/utils/VulkanUtils.h"
 
+namespace engine {
 struct VulkanProfile vulkanCreateProfile(const char* name) {
     struct VulkanProfile vulkanProfile = {};
     vulkanProfile.hasStatPools         = 0;
@@ -17,10 +18,10 @@ struct VulkanProfile vulkanCreateProfile(const char* name) {
     createInfo.queryCount              = 2;
     for (int i = 0; i < FRAMES_IN_FLIGHT; i++) {
         vkCreateQueryPool(vulkan.device, &createInfo, nullptr, &vulkanProfile.pools[i]);
-        if (isDebug()) {
+        if (utils::isDebug()) {
             vulkanUtilsSetName((u64)vulkanProfile.pools[i],
                                VK_OBJECT_TYPE_QUERY_POOL,
-                               strtmp("%s%s #%d", "querypool ", name, i));
+                               utils::strtmp("%s%s #%d", "querypool ", name, i));
         }
     }
 
@@ -40,10 +41,10 @@ struct VulkanProfile vulkanCreateProfile(const char* name) {
     statCreateInfo.queryCount            = 1;
     for (int i = 0; i < FRAMES_IN_FLIGHT; i++) {
         vkCreateQueryPool(vulkan.device, &statCreateInfo, nullptr, &vulkanProfile.statPools[i]);
-        if (isDebug()) {
+        if (utils::isDebug()) {
             vulkanUtilsSetName((u64)vulkanProfile.statPools[i],
                                VK_OBJECT_TYPE_QUERY_POOL,
-                               strtmp("%s%s_stats #%d", "querypool ", name, i));
+                               utils::strtmp("%s%s_stats #%d", "querypool ", name, i));
         }
     }
     vulkanProfile.hasStatPools = 1;
@@ -209,3 +210,4 @@ void vulkanEndProfileStats(struct VulkanCommand* cmd, struct VulkanProfile* prof
     vkCmdEndQuery(cmd->cmd, profile->statPools[fi], 0);
     profile->statUsed[fi] = 1;
 }
+}  // namespace engine

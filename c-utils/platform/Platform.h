@@ -1,5 +1,6 @@
 #pragma once
 
+namespace utils {
 struct Platform {
     bool isWindows;
     char seperator[2];
@@ -33,3 +34,4 @@ MappedFile* map_file(const char* path, u64 size, bool create_and_resize);
 // Unmaps and closes the file.
 void unmap_file(MappedFile* map);
 
+}  // namespace utils

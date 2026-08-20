@@ -7,6 +7,7 @@
 
 #define AZGAAR_ROAD_DECAL_MAX_HANDLES 8192u
 
+namespace game {
 static vec3 Y_UP = {0.0f, 1.0f, 0.0f};
 
 static u32  handles[AZGAAR_ROAD_DECAL_MAX_HANDLES];
@@ -36,7 +37,7 @@ static void routeColor(AzgaarRouteGroup group, vec4 out) {
 }
 
 void azgaarRoadDecalsClear(void) {
-    for (u32 i = 0; i < handleCount; ++i) decalRemove(handles[i]);
+    for (u32 i = 0; i < handleCount; ++i) engine::decalRemove(handles[i]);
     handleCount = 0;
 }
 
@@ -89,8 +90,8 @@ static void addSegment(const AzgaarWorld* world,
         // to the source height, which is the identical value.  The fallback
         // applies the settlement plateau (workstream D) so road decals that
         // run through a town stay glued to the flattened ground.
-        HeightmapTerrain* ht = heightmapTerrainGetActive();
-        float naturalH = ht ? heightmapTerrainSample(ht, midWx, midWz)
+        engine::HeightmapTerrain* ht = engine::heightmapTerrainGetActive();
+        float naturalH = ht ? engine::heightmapTerrainSample(ht, midWx, midWz)
                             : azgaarSettlementsPlateauY(world, midWx, midWz,
                                                          azgaarHeightToMeters(world, azgaarWorldSampleHeightSmooth(world, mxPx, myPx)));
         // The decal sits on the road centerline, so sample the corridor
@@ -100,7 +101,7 @@ static void addSegment(const AzgaarWorld* world,
         if (!azgaarRoadCorridorSample(midWx, midWz, naturalH, &h)) h = naturalH;
         float yaw = atan2f(sdx, sdz);
 
-        DecalInstance d = {};
+        engine::DecalInstance d = {};
         d.position[0] = (sx + ex) * 0.5f;
         // Tall projector so the box always covers the rendered terrain even
         // when the sampled height h is slightly off. The shader keeps only
@@ -120,21 +121,21 @@ static void addSegment(const AzgaarWorld* world,
         d.textureId = DECAL_PROCEDURAL_CIRCLE_TEXTURE;
         // Road rectangles overlap at junctions; the union-blend road layer
         // keeps coverage idempotent there so overlaps don't darken.
-        d.flags = DECAL_FLAG_GROUND_ONLY | DECAL_FLAG_ROAD;
+        d.flags = engine::DECAL_FLAG_GROUND_ONLY | engine::DECAL_FLAG_ROAD;
         d.opacity = 1.0f;
         d.normalThreshold = 0.28f;
         d.edgeFeather = group == AZGAAR_ROUTE_ROAD ? 0.30f : 0.38f;
         d.uvScale[0] = 1.0f;
         d.uvScale[1] = fmaxf(1.0f, slen / width);
 
-        u32 handle = decalAdd(&d);
+        u32 handle = engine::decalAdd(&d);
         if (handle != DECAL_INVALID_HANDLE) handles[handleCount++] = handle;
     }
 }
 
 void azgaarRoadDecalsBuild(const AzgaarWorld* world) {
     azgaarRoadDecalsClear();
-    if (!visible || !world || !world->routes) return;
+    if (!visible || !world || world->routes.empty()) return;
 
     u32 roads = 0, trails = 0, skipped = 0;
     for (u32 r = 0; r < world->routeCount; ++r) {
@@ -152,9 +153,10 @@ void azgaarRoadDecalsBuild(const AzgaarWorld* world) {
         }
     }
 
-    info("Azgaar road decals: %u decals from %u roads, %u trails (%u searoutes skipped)",
+    utils::info("Azgaar road decals: %u decals from %u roads, %u trails (%u searoutes skipped)",
          handleCount,
          roads,
          trails,
          skipped);
 }
+}  // namespace game

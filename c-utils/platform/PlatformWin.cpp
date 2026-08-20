@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include <direct.h>
 
+namespace utils {
 Platform platform = {};
 
 Platform* getPlatform(void) {
@@ -107,4 +108,5 @@ int numberOfCores(void) {
     return sysinfo.dwNumberOfProcessors;
 }
 
+}  // namespace utils
 #endif

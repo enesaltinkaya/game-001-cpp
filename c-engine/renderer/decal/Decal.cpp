@@ -5,6 +5,7 @@
 #define DECAL_MAX_PERSISTENT 16384u
 #define DECAL_MAX_TRANSIENT  2048u
 
+namespace engine {
 static DecalInstance persistentDecals[DECAL_MAX_PERSISTENT];
 static u8            persistentAlive[DECAL_MAX_PERSISTENT];
 // Remembers the last-used slot so repeated decalAdd calls don't rescan from
@@ -32,7 +33,7 @@ u32 decalAdd(const DecalInstance* decal) {
             return i;
         }
     }
-    warn("decalAdd: persistent decal capacity reached (%u)", DECAL_MAX_PERSISTENT);
+    utils::warn("decalAdd: persistent decal capacity reached (%u)", DECAL_MAX_PERSISTENT);
     return DECAL_INVALID_HANDLE;
 }
 
@@ -70,3 +71,4 @@ const DecalInstance* decalGetTransient(size_t* count) {
     if (count) *count = transientCount;
     return transientDecals;
 }
+}  // namespace engine

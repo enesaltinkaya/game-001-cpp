@@ -1,4 +1,5 @@
 #include "VulkanOitAccumulatePass.h"
+#include "VulkanOitAccumulatePass.h"
 #include "ecs/system/scene/Scene.h"
 #include "events/Events.h"
 #include "renderer/Renderer.h"
@@ -9,28 +10,15 @@
 #include "renderer/vulkan/scene/VulkanVisibleScenes.h"
 #include "renderer/vulkan/resources/VulkanFrameResources.h"
 
-static void added(void);
-static void preUpdate(void);
-static void update(void);
-static void postUpdate(void);
-static void removed(void);
+namespace engine {
 static void recreatePipelines(void);
 
 static double elapsedCPU;
 static double elapsedGPU;
 
-System vulkanOitAccumulatePass = {
-    .name                = "oit_accumulate",
-    .added               = added,
-    .removed             = removed,
-    .preUpdate           = preUpdate,
-    .update              = update,
-    .postUpdate          = postUpdate,
-    .cpuElapsedLastFrame = 0.0,
-    .cpuElapsed          = 0.0,
-    .gpuElapsed          = 0.0,
-    .priority            = 0,
-};
+VulkanOitAccumulatePass vulkanOitAccumulatePass;
+
+VulkanOitAccumulatePass::VulkanOitAccumulatePass() : System("oit_accumulate") {}
 
 static VulkanPipe graphicsPipe;
 
@@ -88,16 +76,16 @@ static void recreatePipelines(void) {
                          .vertexBindingCount  = 1);
 }
 
-static void added(void) {
-    signalSubscribe("swapchainCreated", swapchainCreated);
+void VulkanOitAccumulatePass::added() {
+    utils::signalSubscribe("swapchainCreated", swapchainCreated);
     recreatePipelines();
 }
 
-static void preUpdate(void) {
+void VulkanOitAccumulatePass::preUpdate() {
     vulkanResetProfile(vulkan.currentCmd, &graphicsPipe.profile, 0);
 }
 
-static void update(void) {
+void VulkanOitAccumulatePass::update() {
     if (vulkan.skipFrame) return;
 
     VulkanCommand* cmd       = vulkan.currentCmd;
@@ -134,9 +122,9 @@ static void update(void) {
     vulkanBindPipe(cmd, &graphicsPipe);
 
     u32 visibleSceneCount = 0;
-    Scene** visibleScenes = vulkanGetVisibleScenes(&visibleSceneCount);
+    const Scene** visibleScenes = vulkanGetVisibleScenes(&visibleSceneCount);
     for (u32 si = 0; si < visibleSceneCount; si++) {
-        Scene* scene = visibleScenes[si];
+        const Scene* scene = visibleScenes[si];
         if (!scene->backendScene) continue;
         VulkanScene* vs  = static_cast<VulkanScene*>(scene->backendScene);
         if (!vs->totalDraws) continue;
@@ -168,13 +156,14 @@ static void update(void) {
     elapsedGPU = graphicsPipe.profile.elapsed;
 }
 
-static void postUpdate(void) {
+void VulkanOitAccumulatePass::postUpdate() {
     vulkanOitAccumulatePass.cpuElapsed = elapsedCPU;
     vulkanOitAccumulatePass.gpuElapsed = elapsedGPU;
-    elapsedCPU                         = nanos();
-    elapsedCPU                         = nanos() - elapsedCPU;
+    elapsedCPU                         = utils::nanos();
+    elapsedCPU                         = utils::nanos() - elapsedCPU;
 }
 
-static void removed(void) {
+void VulkanOitAccumulatePass::removed() {
     vulkanDestroyPipe(&graphicsPipe);
 }
+}  // namespace engine

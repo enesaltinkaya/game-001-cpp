@@ -1,6 +1,7 @@
 #include "VulkanProfile.h"
 #include "renderer/vulkan/resources/VulkanImage.h"
 
+namespace engine {
 struct VulkanDesc;
 struct VulkanImage;
 struct VulkanBuffer;
@@ -33,10 +34,10 @@ struct VulkanPipeInfo {
     const char* tsc = nullptr;
     const char* tes = nullptr;
     const char* comp = nullptr;
-    VkVertexInputAttributeDescription in1attr;
-    VkVertexInputBindingDescription in1bind;
-    VkVertexInputAttributeDescription in2attr;
-    VkVertexInputBindingDescription in2bind;
+    VkVertexInputAttributeDescription in1attr = {};
+    VkVertexInputBindingDescription in1bind = {};
+    VkVertexInputAttributeDescription in2attr = {};
+    VkVertexInputBindingDescription in2bind = {};
     VkVertexInputAttributeDescription* vertexAttributes = nullptr;
     u32 vertexAttributeCount = 0;
     VkVertexInputBindingDescription* vertexBindings = nullptr;
@@ -50,10 +51,10 @@ struct VulkanPipeInfo {
     VkFormat colorFormat2 = VK_FORMAT_UNDEFINED;
     VkFormat colorFormat3 = VK_FORMAT_UNDEFINED;
     VkFormat depthFormat = VK_FORMAT_UNDEFINED;
-    vec4 clearColor1;
-    vec4 clearColor2;
-    vec4 clearColor3;
-    vec2 clearDepth;
+    vec4 clearColor1 = {};
+    vec4 clearColor2 = {};
+    vec4 clearColor3 = {};
+    vec2 clearDepth = {};
     bool wireFrame = false;
     bool blend = false;
     bool blendPreserveAlpha = false;
@@ -86,13 +87,13 @@ struct VulkanBeginRenderInfo {
     int depthLayer = -1;  // -1 or 0 = use default view, >0 = use per-layer view (1-indexed)
 };
 
-#define vulkanCreatePipe(...) r_vulkanCreatePipe(VulkanPipeInfo{__VA_ARGS__})
+#define vulkanCreatePipe(...) engine::r_vulkanCreatePipe(engine::VulkanPipeInfo{__VA_ARGS__})
 struct VulkanPipe r_vulkanCreatePipe(struct VulkanPipeInfo pipeInfo);
 void vulkanDestroyPipe(struct VulkanPipe* pipe);
 void vulkanBindPipe(struct VulkanCommand* cmd, struct VulkanPipe* pipe);
 void vulkanPush(struct VulkanCommand* cmd, struct VulkanPipe* pipe, u32 size, void* pc);
 
-#define vulkanBeginRender(...) r_vulkanBeginRender(VulkanBeginRenderInfo{__VA_ARGS__})
+#define vulkanBeginRender(...) engine::r_vulkanBeginRender(engine::VulkanBeginRenderInfo{__VA_ARGS__})
 void r_vulkanBeginRender(struct VulkanBeginRenderInfo beginRenderInfo);
 void r_vulkanEndRender(struct VulkanCommand* cmd);
 #define vulkanEndRender(cmd) r_vulkanEndRender(cmd)
@@ -130,3 +131,4 @@ void vulkanBindIndex(struct VulkanCommand* cmd,
 
 void vulkanViewport(struct VulkanCommand* cmd, int x, int y, int w, int h);
 void vulkanScissor(struct VulkanCommand* cmd, int x, int y, int w, int h);
+}  // namespace engine

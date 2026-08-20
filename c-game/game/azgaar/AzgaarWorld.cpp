@@ -6,6 +6,7 @@
 
 // Defined later in this file; parseRivers (near the top) needs a forward
 // declaration since it is inserted before the definition.
+namespace game {
 static const char* azgaarMapSection(const char* data, u32 size, u32 index, u32* outLen);
 static void azgaarHexToRgb(const char* hex, float out[3]);
 
@@ -217,31 +218,29 @@ static void parseRivers(AzgaarWorld* world, const char* data, u32 size) {
 
     // Section 32 metadata (JSON array)
     u32 metaCount = 0;
-    AzgaarRiver* meta = nullptr;
+    std::vector<AzgaarRiver> meta;
     if (rivers && riversLen > 0u) {
         json_error_t jerr = {};
         json_t* arr = json_loadb(rivers, riversLen, 0, &jerr);
         if (arr && json_is_array(arr)) {
             metaCount = static_cast<u32>(json_array_size(arr));
-            if (metaCount) {
-                meta  = static_cast<AzgaarRiver*>(memoryAlloc(sizeof(AzgaarRiver) * metaCount));
-                for (u32 i = 0; i < metaCount; i++) {
-                    AzgaarRiver* r = &meta[i];
-                    *r = AzgaarRiver{};
-                    json_t* obj = json_array_get(arr, i);
-                    if (!json_is_object(obj)) continue;
-                    r->id            = static_cast<u32>(jsonNumberOr(obj, "i", static_cast<double>(i + 1)));
-                    r->source        = static_cast<u32>(jsonNumberOr(obj, "source", 0.0));
-                    r->mouth         = static_cast<u32>(jsonNumberOr(obj, "mouth", 0.0));
-                    r->discharge     = static_cast<float>(jsonNumberOr(obj, "discharge", 0.0));
-                    r->lengthKm      = static_cast<float>(jsonNumberOr(obj, "length", 0.0));
-                    r->widthPx       = static_cast<float>(jsonNumberOr(obj, "width", 0.0));
-                    r->widthFactor   = static_cast<float>(jsonNumberOr(obj, "widthFactor", 1.0));
-                    r->sourceWidthPx = static_cast<float>(jsonNumberOr(obj, "sourceWidth", 0.0));
-                    r->parent        = static_cast<u32>(jsonNumberOr(obj, "parent", 0.0));
-                    r->basin         = static_cast<u32>(jsonNumberOr(obj, "basin", 0.0));
-                    snprintf(r->name, sizeof(r->name), "%s", jsonStringOr(obj, "name", ""));
-                }
+            meta.resize(metaCount);
+            for (u32 i = 0; i < metaCount; i++) {
+                AzgaarRiver* r = &meta[i];
+                *r = AzgaarRiver{};
+                json_t* obj = json_array_get(arr, i);
+                if (!json_is_object(obj)) continue;
+                r->id            = static_cast<u32>(jsonNumberOr(obj, "i", static_cast<double>(i + 1)));
+                r->source        = static_cast<u32>(jsonNumberOr(obj, "source", 0.0));
+                r->mouth         = static_cast<u32>(jsonNumberOr(obj, "mouth", 0.0));
+                r->discharge     = static_cast<float>(jsonNumberOr(obj, "discharge", 0.0));
+                r->lengthKm      = static_cast<float>(jsonNumberOr(obj, "length", 0.0));
+                r->widthPx       = static_cast<float>(jsonNumberOr(obj, "width", 0.0));
+                r->widthFactor   = static_cast<float>(jsonNumberOr(obj, "widthFactor", 1.0));
+                r->sourceWidthPx = static_cast<float>(jsonNumberOr(obj, "sourceWidth", 0.0));
+                r->parent        = static_cast<u32>(jsonNumberOr(obj, "parent", 0.0));
+                r->basin         = static_cast<u32>(jsonNumberOr(obj, "basin", 0.0));
+                snprintf(r->name, sizeof(r->name), "%s", jsonStringOr(obj, "name", ""));
             }
         }
         if (arr) json_decref(arr);
@@ -257,9 +256,9 @@ static void parseRivers(AzgaarWorld* world, const char* data, u32 size) {
 
     world->riverCount = svgCount;
     if (svgCount) {
-        world->rivers  = static_cast<AzgaarRiver*>(memoryAlloc(sizeof(AzgaarRiver) * svgCount));
+        world->rivers.resize(svgCount);
         // A 4096-float temp (2048 points) comfortably covers the densest path.
-        float* tmp = static_cast<float*>(memoryAlloc(sizeof(float) * 4096u));
+        std::vector<float> tmp(4096u);
         for (u32 p = 0; p < svgCount; p++) {
             AzgaarRiver* r = &world->rivers[p];
             *r = AzgaarRiver{};
@@ -267,7 +266,7 @@ static void parseRivers(AzgaarWorld* world, const char* data, u32 size) {
 
             // Merge matching section 32 metadata by id; fall back to a default
             // 4 m width (in px) when the metadata entry is missing.
-            AzgaarRiver* m = nullptr;
+            const AzgaarRiver* m = nullptr;
             for (u32 k = 0; k < metaCount; k++) {
                 if (meta[k].id == r->id) { m = &meta[k]; break; }
             }
@@ -288,21 +287,18 @@ static void parseRivers(AzgaarWorld* world, const char* data, u32 size) {
             }
 
             u32 pc = 0;
-            azgaarParseSvgPathD(svgPaths[p].d, svgPaths[p].dLen, tmp, &pc, 2048u);
+            azgaarParseSvgPathD(svgPaths[p].d, svgPaths[p].dLen, tmp.data(), &pc, 2048u);
             if (pc) {
-                r->pointsPx    = static_cast<float*>(memoryAlloc(sizeof(float) * pc * 2));
-                memcpy(r->pointsPx, tmp, sizeof(float) * pc * 2);
+                r->pointsPx.assign(tmp.data(), tmp.data() + pc * 2);
                 r->pointCount = pc;
             }
         }
-        memoryFree(tmp);
     }
-    if (meta) memoryFree(meta);
 
     u32 withGeom = 0;
     for (u32 p = 0; p < world->riverCount; p++)
         if (world->rivers[p].pointCount) withGeom++;
-    info("Azgaar rivers parsed: %u paths, %u with geometry, %u metadata entries",
+    utils::info("Azgaar rivers parsed: %u paths, %u with geometry, %u metadata entries",
           world->riverCount, withGeom, metaCount);
 }
 
@@ -344,13 +340,13 @@ static void parseSettlements(AzgaarWorld* world, const char* data, u32 size) {
     u32 len = 0u;
     const char* json = azgaarMapSection(data, size, 15u, &len);
     if (!json || len == 0u) {
-        warn("Azgaar .map has no burgs section (15); no settlements");
+        utils::warn("Azgaar .map has no burgs section (15); no settlements");
         return;
     }
     json_error_t jerr = {};
     json_t* arr = json_loadb(json, len, 0, &jerr);
     if (!arr || !json_is_array(arr)) {
-        warn("Azgaar .map burgs section is malformed; no settlements (%s)", jerr.text);
+        utils::warn("Azgaar .map burgs section is malformed; no settlements (%s)", jerr.text);
         if (arr) json_decref(arr);
         return;
     }
@@ -360,7 +356,7 @@ static void parseSettlements(AzgaarWorld* world, const char* data, u32 size) {
         return;
     }
 
-    world->settlements      = static_cast<AzgaarSettlement*>(memoryAlloc(sizeof(AzgaarSettlement) * count));
+    world->settlements.resize(count);
     world->settlementCount = count;
     u32 capital = 0, city = 0, town = 0, village = 0;
     for (u32 i = 0u; i < count; i++) {
@@ -393,7 +389,7 @@ static void parseSettlements(AzgaarWorld* world, const char* data, u32 size) {
         // State colour from the section 14 states (fall back to neutral grey).
         // The id indexes the array directly (index 0 is the FMG placeholder),
         // matching azgaarWorldSampleZone's convention.
-        if (s->stateId > 0 && s->stateId < world->stateCount && world->states) {
+        if (s->stateId > 0 && s->stateId < world->stateCount && !world->states.empty()) {
             memcpy(s->stateColor, world->states[s->stateId].color, sizeof(s->stateColor));
         } else {
             s->stateColor[0] = 0.6f;
@@ -407,7 +403,7 @@ static void parseSettlements(AzgaarWorld* world, const char* data, u32 size) {
         else village++;
     }
     json_decref(arr);
-    info("Azgaar settlements parsed: %u total (capitals=%u cities=%u towns=%u villages/other=%u)",
+    utils::info("Azgaar settlements parsed: %u total (capitals=%u cities=%u towns=%u villages/other=%u)",
          count, capital, city, town, village);
 }
 
@@ -440,13 +436,13 @@ static void parseMarkers(AzgaarWorld* world, const char* data, u32 size) {
     u32 len = 0u;
     const char* json = azgaarMapSection(data, size, 35u, &len);
     if (!json || len == 0u) {
-        warn("Azgaar .map has no markers section (35); no landmarks");
+        utils::warn("Azgaar .map has no markers section (35); no landmarks");
         return;
     }
     json_error_t jerr = {};
     json_t* arr = json_loadb(json, len, 0, &jerr);
     if (!arr || !json_is_array(arr)) {
-        warn("Azgaar .map markers section is malformed; no landmarks (%s)", jerr.text);
+        utils::warn("Azgaar .map markers section is malformed; no landmarks (%s)", jerr.text);
         if (arr) json_decref(arr);
         return;
     }
@@ -456,7 +452,7 @@ static void parseMarkers(AzgaarWorld* world, const char* data, u32 size) {
         return;
     }
 
-    world->markers      = static_cast<AzgaarMarker*>(memoryAlloc(sizeof(AzgaarMarker) * count));
+    world->markers.resize(count);
     world->markerCount = count;
     u32 volcano = 0, light = 0, spring = 0, water = 0, ruins = 0, mine = 0, bridge = 0,
         sacred = 0, other = 0;
@@ -485,7 +481,7 @@ static void parseMarkers(AzgaarWorld* world, const char* data, u32 size) {
         else other++;
     }
     json_decref(arr);
-    info("Azgaar markers parsed: %u total (volcanoes=%u lighthouses=%u hot-springs=%u "
+    utils::info("Azgaar markers parsed: %u total (volcanoes=%u lighthouses=%u hot-springs=%u "
          "water-sources=%u ruins=%u mines=%u bridges=%u sacred-forests=%u other/skipped=%u)",
          count, volcano, light, spring, water, ruins, mine, bridge, sacred, other);
 }
@@ -505,7 +501,7 @@ static bool parseRoutesArray(AzgaarWorld* world, json_t* routes) {
     world->routeCount = static_cast<u32>(json_array_size(routes));
     if (!world->routeCount) return true;
 
-    world->routes  = static_cast<AzgaarRoute*>(memoryAlloc(sizeof(AzgaarRoute) * world->routeCount));
+    world->routes.resize(world->routeCount);
     u32 roadCount = 0, trailCount = 0, seaCount = 0;
 
     for (u32 i = 0; i < world->routeCount; ++i) {
@@ -531,7 +527,7 @@ static bool parseRoutesArray(AzgaarWorld* world, json_t* routes) {
         if (!json_is_array(points)) continue;
         route->pointCount = static_cast<u32>(json_array_size(points));
         if (!route->pointCount) continue;
-        route->points  = static_cast<AzgaarRoutePoint*>(memoryAlloc(sizeof(AzgaarRoutePoint) * route->pointCount));
+        route->points.resize(route->pointCount);
 
         for (u32 p = 0; p < route->pointCount; ++p) {
             json_t* point = json_array_get(points, p);
@@ -549,7 +545,7 @@ static bool parseRoutesArray(AzgaarWorld* world, json_t* routes) {
         }
     }
 
-    info("Azgaar routes parsed: roads=%u trails=%u searoutes=%u", roadCount, trailCount, seaCount);
+    utils::info("Azgaar routes parsed: roads=%u trails=%u searoutes=%u", roadCount, trailCount, seaCount);
     return true;
 }
 
@@ -589,7 +585,7 @@ static float catmullRom(float p0, float p1, float p2, float p3, float t) {
 }
 
 static bool buildCellGrid(AzgaarWorld* world) {
-    if (!world->cells || world->cellCount == 0) return false;
+    if (world->cells.empty() || world->cellCount == 0) return false;
     if (world->widthPx <= 0.0 || world->heightPx <= 0.0) return false;
 
     const float area = static_cast<float>(world->widthPx * world->heightPx);
@@ -605,9 +601,8 @@ static bool buildCellGrid(AzgaarWorld* world) {
     if (g->rows == 0) g->rows = 1;
     const u32 bucketCount = g->cols * g->rows;
 
-    u32* counts = static_cast<u32*>(memoryAlloc(sizeof(u32) * bucketCount));
-    for (u32 i = 0; i < bucketCount; i++) counts[i] = 0;
-    u32* cellBucket = static_cast<u32*>(memoryAlloc(sizeof(u32) * world->cellCount));
+    std::vector<u32> counts(bucketCount, 0u);
+    std::vector<u32> cellBucket(world->cellCount);
 
     for (u32 i = 0; i < world->cellCount; i++) {
         i32 bx = static_cast<i32>(world->cells[i].x * g->invBucketSize);
@@ -625,7 +620,7 @@ static bool buildCellGrid(AzgaarWorld* world) {
         counts[b]++;
     }
 
-    g->bucketStart  = static_cast<u32*>(memoryAlloc(sizeof(u32) * (bucketCount + 1)));
+    g->bucketStart.resize(bucketCount + 1u);
     u32 sum        = 0;
     for (u32 i = 0; i < bucketCount; i++) {
         g->bucketStart[i] = sum;
@@ -633,7 +628,7 @@ static bool buildCellGrid(AzgaarWorld* world) {
     }
     g->bucketStart[bucketCount] = sum;
 
-    g->bucketCells  = static_cast<u32*>(memoryAlloc(sizeof(u32) * world->cellCount));
+    g->bucketCells.resize(world->cellCount);
     for (u32 i = 0; i < bucketCount; i++) counts[i] = 0;
     for (u32 i = 0; i < world->cellCount; i++) {
         u32 b               = cellBucket[i];
@@ -641,8 +636,6 @@ static bool buildCellGrid(AzgaarWorld* world) {
         g->bucketCells[pos] = i;
     }
 
-    memoryFree(counts);
-    memoryFree(cellBucket);
     return true;
 }
 
@@ -692,7 +685,7 @@ static void azgaarKNearestCells(const AzgaarWorld* world,
                                 float* exactH) {
     const AzgaarCellGrid* g = &world->cellGrid;
 
-    if (!g->bucketStart || !g->bucketCells || g->cols == 0 || g->rows == 0) {
+    if (g->bucketStart.empty() || g->bucketCells.empty() || g->cols == 0 || g->rows == 0) {
         for (u32 i = 0; i < world->cellCount; i++) {
             const AzgaarCell* cell = &world->cells[i];
             float dx               = cell->x - xPx;
@@ -812,10 +805,10 @@ static void nearestTwoCellIndices(const AzgaarWorld* world,
                                   float bestDist2[2]) {
     bestIndex[0] = bestIndex[1] = (u32)-1;
     bestDist2[0] = bestDist2[1] = FLT_MAX;
-    if (!world || !world->cells || world->cellCount == 0) return;
+    if (!world || world->cells.empty() || world->cellCount == 0) return;
 
     const AzgaarCellGrid* g = &world->cellGrid;
-    if (!g->bucketStart || !g->bucketCells || g->cols == 0 || g->rows == 0) {
+    if (g->bucketStart.empty() || g->bucketCells.empty() || g->cols == 0 || g->rows == 0) {
         for (u32 i = 0; i < world->cellCount; i++) {
             nearestTwoConsider(world, i, xPx, yPx, bestDist2, bestIndex);
         }
@@ -893,9 +886,9 @@ float azgaarWorldSampleHeightCell(const AzgaarWorld* world,
 }
 
 float azgaarWorldSampleHeightSmooth(const AzgaarWorld* world, float xPx, float yPx) {
-    if (!world || !world->cells || world->cellCount == 0) return 0.0f;
+    if (!world || world->cells.empty() || world->cellCount == 0) return 0.0f;
 
-    if (world->heightGrid && world->heightGridWidth > 1 && world->heightGridHeight > 1) {
+    if (!world->heightGrid.empty() && world->heightGridWidth > 1 && world->heightGridHeight > 1) {
         float cellW = static_cast<float>(world->widthPx) / static_cast<float>(world->heightGridWidth);
         float cellH = static_cast<float>(world->heightPx) / static_cast<float>(world->heightGridHeight);
         float gx    = xPx / cellW - 0.5f;
@@ -984,7 +977,7 @@ void azgaarWorldSampleZone(const AzgaarWorld* world,
         out->stateName    = "";
     }
     if (outPackCellIndex) *outPackCellIndex = 0u;
-    if (!world || !world->packCells || world->packCellCount == 0u || !out) return;
+    if (!world || world->packCells.empty() || world->packCellCount == 0u || !out) return;
 
     // One brute-force nearest-cell query per frame is trivial for ~5k pack
     // cells, so there is no need for a second spatial grid here.
@@ -1004,10 +997,10 @@ void azgaarWorldSampleZone(const AzgaarWorld* world,
     out->provinceId = world->packCells[best].province;
     out->stateId    = world->packCells[best].state;
     if (outPackCellIndex) *outPackCellIndex = best;
-    if (out->provinceId > 0u && out->provinceId < world->provinceCount && world->provinces) {
+    if (out->provinceId > 0u && out->provinceId < world->provinceCount && !world->provinces.empty()) {
         out->provinceName = world->provinces[out->provinceId].name;
     }
-    if (out->stateId > 0u && out->stateId < world->stateCount && world->states) {
+    if (out->stateId > 0u && out->stateId < world->stateCount && !world->states.empty()) {
         out->stateName = world->states[out->stateId].name;
     }
 }
@@ -1158,7 +1151,7 @@ static u32 azgaarBiomeId(float moisture, float temperature, float height) {
 }
 
 void azgaarWorldBiomeColor(const AzgaarWorld* world, u32 biomeId, float outColor[3]) {
-    if (world && world->biomes && biomeId < world->biomeCount) {
+    if (world && !world->biomes.empty() && biomeId < world->biomeCount) {
         outColor[0] = world->biomes[biomeId].color[0];
         outColor[1] = world->biomes[biomeId].color[1];
         outColor[2] = world->biomes[biomeId].color[2];
@@ -1171,7 +1164,7 @@ void azgaarWorldSampleBiomeColorSmooth(const AzgaarWorld* world,
                                        float xPx,
                                        float yPx,
                                        float outColor[3]) {
-    if (world && world->biomeColorGrid && world->biomeColorGridWidth > 1u &&
+    if (world && !world->biomeColorGrid.empty() && world->biomeColorGridWidth > 1u &&
         world->biomeColorGridHeight > 1u) {
         // Bilinear at texel centres (same addressing as the height grid).  The
         // grid is already low-passed at bake time, so bilinear is enough and —
@@ -1205,9 +1198,9 @@ void azgaarWorldSampleBiomeColorSmooth(const AzgaarWorld* world,
 
         u32 w   = world->biomeColorGridWidth;
         u32 gi  = static_cast<u32>(y1) * w + static_cast<u32>(x1);
-        const u8* p00 = world->biomeColorGrid + static_cast<size_t>(gi) * 3u;
+        const u8* p00 = world->biomeColorGrid.data() + static_cast<size_t>(gi) * 3u;
         const u8* p10 = p00 + 3u;
-        const u8* p01 = world->biomeColorGrid + static_cast<size_t>(gi + w) * 3u;
+        const u8* p01 = world->biomeColorGrid.data() + static_cast<size_t>(gi + w) * 3u;
         const u8* p11 = p01 + 3u;
 
         for (u32 c = 0u; c < 3u; c++) {
@@ -1221,7 +1214,7 @@ void azgaarWorldSampleBiomeColorSmooth(const AzgaarWorld* world,
 
     // No colour grid (old saves / load failure): flat nearest-cell colour.
     u32 cellIndex =
-        (world && world->cells && world->cellCount) ? nearestCellIndex(world, xPx, yPx) : (u32)-1;
+        (world && !world->cells.empty() && world->cellCount) ? nearestCellIndex(world, xPx, yPx) : (u32)-1;
     if (cellIndex == (u32)-1) {
         outColor[0] = 0.42f;
         outColor[1] = 0.46f;
@@ -1260,7 +1253,7 @@ void azgaarWorldSampleClimate(const AzgaarWorld* world,
                                           .biome = AZGAAR_BIOME_NONE};
     if (!world || !out) return;
 
-    if (world->tempGrid && world->climateGridWidth > 1u && world->climateGridHeight > 1u) {
+    if (!world->tempGrid.empty() && world->climateGridWidth > 1u && world->climateGridHeight > 1u) {
         u32 w = world->climateGridWidth;
         u32 h = world->climateGridHeight;
         float cellW = static_cast<float>(world->widthPx) / static_cast<float>(w);
@@ -1289,15 +1282,15 @@ void azgaarWorldSampleClimate(const AzgaarWorld* world,
             ty = 1.0f;
         }
 
-        out->temperature   = azgaarSampleGridBilinear(world->tempGrid, w, x1, y1, tx, ty);
-        out->precipitation = azgaarSampleGridBilinear(world->precGrid, w, x1, y1, tx, ty);
-        out->coastCells    = azgaarSampleGridBilinear(world->coastGrid, w, x1, y1, tx, ty);
+        out->temperature   = azgaarSampleGridBilinear(world->tempGrid.data(), w, x1, y1, tx, ty);
+        out->precipitation = azgaarSampleGridBilinear(world->precGrid.data(), w, x1, y1, tx, ty);
+        out->coastCells    = azgaarSampleGridBilinear(world->coastGrid.data(), w, x1, y1, tx, ty);
         out->biome         = world->biomeGrid[static_cast<u32>(y1) * w + static_cast<u32>(x1)];
         return;
     }
 
     // No climate grids (old saves / missing sections): flat per-cell values.
-    if (world->cells && world->cellCount) {
+    if (!world->cells.empty() && world->cellCount) {
         u32 i = nearestCellIndex(world, xPx, yPx);
         if (i != (u32)-1) {
             out->temperature   = world->cells[i].temp;
@@ -1315,14 +1308,15 @@ static u8 azgaarFloatToU8(float v) {
     return static_cast<u8>(v);
 }
 
-u8* azgaarWorldPackClimateTexture(const AzgaarWorld* world, u32* outWidth, u32* outHeight) {
-    if (!world || !world->tempGrid || !world->climateGridWidth || !world->climateGridHeight) {
-        return nullptr;
+std::vector<u8> azgaarWorldPackClimateTexture(const AzgaarWorld* world, u32* outWidth, u32* outHeight) {
+    std::vector<u8> px;
+    if (!world || world->tempGrid.empty() || !world->climateGridWidth || !world->climateGridHeight) {
+        return px;
     }
     const u32 w     = world->climateGridWidth;
     const u32 h     = world->climateGridHeight;
     const size_t n  = static_cast<size_t>(w) * h;
-    u8* px = static_cast<u8*>(memoryAlloc(n * 4u));
+    px.resize(n * 4u);
     const float tBias = 64.0f;   // deg C    -> byte (filter-safe, see header)
     const float cBias = 11.0f;   // cell units -> byte
     for (size_t i = 0; i < n; i++) {
@@ -1336,15 +1330,16 @@ u8* azgaarWorldPackClimateTexture(const AzgaarWorld* world, u32* outWidth, u32* 
     return px;
 }
 
-u8* azgaarWorldPackBiomeColorTexture(const AzgaarWorld* world, u32* outWidth, u32* outHeight) {
-    if (!world || !world->biomeColorGrid || !world->biomeColorGridWidth ||
+std::vector<u8> azgaarWorldPackBiomeColorTexture(const AzgaarWorld* world, u32* outWidth, u32* outHeight) {
+    std::vector<u8> px;
+    if (!world || world->biomeColorGrid.empty() || !world->biomeColorGridWidth ||
         !world->biomeColorGridHeight) {
-        return nullptr;
+        return px;
     }
     const u32 w    = world->biomeColorGridWidth;
     const u32 h    = world->biomeColorGridHeight;
     const size_t n = static_cast<size_t>(w) * h;
-    u8* px = static_cast<u8*>(memoryAlloc(n * 4u));
+    px.resize(n * 4u);
     for (size_t i = 0; i < n; i++) {
         px[i * 4u + 0u] = world->biomeColorGrid[i * 3u + 0u];
         px[i * 4u + 1u] = world->biomeColorGrid[i * 3u + 1u];
@@ -1456,7 +1451,7 @@ static u32 voroClipByBisector(VoroPt* poly, u32 n, float sx, float sy, float qx,
 }
 
 static bool azgaarWorldBuildVoronoi(AzgaarWorld* world) {
-    if (!world->cells || world->cellCount == 0u) return false;
+    if (world->cells.empty() || world->cellCount == 0u) return false;
     if (world->cellGrid.bucketSize <= 0.0f) return false;  // needs buildCellGrid first
 
     const AzgaarCellGrid* g = &world->cellGrid;
@@ -1470,8 +1465,7 @@ static bool azgaarWorldBuildVoronoi(AzgaarWorld* world) {
 
     // First pass: compute each cell's polygon vertex count so we can allocate
     // a contiguous world->vertices run per cell.
-    Array(VoroPt)* cellPoly  = static_cast<VoroPt**>(memoryAlloc(sizeof(Array(VoroPt)) * world->cellCount));
-    for (u32 i = 0u; i < world->cellCount; i++) cellPoly[i] = nullptr;
+    std::vector<std::vector<VoroPt>> cellPoly(world->cellCount);
 
     for (u32 p = 0u; p < world->cellCount; p++) {
         float sx = world->cells[p].x;
@@ -1505,7 +1499,7 @@ static bool azgaarWorldBuildVoronoi(AzgaarWorld* world) {
         }
 
         if (n < 3u) continue;  // degenerate / fully clipped (shouldn't happen)
-        for (u32 k = 0u; k < n; k++) arrayPut(cellPoly[p], poly[k]);
+        for (u32 k = 0u; k < n; k++) cellPoly[p].push_back(poly[k]);
         world->cells[p].neighborCount = 0u;  // neighbours unused by the plate renderer
     }
 
@@ -1514,18 +1508,16 @@ static bool azgaarWorldBuildVoronoi(AzgaarWorld* world) {
     // between cells (half-plane polygons meet at shared edges but emit their
     // own copies), which is exactly what the per-plate renderer expects.
     u32 totalVerts = 0u;
-    for (u32 p = 0u; p < world->cellCount; p++) totalVerts += arraySize(cellPoly[p]);
+    for (u32 p = 0u; p < world->cellCount; p++) totalVerts += static_cast<i32>(cellPoly[p].size());
     world->gridVertexCount = totalVerts;
-    world->vertices         = static_cast<AzgaarVertex*>(memoryAlloc(sizeof(AzgaarVertex) * (totalVerts ? totalVerts : 1u)));
-    for (u32 i = 0u; i < (totalVerts ? totalVerts : 1u); i++)
-        world->vertices[i] = AzgaarVertex{};
+    world->vertices.resize(totalVerts ? totalVerts : 1u);
 
     u32 cursor = 0u;
     for (u32 p = 0u; p < world->cellCount; p++) {
-        u32 vc = arraySize(cellPoly[p]);
+        u32 vc = static_cast<i32>(cellPoly[p].size());
         if (vc == 0u) continue;
         world->cells[p].vertexCount = vc;
-        world->cells[p].vertices     = static_cast<u32*>(memoryAlloc(sizeof(u32) * vc));
+        world->cells[p].vertices.resize(vc);
         for (u32 k = 0u; k < vc; k++) {
             world->vertices[cursor]     = AzgaarVertex{};
             world->vertices[cursor].x   = cellPoly[p][k].x;
@@ -1533,9 +1525,7 @@ static bool azgaarWorldBuildVoronoi(AzgaarWorld* world) {
             world->cells[p].vertices[k] = cursor;
             cursor++;
         }
-        arrayFree(cellPoly[p]);
     }
-    memoryFree(cellPoly);
     return true;
 }
 
@@ -1545,12 +1535,12 @@ static bool azgaarWorldBuildVoronoi(AzgaarWorld* world) {
 // spacing cut-off so their transitions land at the same scale.
 // `envName` optionally overrides sigma in texels for live tuning.
 static void azgaarGaussianBlurGrid(AzgaarWorld* world,
-                                   float* grid,
+                                   std::vector<float>& grid,
                                    u32 w,
                                    u32 h,
                                    const char* envName,
                                    const char* label) {
-    if (!grid || w < 3u || h < 3u) return;
+    if (grid.empty() || w < 3u || h < 3u) return;
 
     // Average FMG sample spacing, expressed in grid texels.
     const float areaPx     = static_cast<float>(world->widthPx) * static_cast<float>(world->heightPx);
@@ -1584,13 +1574,13 @@ static void azgaarGaussianBlurGrid(AzgaarWorld* world,
     }
     for (i32 i = 0; i < 2 * radius + 1; ++i) kernel[i] /= sum;
 
-    float* tmp = static_cast<float*>(memoryAlloc(sizeof(float) * static_cast<size_t>(w) * h));
-    double t0  = nanos();
+    std::vector<float> tmp(static_cast<size_t>(w) * h);
+    double t0  = utils::nanos();
 
     // Horizontal pass (clamped edges), grid -> tmp.
     for (u32 y = 0u; y < h; ++y) {
-        const float* row = grid + static_cast<size_t>(y) * w;
-        float* outRow    = tmp + static_cast<size_t>(y) * w;
+        const float* row = grid.data() + static_cast<size_t>(y) * w;
+        float* outRow    = tmp.data() + static_cast<size_t>(y) * w;
         for (u32 x = 0u; x < w; ++x) {
             float acc = 0.0f;
             for (i32 k = -radius; k <= radius; ++k) {
@@ -1604,7 +1594,7 @@ static void azgaarGaussianBlurGrid(AzgaarWorld* world,
     }
     // Vertical pass (clamped edges), tmp -> grid.
     for (u32 y = 0u; y < h; ++y) {
-        float* outRow = grid + static_cast<size_t>(y) * w;
+        float* outRow = grid.data() + static_cast<size_t>(y) * w;
         for (u32 x = 0u; x < w; ++x) {
             float acc = 0.0f;
             for (i32 k = -radius; k <= radius; ++k) {
@@ -1617,8 +1607,7 @@ static void azgaarGaussianBlurGrid(AzgaarWorld* world,
         }
     }
 
-    memoryFree(tmp);
-    info("Azgaar %s grid smoothed: %ux%u, spacing=%.1f texels, sigma=%.1f (radius=%d) in %.1f "
+    utils::info("Azgaar %s grid smoothed: %ux%u, spacing=%.1f texels, sigma=%.1f (radius=%d) in %.1f "
          "ms",
          label,
          w,
@@ -1626,7 +1615,7 @@ static void azgaarGaussianBlurGrid(AzgaarWorld* world,
          spacingTex,
          sigma,
          radius,
-         (nanos() - t0) / 1e6);
+         (utils::nanos() - t0) / 1e6);
 }
 
 // Low-pass the rasterized height grid.
@@ -1664,7 +1653,7 @@ static void azgaarSmoothHeightGrid(AzgaarWorld* world) {
 static void azgaarSmoothBiomeColorGrid(AzgaarWorld* world) {
     const u32 w = world->biomeColorGridWidth;
     const u32 h = world->biomeColorGridHeight;
-    if (!world->biomeColorGrid || !world->heightGrid || w < 3u || h < 3u) return;
+    if (world->biomeColorGrid.empty() || world->heightGrid.empty() || w < 3u || h < 3u) return;
 
     const float areaPx     = static_cast<float>(world->widthPx) * static_cast<float>(world->heightPx);
     const float spacingPx  = world->cellCount ? sqrtf(areaPx / static_cast<float>(world->cellCount)) : 1.0f;
@@ -1696,8 +1685,8 @@ static void azgaarSmoothBiomeColorGrid(AzgaarWorld* world) {
     // Packed RGBW accumulators: colour channels are pre-multiplied by the
     // land mask, W accumulates the mask weight used to renormalize the
     // average (so partial spans still yield a convex combination).
-    float* tmp = static_cast<float*>(memoryAlloc(sizeof(float) * 4u * static_cast<size_t>(w) * h));
-    double t0  = nanos();
+    std::vector<float> tmp(4u * static_cast<size_t>(w) * h);
+    double t0  = utils::nanos();
 
     // Horizontal pass (clamped edges), grid -> tmp.
     for (u32 y = 0u; y < h; ++y) {
@@ -1710,13 +1699,13 @@ static void azgaarSmoothBiomeColorGrid(AzgaarWorld* world) {
                 u32 gi = y * w + static_cast<u32>(sx);
                 if (world->heightGrid[gi] < AZGAAR_SEA_LEVEL_HEIGHT) continue;  // water: no bleed
                 float kk      = kernel[k + radius];
-                const u8* px = world->biomeColorGrid + static_cast<size_t>(gi) * 3u;
+                const u8* px = world->biomeColorGrid.data() + static_cast<size_t>(gi) * 3u;
                 accR += static_cast<float>(px[0]) * kk;
                 accG += static_cast<float>(px[1]) * kk;
                 accB += static_cast<float>(px[2]) * kk;
                 accW += kk;
             }
-            float* out = tmp + (static_cast<size_t>(y) * w + x) * 4u;
+            float* out = tmp.data() + (static_cast<size_t>(y) * w + x) * 4u;
             out[0]     = accR;
             out[1]     = accG;
             out[2]     = accB;
@@ -1735,22 +1724,21 @@ static void azgaarSmoothBiomeColorGrid(AzgaarWorld* world) {
                 i32 sy = static_cast<i32>(y) + k;
                 if (sy < 0) sy = 0;
                 if (sy >= static_cast<i32>(h)) sy = static_cast<i32>(h) - 1;
-                const float* in = tmp + (static_cast<size_t>(sy) * w + x) * 4u;
+                const float* in = tmp.data() + (static_cast<size_t>(sy) * w + x) * 4u;
                 accR += in[0];
                 accG += in[1];
                 accB += in[2];
                 accW += in[3];
             }
             // A land texel always accumulates its own weight, so accW > 0.
-            u8* px = world->biomeColorGrid + static_cast<size_t>(gi) * 3u;
+            u8* px = world->biomeColorGrid.data() + static_cast<size_t>(gi) * 3u;
             px[0]  = static_cast<u8>(accR / accW + 0.5f);
             px[1]  = static_cast<u8>(accG / accW + 0.5f);
             px[2]  = static_cast<u8>(accB / accW + 0.5f);
         }
     }
 
-    memoryFree(tmp);
-    info(
+    utils::info(
         "Azgaar biome colour grid smoothed: %ux%u, spacing=%.1f texels, sigma=%.1f (radius=%d) in "
         "%.1f ms",
         w,
@@ -1758,7 +1746,7 @@ static void azgaarSmoothBiomeColorGrid(AzgaarWorld* world) {
         spacingTex,
         sigma,
         radius,
-        (nanos() - t0) / 1e6);
+        (utils::nanos() - t0) / 1e6);
 }
 
 // Wind directions (degrees) live in the settings section's JSON blob
@@ -1781,14 +1769,14 @@ static void azgaarParseWinds(const char* settings, u32 settingsLen, float winds[
 }
 
 static bool azgaarWorldLoadMap(AzgaarWorld* world, const char* path) {
-    if (!dataManagerFileExists(path)) {
-        warn("Azgaar .map not found: %s", path);
+    if (!utils::dataManagerFileExists(path)) {
+        utils::warn("Azgaar .map not found: %s", path);
         return false;
     }
 
-    world->jsonData = dataManagerRead(path);
+    world->jsonData = utils::dataManagerRead(path);
     if (!world->jsonData.data || world->jsonData.size == 0u) {
-        warn("Azgaar .map is empty: %s", path);
+        utils::warn("Azgaar .map is empty: %s", path);
         azgaarWorldDestroy(world);
         return false;
     }
@@ -1802,7 +1790,7 @@ static bool azgaarWorldLoadMap(AzgaarWorld* world, const char* path) {
     u32 settingsLen      = 0u;
     const char* settings = azgaarMapSection(data, size, 1u, &settingsLen);
     if (!params || !settings) {
-        warn("Azgaar .map is missing header/settings: %s", path);
+        utils::warn("Azgaar .map is missing header/settings: %s", path);
         azgaarWorldDestroy(world);
         return false;
     }
@@ -1839,20 +1827,20 @@ static bool azgaarWorldLoadMap(AzgaarWorld* world, const char* path) {
     u32 gridLen          = 0u;
     const char* gridJson = azgaarMapSection(data, size, 6u, &gridLen);
     if (!gridJson) {
-        warn("Azgaar .map has no grid section: %s", path);
+        utils::warn("Azgaar .map has no grid section: %s", path);
         azgaarWorldDestroy(world);
         return false;
     }
     json_error_t jerr = {};
     json_t* grid      = json_loadb(gridJson, gridLen, 0, &jerr);
     if (!grid) {
-        warn("Azgaar .map grid parse failed: %s", jerr.text);
+        utils::warn("Azgaar .map grid parse failed: %s", jerr.text);
         azgaarWorldDestroy(world);
         return false;
     }
     json_t* pointsArr = json_object_get(grid, "points");
     if (!json_is_array(pointsArr)) {
-        warn("Azgaar .map grid has no points");
+        utils::warn("Azgaar .map grid has no points");
         json_decref(grid);
         azgaarWorldDestroy(world);
         return false;
@@ -1860,7 +1848,7 @@ static bool azgaarWorldLoadMap(AzgaarWorld* world, const char* path) {
     u32 pointCount = static_cast<u32>(json_array_size(pointsArr));
     // cellsX/cellsY no longer used — pixel-resolution heightmap replaces the coarse grid
     if (pointCount == 0u) {
-        warn("Azgaar .map grid has no points");
+        utils::warn("Azgaar .map grid has no points");
         json_decref(grid);
         azgaarWorldDestroy(world);
         return false;
@@ -1869,8 +1857,7 @@ static bool azgaarWorldLoadMap(AzgaarWorld* world, const char* path) {
     // heights (section 7): comma separated Uint8 values, one per grid cell.
     u32 heightsLen         = 0u;
     const char* heightsCsv = azgaarMapSection(data, size, 7u, &heightsLen);
-    u8* heights = static_cast<u8*>(memoryAlloc(pointCount));
-    memset(heights, 0, pointCount);
+    std::vector<u8> heights(pointCount, 0u);
     if (heightsCsv) {
         u32 i            = 0u;
         const char* s    = heightsCsv;
@@ -1895,14 +1882,10 @@ static bool azgaarWorldLoadMap(AzgaarWorld* world, const char* path) {
     // workstream A — snow line, weather, scatter gates.
     // Section 9 (`grid.cells.f`, waterbody/landmass id) and section 10
     // (`grid.cells.t`, signed coast distance) complete the climate fields.
-    i32* prec = static_cast<i32*>(memoryAlloc(sizeof(i32) * pointCount));
-    i32* temp = static_cast<i32*>(memoryAlloc(sizeof(i32) * pointCount));
-    i32* feature = static_cast<i32*>(memoryAlloc(sizeof(i32) * pointCount));
-    i32* coast = static_cast<i32*>(memoryAlloc(sizeof(i32) * pointCount));
-    memset(prec, 0, sizeof(i32) * pointCount);
-    memset(temp, 0, sizeof(i32) * pointCount);
-    memset(feature, 0, sizeof(i32) * pointCount);
-    memset(coast, 0, sizeof(i32) * pointCount);
+    std::vector<i32> prec(pointCount, 0);
+    std::vector<i32> temp(pointCount, 0);
+    std::vector<i32> feature(pointCount, 0);
+    std::vector<i32> coast(pointCount, 0);
     bool hasClimate = false;
     {
         u32 precLen = 0u, tempLen = 0u, featLen = 0u, coastLen = 0u;
@@ -1910,10 +1893,10 @@ static bool azgaarWorldLoadMap(AzgaarWorld* world, const char* path) {
         const char* tempCsv  = azgaarMapSection(data, size, 11u, &tempLen);
         const char* featCsv  = azgaarMapSection(data, size, 9u, &featLen);
         const char* coastCsv = azgaarMapSection(data, size, 10u, &coastLen);
-        azgaarParseCsvInts(precCsv, precLen, prec, pointCount);
-        azgaarParseCsvInts(tempCsv, tempLen, temp, pointCount);
-        azgaarParseCsvInts(featCsv, featLen, feature, pointCount);
-        azgaarParseCsvInts(coastCsv, coastLen, coast, pointCount);
+        azgaarParseCsvInts(precCsv, precLen, prec.data(), pointCount);
+        azgaarParseCsvInts(tempCsv, tempLen, temp.data(), pointCount);
+        azgaarParseCsvInts(featCsv, featLen, feature.data(), pointCount);
+        azgaarParseCsvInts(coastCsv, coastLen, coast.data(), pointCount);
         // Temperature drives the snow line; without it the climate textures
         // stay unset (failure-tolerant parse, plan decision D9).
         hasClimate = tempCsv != nullptr && tempLen > 0u;
@@ -1923,10 +1906,7 @@ static bool azgaarWorldLoadMap(AzgaarWorld* world, const char* path) {
     // per grid cell in .map).  The Voronoi mesh (cell polygons + shared
     // vertices) is derived from the positions below.
     world->cellCount = pointCount;
-    world->cells      = static_cast<AzgaarCell*>(memoryAlloc(sizeof(AzgaarCell) * pointCount));
-    for (u32 i = 0u; i < pointCount; i++) {
-        world->cells[i] = AzgaarCell{};
-    }
+    world->cells.resize(pointCount);
 
     // Fill cell positions + heights (biome is not stored per grid cell in .map,
     // so it is recomputed below from height/precipitation/temperature).
@@ -1958,11 +1938,6 @@ static bool azgaarWorldLoadMap(AzgaarWorld* world, const char* path) {
         }
     }
     world->maxLandHeightM = azgaarHeightToMeters(world, maxLandH);
-    memoryFree(heights);
-    memoryFree(prec);
-    memoryFree(temp);
-    memoryFree(feature);
-    memoryFree(coast);
 
     // Biome table (section 3): authored per-biome name + colour.  FMG emits a
     // JSON array; entry 0 is Marine.  Colours drive the terrain tint.
@@ -1973,7 +1948,7 @@ static bool azgaarWorldLoadMap(AzgaarWorld* world, const char* path) {
             json_t* biomesArr = json_loadb(biomesJson, biomesLen, 0, &jerr);
             if (json_is_array(biomesArr)) {
                 world->biomeCount = static_cast<u32>(json_array_size(biomesArr));
-                world->biomes      = static_cast<AzgaarBiome*>(memoryAlloc(sizeof(AzgaarBiome) * world->biomeCount));
+                world->biomes.resize(world->biomeCount);
                 for (u32 i = 0u; i < world->biomeCount; i++) {
                     AzgaarBiome* b = &world->biomes[i];
                     *b             = AzgaarBiome{};
@@ -2013,7 +1988,7 @@ static bool azgaarWorldLoadMap(AzgaarWorld* world, const char* path) {
     // its nearby sites (exact, non-overlapping by construction).  The polygon
     // vertices are stored in world->vertices and referenced by cell->vertices.
     if (!azgaarWorldBuildVoronoi(world)) {
-        warn("Azgaar .map Voronoi build failed; terrain will be empty");
+        utils::warn("Azgaar .map Voronoi build failed; terrain will be empty");
     }
 
     // Height grid — rasterize each cell into a full-resolution grid at map pixel
@@ -2033,9 +2008,7 @@ static bool azgaarWorldLoadMap(AzgaarWorld* world, const char* path) {
         world->heightGridWidth  = gridW;
         world->heightGridHeight = gridH;
     }
-    world->heightGrid =
-        static_cast<float*>(memoryAlloc(sizeof(float) * world->heightGridWidth * world->heightGridHeight));
-    memset(world->heightGrid, 0, sizeof(float) * world->heightGridWidth * world->heightGridHeight);
+    world->heightGrid.resize(static_cast<size_t>(world->heightGridWidth) * world->heightGridHeight, 0.0f);
 
     // Biome colour grid (RGB u8) shares the height grid's dimensions and is
     // filled in the same nearest-cell rasterization pass; it is blurred
@@ -2043,10 +2016,7 @@ static bool azgaarWorldLoadMap(AzgaarWorld* world, const char* path) {
     // neutral grey used by azgaarWorldBiomeColor for unknown biomes.
     world->biomeColorGridWidth  = world->heightGridWidth;
     world->biomeColorGridHeight = world->heightGridHeight;
-    world->biomeColorGrid        = static_cast<u8*>(memoryAlloc(3u * static_cast<size_t>(world->biomeColorGridWidth) * world->biomeColorGridHeight));
-    memset(world->biomeColorGrid,
-           204,
-           3u * static_cast<size_t>(world->biomeColorGridWidth) * world->biomeColorGridHeight);
+    world->biomeColorGrid.assign(3u * static_cast<size_t>(world->biomeColorGridWidth) * world->biomeColorGridHeight, 204u);
 
     // Climate grids (temperature / precipitation / coast distance / biome id)
     // share the height grid's dimensions and are filled in the same
@@ -2055,14 +2025,10 @@ static bool azgaarWorldLoadMap(AzgaarWorld* world, const char* path) {
         world->climateGridWidth  = world->heightGridWidth;
         world->climateGridHeight = world->heightGridHeight;
         const size_t texels = static_cast<size_t>(world->climateGridWidth) * world->climateGridHeight;
-        world->tempGrid   = static_cast<float*>(memoryAlloc(sizeof(float) * texels));
-        world->precGrid   = static_cast<float*>(memoryAlloc(sizeof(float) * texels));
-        world->coastGrid  = static_cast<float*>(memoryAlloc(sizeof(float) * texels));
-        world->biomeGrid  = static_cast<u8*>(memoryAlloc(texels));
-        memset(world->tempGrid, 0, sizeof(float) * texels);
-        memset(world->precGrid, 0, sizeof(float) * texels);
-        memset(world->coastGrid, 0, sizeof(float) * texels);
-        memset(world->biomeGrid, 0, texels);
+        world->tempGrid.resize(texels, 0.0f);
+        world->precGrid.resize(texels, 0.0f);
+        world->coastGrid.resize(texels, 0.0f);
+        world->biomeGrid.resize(texels, 0u);
     }
 
     // Rasterize: for each grid pixel, find the nearest cell and assign its height
@@ -2079,12 +2045,12 @@ static bool azgaarWorldLoadMap(AzgaarWorld* world, const char* path) {
                 u32 biome         = world->cells[cellIndex].biome;
                 if (biome < world->biomeCount) {
                     const float* c = world->biomes[biome].color;
-                    u8* px         = world->biomeColorGrid + static_cast<size_t>(gi) * 3u;
+                    u8* px         = world->biomeColorGrid.data() + static_cast<size_t>(gi) * 3u;
                     px[0]          = static_cast<u8>(c[0] * 255.0f + 0.5f);
                     px[1]          = static_cast<u8>(c[1] * 255.0f + 0.5f);
                     px[2]          = static_cast<u8>(c[2] * 255.0f + 0.5f);
                 }
-                if (world->tempGrid) {
+                if (!world->tempGrid.empty()) {
                     const AzgaarCell* cell = &world->cells[cellIndex];
                     world->tempGrid[gi]    = cell->temp;
                     world->precGrid[gi]    = cell->prec;
@@ -2106,7 +2072,7 @@ static bool azgaarWorldLoadMap(AzgaarWorld* world, const char* path) {
     // Smooth the climate scalar fields with the same Gaussian so the snow
     // line / weather fields don't follow pixel-hard Voronoi borders.  The
     // biome id field stays nearest (ids are not interpolable).
-    if (world->tempGrid) {
+    if (!world->tempGrid.empty()) {
         azgaarGaussianBlurGrid(world,
                                world->tempGrid,
                                world->climateGridWidth,
@@ -2125,7 +2091,7 @@ static bool azgaarWorldLoadMap(AzgaarWorld* world, const char* path) {
                                world->climateGridHeight,
                                "ENGINE_AZGAAR_CLIMATE_SIGMA",
                                "coast");
-        info("Azgaar climate grids built: %ux%u (temp/prec/coast blurred, biome nearest), "
+        utils::info("Azgaar climate grids built: %ux%u (temp/prec/coast blurred, biome nearest), "
              "winds=[%.0f %.0f %.0f %.0f %.0f %.0f], maxLand=%.0f m",
              world->climateGridWidth,
              world->climateGridHeight,
@@ -2145,8 +2111,8 @@ static bool azgaarWorldLoadMap(AzgaarWorld* world, const char* path) {
         json_t* states = json_loadb(statesJson, statesLen, 0, &jerr);
         if (json_is_array(states)) {
             world->stateCount = static_cast<u32>(json_array_size(states));
-            world->states      = static_cast<AzgaarNamedRegion*>(memoryAlloc(sizeof(AzgaarNamedRegion) * world->stateCount));
-            parseNamedRegions(world->states, world->stateCount, states);
+            world->states.resize(world->stateCount);
+            parseNamedRegions(world->states.data(), world->stateCount, states);
         }
         json_decref(states);
     }
@@ -2156,8 +2122,8 @@ static bool azgaarWorldLoadMap(AzgaarWorld* world, const char* path) {
         json_t* provinces = json_loadb(provJson, provLen, 0, &jerr);
         if (json_is_array(provinces)) {
             world->provinceCount = static_cast<u32>(json_array_size(provinces));
-            world->provinces      = static_cast<AzgaarNamedRegion*>(memoryAlloc(sizeof(AzgaarNamedRegion) * world->provinceCount));
-            parseNamedRegions(world->provinces, world->provinceCount, provinces);
+            world->provinces.resize(world->provinceCount);
+            parseNamedRegions(world->provinces.data(), world->provinceCount, provinces);
         }
         json_decref(provinces);
     }
@@ -2198,7 +2164,7 @@ static bool azgaarWorldLoadMap(AzgaarWorld* world, const char* path) {
     // tolerant: a missing section leaves zero markers.
     parseMarkers(world, data, size);
 
-    info(
+    utils::info(
         "Azgaar .map loaded: %s %.0fx%.0f px, %.3f %s/px (%.1f m/px), height=%s exponent=%.2f, "
         "cells=%u vertices=%u routes=%u rivers=%u settlements=%u",
         world->mapName,
@@ -2224,74 +2190,24 @@ bool azgaarWorldLoad(AzgaarWorld* world, const char* path) {
 
 void azgaarWorldDestroy(AzgaarWorld* world) {
     if (world->jsonData.data) {
-        stringDestroy(&world->jsonData);
+        utils::stringDestroy(&world->jsonData);
     }
-    if (world->cells) {
-        for (u32 i = 0; i < world->cellCount; i++) {
-            if (world->cells[i].vertices) memoryFree(world->cells[i].vertices);
-            if (world->cells[i].neighbors) memoryFree(world->cells[i].neighbors);
-        }
-        memoryFree(world->cells);
-    }
-    if (world->vertices) {
-        for (u32 i = 0; i < world->gridVertexCount; i++) {
-            if (world->vertices[i].cells) memoryFree(world->vertices[i].cells);
-        }
-        memoryFree(world->vertices);
-    }
-    if (world->cellGrid.bucketStart) {
-        memoryFree(world->cellGrid.bucketStart);
-    }
-    if (world->cellGrid.bucketCells) {
-        memoryFree(world->cellGrid.bucketCells);
-    }
-    if (world->heightGrid) {
-        memoryFree(world->heightGrid);
-    }
-    if (world->biomeColorGrid) {
-        memoryFree(world->biomeColorGrid);
-    }
-    if (world->tempGrid) {
-        memoryFree(world->tempGrid);
-    }
-    if (world->precGrid) {
-        memoryFree(world->precGrid);
-    }
-    if (world->coastGrid) {
-        memoryFree(world->coastGrid);
-    }
-    if (world->biomeGrid) {
-        memoryFree(world->biomeGrid);
-    }
-    if (world->routes) {
-        for (u32 i = 0; i < world->routeCount; ++i) {
-            if (world->routes[i].points) memoryFree(world->routes[i].points);
-        }
-        memoryFree(world->routes);
-    }
-    if (world->rivers) {
-        for (u32 i = 0; i < world->riverCount; ++i) {
-            if (world->rivers[i].pointsPx) memoryFree(world->rivers[i].pointsPx);
-        }
-        memoryFree(world->rivers);
-    }
-    if (world->settlements) {
-        memoryFree(world->settlements);
-    }
-    if (world->markers) {
-        memoryFree(world->markers);
-    }
-    if (world->packCells) {
-        memoryFree(world->packCells);
-    }
-    if (world->states) {
-        memoryFree(world->states);
-    }
-    if (world->provinces) {
-        memoryFree(world->provinces);
-    }
-    if (world->biomes) {
-        memoryFree(world->biomes);
-    }
+    world->cells.clear();
+    world->vertices.clear();
+    world->cellGrid = AzgaarCellGrid{};
+    world->heightGrid.clear();
+    world->biomeColorGrid.clear();
+    world->tempGrid.clear();
+    world->precGrid.clear();
+    world->coastGrid.clear();
+    world->biomeGrid.clear();
+    world->routes.clear();
+    world->rivers.clear();
+    world->settlements.clear();
+    world->markers.clear();
+    world->packCells.clear();
+    world->states.clear();
+    world->provinces.clear();
+    world->biomes.clear();
     *world = AzgaarWorld{};
-}
+}}  // namespace game

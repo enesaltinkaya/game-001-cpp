@@ -1,11 +1,21 @@
 #pragma once
+#include "ecs/system/System.h"
 
+namespace engine {
 typedef struct Transform Transform;
 typedef struct Entity Entity;
-typedef struct System System;
 typedef struct Scene Scene;
 
-extern System transformSystem;
+class TransformSystem : public System {
+public:
+    TransformSystem();
+    void added() override;
+    void removed() override;
+    void update() override;
+    void postUpdate() override;
+};
+
+extern TransformSystem transformSystem;
 
 
 // entities that are activated, will have their transforms
@@ -23,3 +33,4 @@ struct WorldTransform* transformGetWorld(Scene* scene, u32 entity);
 void transformGetDirection(Scene* scene, u32 entity, float* out);
 
 void transformQuatToPitchYaw(versor q, float* pitch, float* yaw);
+}  // namespace engine

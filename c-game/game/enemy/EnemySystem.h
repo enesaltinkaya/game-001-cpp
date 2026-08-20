@@ -2,13 +2,21 @@
 
 #include "ecs/system/System.h"
 #include "enemy/Enemy.h"
+#include "ecs/system/scene/Scene.h"  // IWYU pragma: keep
 
-struct Entity;
+namespace game {
+class EnemySystem : public engine::System {
+public:
+    EnemySystem();
+    void added() override;
+    void removed() override;
+    void update() override;
+};
 
-extern struct System enemySystem;
+extern EnemySystem enemySystem;
 
 // Create an Enemy component on the given entity with default stats
-Enemy* enemyCreate(Entity* entity,
+Enemy* enemyCreate(engine::Entity* entity,
                     float aggroRange,
                     float attackRange,
                     float loseTargetRange,
@@ -25,3 +33,4 @@ void enemyAddPatrolPoint(Enemy* enemy, vec3 position);
 void enemySetBaseRot(Enemy* enemy, versor baseRot);
 
 //
+}  // namespace game

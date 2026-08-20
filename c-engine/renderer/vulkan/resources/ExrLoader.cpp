@@ -5,6 +5,7 @@
 // Memory-stream userdata + callbacks for OpenEXRCore
 // ---------------------------------------------------------------------------
 
+namespace engine {
 struct ExrMemStream {
     const uint8_t* data;
     uint64_t       size;
@@ -41,7 +42,7 @@ static int64_t exrMemSize(exr_const_context_t ctxt, void* userdata)
 // Public API
 // ---------------------------------------------------------------------------
 
-float* exrLoadFromMemory(
+std::vector<float> exrLoadFromMemory(
     const void* data, u64 dataSize, int* outWidth, int* outHeight)
 {
     *outWidth  = 0;
@@ -57,8 +58,8 @@ float* exrLoadFromMemory(
     exr_context_t ctx = nullptr;
     exr_result_t  rv  = exr_start_read(&ctx, "<memory>", &init);
     if (rv != EXR_ERR_SUCCESS) {
-        warn("exrLoad: exr_start_read failed: %s", exr_get_error_code_as_string(rv));
-        return nullptr;
+        utils::warn("exrLoad: exr_start_read failed: %s", exr_get_error_code_as_string(rv));
+        return {};
     }
 
     // Use part 0
@@ -68,26 +69,26 @@ float* exrLoadFromMemory(
     exr_attr_box2i_t dataWindow;
     rv = exr_get_data_window(ctx, partIdx, &dataWindow);
     if (rv != EXR_ERR_SUCCESS) {
-        warn("exrLoad: exr_get_data_window failed");
+        utils::warn("exrLoad: exr_get_data_window failed");
         exr_finish(&ctx);
-        return nullptr;
+        return {};
     }
 
     int width  = dataWindow.max.x - dataWindow.min.x + 1;
     int height = dataWindow.max.y - dataWindow.min.y + 1;
     if (width <= 0 || height <= 0) {
-        warn("exrLoad: invalid dimensions %dx%d", width, height);
+        utils::warn("exrLoad: invalid dimensions %dx%d", width, height);
         exr_finish(&ctx);
-        return nullptr;
+        return {};
     }
 
     // Get channel list
     const exr_attr_chlist_t* chlist = nullptr;
     rv = exr_get_channels(ctx, partIdx, &chlist);
     if (rv != EXR_ERR_SUCCESS || !chlist) {
-        warn("exrLoad: exr_get_channels failed");
+        utils::warn("exrLoad: exr_get_channels failed");
         exr_finish(&ctx);
-        return nullptr;
+        return {};
     }
 
     // Find R, G, B, A channel indices (-1 if absent)
@@ -101,14 +102,14 @@ float* exrLoadFromMemory(
     }
 
     if (chIdxR < 0 || chIdxG < 0 || chIdxB < 0) {
-        warn("exrLoad: missing R/G/B channels");
+        utils::warn("exrLoad: missing R/G/B channels");
         exr_finish(&ctx);
-        return nullptr;
+        return {};
     }
 
     // Allocate output: RGBA float32
     u64 pixelCount = static_cast<u64>(width) * height;
-    float* pixels = static_cast<float*>(memoryAlloc(pixelCount * 4 * sizeof(float)));
+    std::vector<float> pixels(pixelCount * 4);
 
     // Get scanlines-per-chunk
     int32_t scanlinesPerChunk = 0;
@@ -123,7 +124,12 @@ float* exrLoadFromMemory(
     int32_t chunkCount = 0;
     exr_get_chunk_count(ctx, partIdx, &chunkCount);
 
+    // Third-party macro is a partial positional initializer; silence the
+    // missing-field warning for this one line.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmissing-field-initializers"
     exr_decode_pipeline_t decoder = EXR_DECODE_PIPELINE_INITIALIZER;
+#pragma GCC diagnostic pop
     bool decoderInited = false;
 
     for (int32_t ci = 0; ci < chunkCount; ci++) {
@@ -132,28 +138,28 @@ float* exrLoadFromMemory(
                                           dataWindow.min.y + ci * scanlinesPerChunk,
                                           &cinfo);
         if (rv != EXR_ERR_SUCCESS) {
-            warn("exrLoad: chunk info %d failed: %s", ci, exr_get_error_code_as_string(rv));
+            utils::warn("exrLoad: chunk info %d failed: %s", ci, exr_get_error_code_as_string(rv));
             goto fail;
         }
 
         if (!decoderInited) {
             rv = exr_decoding_initialize(ctx, partIdx, &cinfo, &decoder);
             if (rv != EXR_ERR_SUCCESS) {
-                warn("exrLoad: decoding_initialize failed: %s", exr_get_error_code_as_string(rv));
+                utils::warn("exrLoad: decoding_initialize failed: %s", exr_get_error_code_as_string(rv));
                 goto fail;
             }
             decoderInited = true;
         } else {
             rv = exr_decoding_update(ctx, partIdx, &cinfo, &decoder);
             if (rv != EXR_ERR_SUCCESS) {
-                warn("exrLoad: decoding_update failed: %s", exr_get_error_code_as_string(rv));
+                utils::warn("exrLoad: decoding_update failed: %s", exr_get_error_code_as_string(rv));
                 goto fail;
             }
         }
 
         // Set up channel output pointers for this chunk
         int chunkY0    = cinfo.start_y - dataWindow.min.y;
-        uint8_t* base  = reinterpret_cast<uint8_t*>(pixels) + static_cast<u64>(chunkY0) * lineStride;
+        uint8_t* base  = reinterpret_cast<uint8_t*>(pixels.data()) + static_cast<u64>(chunkY0) * lineStride;
 
         for (int16_t ch = 0; ch < decoder.channel_count; ch++) {
             exr_coding_channel_info_t* info = &decoder.channels[ch];
@@ -179,13 +185,13 @@ float* exrLoadFromMemory(
 
         rv = exr_decoding_choose_default_routines(ctx, partIdx, &decoder);
         if (rv != EXR_ERR_SUCCESS) {
-            warn("exrLoad: choose_default_routines failed: %s", exr_get_error_code_as_string(rv));
+            utils::warn("exrLoad: choose_default_routines failed: %s", exr_get_error_code_as_string(rv));
             goto fail;
         }
 
         rv = exr_decoding_run(ctx, partIdx, &decoder);
         if (rv != EXR_ERR_SUCCESS) {
-            warn("exrLoad: decoding_run chunk %d failed: %s", ci, exr_get_error_code_as_string(rv));
+            utils::warn("exrLoad: decoding_run chunk %d failed: %s", ci, exr_get_error_code_as_string(rv));
             goto fail;
         }
     }
@@ -207,6 +213,6 @@ float* exrLoadFromMemory(
 fail:
     if (decoderInited) exr_decoding_destroy(ctx, &decoder);
     exr_finish(&ctx);
-    memoryFree(pixels);
-    return nullptr;
+    return {};
 }
+}  // namespace engine

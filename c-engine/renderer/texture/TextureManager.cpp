@@ -1,15 +1,10 @@
 #include "TextureManager.h"
 #include "renderer/Renderer.h"
 
-static StrMap(Texture*) textureMap;
-static Map(u32, Texture*) textureIdMap;
-static Thread textureLock = {.mutex = PTHREAD_MUTEX_INITIALIZER};
-
-static void ensureTextureMapInit(void) {
-    if (!textureMap) {
-        sh_new_strdup(textureMap);
-    }
-}
+namespace engine {
+static std::unordered_map<std::string, Texture*> textureMap;
+static std::unordered_map<u32, Texture*> textureIdMap;
+static utils::Thread textureLock = {.mutex = PTHREAD_MUTEX_INITIALIZER};
 
 struct TextureCreateInfo {
     const char* path = nullptr;
@@ -28,55 +23,56 @@ static Texture* internalCreateTexture(TextureCreateInfo info) {
     // debug("loading texture: %s", info.path);
 
     // Check if already loaded
-    threadLock(&textureLock);
-    ensureTextureMapInit();
-    if (strmapContainsKey(textureMap, key)) {
-        Texture* existing = strmapGet(textureMap, key);
+    utils::threadLock(&textureLock);
+    auto it = textureMap.find(key);
+    if (it != textureMap.end()) {
+        Texture* existing = it->second;
         existing->refCount++;
-        threadUnlock(&textureLock);
+        utils::threadUnlock(&textureLock);
         return existing;
     }
 
     // Reserve slot so other threads see this key is being loaded
-    Texture* texture = static_cast<Texture*>(memoryAlloc(sizeof(Texture)));
-    strmapPut(textureMap, key, texture);
-    threadUnlock(&textureLock);
+    Texture* texture = new Texture{};
+    textureMap[key] = texture;
+    utils::threadUnlock(&textureLock);
 
     // Heavy work: decode image + GPU upload (no lock needed)
     if (info.path) {
-        texture->image = imageLoad(info.path);
-        stringPrintf(&texture->name, info.path);
+        texture->image = utils::imageLoad(info.path);
+        utils::stringPrintf(&texture->name, info.path);
     } else {
-        texture->image = imageLoadFromData(info.data, info.size, info.mime);
-        stringPrintf(&texture->name, info.name);
+        texture->image = utils::imageLoadFromData(info.data, info.size, info.mime);
+        utils::stringPrintf(&texture->name, info.name);
     }
 
     rendererUploadTexture(texture, info.nonColor, info.genMips);
 
     // Register by id
-    threadLock(&textureLock);
-    if (mapContainsKey(textureIdMap, texture->id)) {
-        terminate("textureId %d for \"%s\" exists", texture->id, key);
+    utils::threadLock(&textureLock);
+    if (textureIdMap.contains(texture->id)) {
+        utils::terminate("textureId %d for \"%s\" exists", texture->id, key);
     }
 
-    mapPut(textureIdMap, texture->id, texture);
+    textureIdMap[texture->id] = texture;
     texture->refCount++;
-    threadUnlock(&textureLock);
+    utils::threadUnlock(&textureLock);
 
     return texture;
 }
 
 Texture* getTextureByName(const char* name) {
-    threadLock(&textureLock);
-    if (strmapContainsKey(textureMap, name)) {
-        Texture* t = strmapGet(textureMap, name);
-        threadUnlock(&textureLock);
+    utils::threadLock(&textureLock);
+    auto it = textureMap.find(name);
+    if (it != textureMap.end()) {
+        Texture* t = it->second;
+        utils::threadUnlock(&textureLock);
         return t;
     }
-    threadUnlock(&textureLock);
+    utils::threadUnlock(&textureLock);
 
     // Try loading from pak
-    if (dataManagerFileExists(name)) {
+    if (utils::dataManagerFileExists(name)) {
         return createTexture(.path = name, .genMips = 0);
     }
 
@@ -84,9 +80,10 @@ Texture* getTextureByName(const char* name) {
 }
 
 Texture* getTextureById(u32 id) {
-    threadLock(&textureLock);
-    Texture* t = mapContainsKey(textureIdMap, id) ? mapGet(textureIdMap, id) : nullptr;
-    threadUnlock(&textureLock);
+    utils::threadLock(&textureLock);
+    auto it = textureIdMap.find(id);
+    Texture* t = it != textureIdMap.end() ? it->second : nullptr;
+    utils::threadUnlock(&textureLock);
     return t;
 }
 
@@ -103,14 +100,12 @@ Texture* createTextureFromData(const char* name,
 }
 
 void textureManagerDestroy(void) {
-    for (i32 i = 0, si = strmapSize(textureMap); i < si; i++) {
-        Texture* texture = textureMap[i].value;
+    for (const auto& entry : textureMap) {
+        Texture* texture = entry.second;
         rendererDestroyTexture(texture);
-        stringDestroy(&texture->name);
-        memoryFree(texture);
+        utils::stringDestroy(&texture->name);
+        delete texture;
     }
-    strmapFree(textureMap);
-    mapFree(textureIdMap);
 }
 
 static void loadTextureWork(void* arg) {
@@ -119,22 +114,22 @@ static void loadTextureWork(void* arg) {
 }
 
 void textureManagerInit() {
-    double elapsed = elapsedBegin();
+    double elapsed = utils::elapsedBegin();
 
-    Array(String) ktxFiles = dataManagerListFiles(".ktx2");
-    info("textureManager: found %d ktx2 files in paks", arraySize(ktxFiles));
+    std::vector<utils::String> ktxFiles = utils::dataManagerListFiles(".ktx2");
+    utils::info("textureManager: found %d ktx2 files in paks", static_cast<i32>(ktxFiles.size()));
 
-    for (i32 i = 0, s = arraySize(ktxFiles); i < s; i++) {
-        threadPoolAddWork(NULL, loadTextureWork, ktxFiles[i].data);
+    for (i32 i = 0, s = static_cast<i32>(ktxFiles.size()); i < s; i++) {
+        utils::threadPoolAddWork(NULL, loadTextureWork, ktxFiles[i].data);
     }
 
-    threadPoolWait(NULL);
+    utils::threadPoolWait(NULL);
 
-    for (i32 i = 0, s = arraySize(ktxFiles); i < s; i++) {
-        stringDestroy(&ktxFiles[i]);
+    for (i32 i = 0, s = static_cast<i32>(ktxFiles.size()); i < s; i++) {
+        utils::stringDestroy(&ktxFiles[i]);
     }
-    arrayFree(ktxFiles);
 
-    elapsed = elapsedEnd(elapsed);
-    info("textureManager: preloaded %d textures in %.02f ms", strmapSize(textureMap), elapsed);
+    elapsed = utils::elapsedEnd(elapsed);
+    utils::info("textureManager: preloaded %d textures in %.02f ms", static_cast<i32>(textureMap.size()), elapsed);
 }
+}  // namespace engine

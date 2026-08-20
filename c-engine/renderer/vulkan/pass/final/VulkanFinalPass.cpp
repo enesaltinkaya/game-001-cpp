@@ -1,4 +1,5 @@
 #include "VulkanFinalPass.h"
+#include "VulkanFinalPass.h"
 #include "ecs/system/System.h"
 #include "renderer/Renderer.h"
 #include "renderer/vulkan/Vulkan.h"
@@ -10,39 +11,26 @@
 #include "renderer/vulkan/pass/taa/VulkanTaaPass.h"
 #include "renderer/vulkan/pass/bloom/VulkanBloomPass.h"
 
-static void added(void);
-static void preUpdate(void);
-static void update(void);
-static void postUpdate(void);
-static void removed(void);
+namespace engine {
 
 static double elapsedGPU;
 
-System vulkanFinalPass = {
-    .name                = "final",
-    .added               = added,
-    .removed             = removed,
-    .preUpdate           = preUpdate,
-    .update              = update,
-    .postUpdate          = postUpdate,
-    .cpuElapsedLastFrame = 0.0,
-    .cpuElapsed          = 0.0,
-    .gpuElapsed          = 0.0,
-    .priority            = 0,
-};
+VulkanFinalPass vulkanFinalPass;
+
+VulkanFinalPass::VulkanFinalPass() : System("final") {}
 
 static VulkanPipe pipeline;
 
-typedef struct FinalPushConstants {
-    u32 colorTextureIndex;
-    u32 bloomTextureIndex;
-    float bloomStrength;
-    float casStrength;
-    float contrast;
-    u32 pad[3];
-} FinalPushConstants;
+struct FinalPushConstants {
+    u32 colorTextureIndex = 0;
+    u32 bloomTextureIndex = 0;
+    float bloomStrength   = 0.0f;
+    float casStrength     = 0.0f;
+    float contrast        = 0.0f;
+    u32 pad[3]           = {};
+};
 
-static void added(void) {
+void VulkanFinalPass::added() {
     pipeline = vulkanCreatePipe(.name               = "final",
                                 .vs                 = "shaders/pass/final/spv/final.vert.spv",
                                 .fs                 = "shaders/pass/final/spv/final.frag.spv",
@@ -51,11 +39,11 @@ static void added(void) {
                                 .clearColor1        = {0.0f, 0.0f, 0.0f, 1.0f});
 }
 
-static void preUpdate(void) {
+void VulkanFinalPass::preUpdate() {
     vulkanResetProfile(vulkan.currentCmd, &pipeline.profile, 0);
 }
 
-static void update(void) {
+void VulkanFinalPass::update() {
     if (vulkan.skipFrame) return;
 
     VulkanCommand* cmd      = vulkan.currentCmd;
@@ -100,10 +88,11 @@ static void update(void) {
 
 }
 
-static void postUpdate(void) {
+void VulkanFinalPass::postUpdate() {
     vulkanFinalPass.gpuElapsed = elapsedGPU;
 }
 
-static void removed(void) {
+void VulkanFinalPass::removed() {
     vulkanDestroyPipe(&pipeline);
 }
+}  // namespace engine

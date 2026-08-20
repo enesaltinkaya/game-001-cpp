@@ -17,9 +17,9 @@
 #include <synchapi.h>
 #endif
 
-void utilsInit(MemoryAllocatorType allocatorType) {
+namespace utils {
+void utilsInit(void) {
     // signalCatcherInit();
-    memoryInit(allocatorType);
     platformInit();
     loggerInit();
 
@@ -42,7 +42,6 @@ void utilsDestroy(void) {
     platformDestroy();
     settingsDestroy();
     signalCleanUp();
-    memoryDestroy();
     loggerDestroy();
 }
 
@@ -250,3 +249,4 @@ void* customMemmem(const void* haystack, int haystack_len, const void* needle, i
     }
     return nullptr;
 }
+}  // namespace utils

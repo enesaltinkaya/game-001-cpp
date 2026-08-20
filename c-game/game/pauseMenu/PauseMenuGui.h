@@ -1,7 +1,15 @@
+#include "ecs/system/System.h"  // IWYU pragma: keep
 #pragma once
 
-struct System;
+namespace game {
+class PauseMenuGui : public engine::System {
+public:
+    PauseMenuGui();
+    void added() override;
+    void removed() override;
+};
 
-extern System pauseMenuGui;
+extern PauseMenuGui pauseMenuGui;
 
 char pauseMenuGuiIsShowing(void);
+}  // namespace game

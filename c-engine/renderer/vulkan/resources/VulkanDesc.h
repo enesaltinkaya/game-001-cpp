@@ -2,11 +2,12 @@
 
 #include "thread/Thread.h"
 
+namespace engine {
 struct VulkanDesc {
     VkDescriptorPool pool;
     VkDescriptorSet set;
     VkDescriptorSetLayout layout;
-    struct Thread lock;
+    struct utils::Thread lock;
 };
 
 struct VulkanCommand;
@@ -35,9 +36,10 @@ struct VulkanDescInfo {
     int ubos = 0;
 };
 
-#define vulkanCreateDesc(...) r_vulkanCreateDesc(VulkanDescInfo{__VA_ARGS__})
+#define vulkanCreateDesc(...) engine::r_vulkanCreateDesc(engine::VulkanDescInfo{__VA_ARGS__})
 struct VulkanDesc r_vulkanCreateDesc(struct VulkanDescInfo info);
 void vulkanDestroyDesc(struct VulkanDesc* desc);
 
 void vulkanUpdateDesc(struct VulkanDesc* desc, enum VulkanDescType type, void* resource, int dstBinding, int dstArrayElement);
 void vulkanBindDesc(struct VulkanCommand* cmd, struct VulkanPipe* pipe, struct VulkanDesc* desc, int firstSet);
+}  // namespace engine

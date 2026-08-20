@@ -12,6 +12,7 @@
 #include <sys/resource.h>
 #include <libgen.h>
 
+namespace utils {
 Platform platform;
 
 Platform* getPlatform(void) {
@@ -110,4 +111,5 @@ int numberOfCores(void) {
     return (int)sysconf(_SC_NPROCESSORS_ONLN);
 }
 
+}  // namespace utils
 #endif

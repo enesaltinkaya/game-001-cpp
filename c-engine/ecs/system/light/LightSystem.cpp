@@ -7,27 +7,16 @@
 #include "events/Events.h"
 #include "renderer/Renderer.h"
 
-static void added(void);
-static void update(void);
-static void postUpdate(void);
+namespace engine {
 static void applyIblSun(void* _);
 static void buildGpuLight(Scene* scene, u32 entity, Light* light, GpuLight* out);
 
 static LightUbo frameLightUbo;
 static u32 frameLightCount;
 
-System lightSystem = {
-    .name                = "light",
-    .added               = added,
-    .removed             = nullptr,
-    .preUpdate           = nullptr,
-    .update              = update,
-    .postUpdate          = postUpdate,
-    .cpuElapsedLastFrame = 0.0,
-    .cpuElapsed          = 0.0,
-    .gpuElapsed          = 0.0,
-    .priority            = 0,
-};
+LightSystem lightSystem;
+
+LightSystem::LightSystem() : System("light") {}
 
 static void buildGpuLight(Scene* scene, u32 entity, Light* light, GpuLight* out) {
     WorldTransform* wt = transformGetWorld(scene, entity);
@@ -60,9 +49,9 @@ void lightMarkDirty(Scene* scene, u32 entity) {
     (void)entity;
 }
 
-void added(void) {
-    signalSubscribe("rendererInitialized", applyIblSun);
-    signalSubscribe("iblChanged", applyIblSun);
+void LightSystem::added() {
+    utils::signalSubscribe("rendererInitialized", applyIblSun);
+    utils::signalSubscribe("iblChanged", applyIblSun);
 }
 
 static void applyIblSun(void* _) {
@@ -92,24 +81,24 @@ static void applyIblSun(void* _) {
     rendererUploadSun(&sun);
 }
 
-void update(void) {
+void LightSystem::update() {
 }
 
-void postUpdate(void) {
+void LightSystem::postUpdate() {
     memset(&frameLightUbo, 0, sizeof(frameLightUbo));
     frameLightCount = 0;
 
     ivec4 counts = {};
-    Array(Scene*) visibleScenes = sceneSystemGetVisibleScenes();
-    foreach (Scene* scene, visibleScenes) {
-        SparseSet* lights = getComponents(scene, Light);
+    std::vector<Scene*> visibleScenes = sceneSystemGetVisibleScenes();
+    for (Scene* scene : visibleScenes) {
+        utils::SparseSet* lights = getComponents(scene, Light);
         if (!lights) {
             continue;
         }
 
         for (u32 i = 0; i < lights->size; i++) {
-            u32 entity = ssGetValueByIndex(lights, i);
-            Light* light  = static_cast<Light*>(ssGetDataByIndex(lights, i));
+            u32 entity = utils::ssGetValueByIndex(lights, i);
+            Light* light  = static_cast<Light*>(utils::ssGetDataByIndex(lights, i));
             if (!light) {
                 continue;
             }
@@ -136,3 +125,4 @@ void postUpdate(void) {
     glm_ivec4_copy(counts, frameLightUbo.counts);
     rendererSetLighting(&frameLightUbo);
 }
+}  // namespace engine

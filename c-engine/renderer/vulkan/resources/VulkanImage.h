@@ -1,25 +1,27 @@
 #pragma once
+#include <vector>
 
+namespace engine {
 struct VulkanImage {
-    String name;
-    VmaAllocation vma;
-    VkImage img;
-    VkImageView view;  // still needed for texture array, eg. shadow cascades
-    VkImageView* views;
-    VkImageAspectFlags aspect;
-    VkImageLayout layout;
-    VkExtent3D extent;
-    VkFormat format;
-    VkImageUsageFlags usage;
-    VkImageViewType viewType;
-    VkSampleCountFlagBits samples;
+    utils::String name = {};
+    VmaAllocation vma = {};
+    VkImage img = {};
+    VkImageView view = {};  // still needed for texture array, eg. shadow cascades
+    std::vector<VkImageView> views = {};
+    VkImageAspectFlags aspect = 0;
+    VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED;
+    VkExtent3D extent = {};
+    VkFormat format = VK_FORMAT_UNDEFINED;
+    VkImageUsageFlags usage = 0;
+    VkImageViewType viewType = VK_IMAGE_VIEW_TYPE_2D;
+    VkSampleCountFlagBits samples = static_cast<VkSampleCountFlagBits>(0);
 
-    int layers;
-    int mipLevels;
-    int sampledPoolIndex;
-    int storagePoolIndex;
-    bool inPool;
-    bool onHeap;
+    int layers = 0;
+    int mipLevels = 0;
+    int sampledPoolIndex = 0;
+    int storagePoolIndex = 0;
+    bool inPool = false;
+    bool onHeap = false;
 };
 
 struct VulkanImageInfo {
@@ -41,7 +43,7 @@ struct VulkanImageInfo {
     bool onHeap = false;
 };
 
-#define vulkanCreateImage(...) r_vulkanCreateImg(VulkanImageInfo{__VA_ARGS__})
+#define vulkanCreateImage(...) engine::r_vulkanCreateImg(engine::VulkanImageInfo{__VA_ARGS__})
 
 struct VulkanCommand;
 struct Texture;
@@ -70,3 +72,4 @@ void vulkanCopyDepthToColorImage(VulkanCommand* cmd,
                                  VkImageLayout targetFinalLayout);
                                  
 void vulkanLoadTexture(Texture* texture, bool nonColor, bool genMips);
+}  // namespace engine

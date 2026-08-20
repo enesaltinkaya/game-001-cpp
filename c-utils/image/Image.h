@@ -1,5 +1,7 @@
 #pragma once
+#include <vector>
 
+namespace utils {
 struct Image {
     void* data;  // can be u8, u16 or float
     u64 size;    // width * height * channels * depth
@@ -9,7 +11,7 @@ struct Image {
     int depth;     // in bytes, aka 8bit => 1, 16bit => 2, float => 4
     int vkFormat;
     int mips;
-    u64* mipSizes;  // stb array
+    std::vector<u64> mipSizes;
     bool isKtx;
     bool isRaw;
 };
@@ -44,3 +46,4 @@ void boxBlurNormalMap(const signed char* input_normal_map, signed char* output_n
 void boxBlurNormalMapFast(const signed char* input_normal_map, signed char* output_normal_map, int width, int height, int radius);
 void boxBlurWithHoles(const float* input, float* output, int width, int height, int radius);
 void boxBlurWithHolesOptimized(const float* input, float* output, int width, int height, int radius);
+}  // namespace utils

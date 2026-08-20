@@ -15,6 +15,7 @@
 // Build the corridor from the world's routes (roads only in Phase 1). Safe to
 // call again; clears any previous corridor first. Must be called before the
 // first terrain tile build and before road decals are placed.
+namespace game {
 void azgaarRoadCorridorBuild(const AzgaarWorld* world);
 
 // Release all corridor storage.
@@ -27,3 +28,4 @@ void azgaarRoadCorridorClear(void);
 // edge-blend band, so the corridor joins the surrounding terrain without a lip.
 // naturalY is the unmodified terrain height at the query point.
 bool azgaarRoadCorridorSample(float worldX, float worldZ, float naturalY, float* outHeight);
+}  // namespace game

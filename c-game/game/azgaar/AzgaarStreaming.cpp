@@ -1,3 +1,4 @@
+#include "AzgaarStreaming.h"
 #include "azgaar/AzgaarStreaming.h"
 #include "azgaar/AzgaarWorld.h"
 #include "azgaar/AzgaarProps.h"
@@ -12,22 +13,11 @@
 #include "timer/Timer.h"
 #include "renderer/vulkan/pass/heightmap_terrain/VulkanHeightmapTerrainPass.h"
 
-static void added(void);
-static void removed(void);
-static void update(void);
+namespace game {
 
-System azgaarStreamingSystem = {
-    .name                = "azgaarStreaming",
-    .added               = added,
-    .removed             = removed,
-    .preUpdate           = nullptr,
-    .update              = update,
-    .postUpdate          = nullptr,
-    .cpuElapsedLastFrame = 0.0,
-    .cpuElapsed          = 0.0,
-    .gpuElapsed          = 0.0,
-    .priority            = 0,
-};
+AzgaarStreamingSystem azgaarStreamingSystem;
+
+AzgaarStreamingSystem::AzgaarStreamingSystem() : engine::System("azgaarStreaming") {}
 
 static const AzgaarWorld* streamWorld;
 
@@ -42,7 +32,7 @@ static void tempCameraTeleport(void) {
     if (!env || !*env) return;
     static double startMs = -1;
     static char done      = 0;
-    double now            = millies();
+    double now            = utils::millies();
     if (startMs < 0) startMs = now;
     float x, y, z, afterMs;
     if (sscanf(env, "%f,%f,%f,%f", &x, &y, &z, &afterMs) != 4) return;
@@ -51,39 +41,39 @@ static void tempCameraTeleport(void) {
     vec3 pos = {x, y - 40.0f, z};
     if (playerTeleportTo(pos)) {
         done = 1;
-        info("TEMP player teleport -> (%.0f,%.0f,%.0f)", static_cast<double>(x), static_cast<double>(y), static_cast<double>(z));
+        utils::info("TEMP player teleport -> (%.0f,%.0f,%.0f)", static_cast<double>(x), static_cast<double>(y), static_cast<double>(z));
     }
 
     // Also snap the camera itself so the view (and the streaming window)
     // re-centers immediately instead of waiting for the controller.
-    Entity* cam = cameraGetEntity();
+    engine::Entity* cam = engine::cameraGetEntity();
     if (!cam) return;
-    Transform* t = getComponent(cam->scene, Transform, cam->id);
+    engine::Transform* t = getComponent(cam->scene, engine::Transform, cam->id);
     if (!t) return;
     t->pos[0] = x;
     t->pos[1] = y;
     t->pos[2] = z;
-    transformActivate(cam->scene, cam->id);
+    engine::transformActivate(cam->scene, cam->id);
 }
 
-static void added(void) {
+void AzgaarStreamingSystem::added() {
     streamWorld = loadingAzgaarGetWorld();
     if (!streamWorld) {
-        warn("azgaarStreaming: no retained world available; streaming disabled");
+        utils::warn("azgaarStreaming: no retained world available; streaming disabled");
         return;
     }
     // Build the vegetation / landmark system (merged species meshes, road hash,
     // scatter pool).  Tiles scatter lazily as the active heightmap fills.
     azgaarPropsInit(streamWorld);
-    info("azgaarStreaming: started");
+    utils::info("azgaarStreaming: started");
 }
 
-static void removed(void) {
+void AzgaarStreamingSystem::removed() {
     azgaarPropsDestroy();
     streamWorld = nullptr;
 }
 
-static void update(void) {
+void AzgaarStreamingSystem::update() {
     // Drive the props scatter (polls the active heightmap for READY tiles,
     // enqueues deterministic scatter jobs, pushes wind each frame).
     azgaarPropsUpdate();
@@ -91,17 +81,17 @@ static void update(void) {
     // Terrain debug toggles for the heightmap pass.
     //   Ctrl+W : wireframe overlay
     //   Ctrl+H : debug height ramp
-    if (input.pressed == KEY_W && input.ctrl) {
-        vulkanHeightmapTerrainSetWireFrameEnabled(!vulkanHeightmapTerrainIsWireFrameEnabled());
-        info("terrain wireframe toggled (heightmap)");
+    if (engine::input.pressed == KEY_W && engine::input.ctrl) {
+        engine::vulkanHeightmapTerrainSetWireFrameEnabled(!engine::vulkanHeightmapTerrainIsWireFrameEnabled());
+        utils::info("terrain wireframe toggled (heightmap)");
     }
 
-    if (input.pressed == KEY_H && input.ctrl) {
-        bool enabled = !vulkanHeightmapTerrainIsDebugHeightRampEnabled();
-        vulkanHeightmapTerrainSetDebugHeightRampEnabled(enabled);
-        info("heightmap debug height ramp %s", enabled ? "enabled" : "disabled");
+    if (engine::input.pressed == KEY_H && engine::input.ctrl) {
+        bool enabled = !engine::vulkanHeightmapTerrainIsDebugHeightRampEnabled();
+        engine::vulkanHeightmapTerrainSetDebugHeightRampEnabled(enabled);
+        utils::info("heightmap debug height ramp %s", enabled ? "enabled" : "disabled");
     }
 
     if (!streamWorld) return;
     tempCameraTeleport();
-}
+}}  // namespace game

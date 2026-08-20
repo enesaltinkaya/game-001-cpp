@@ -11,6 +11,7 @@
 #define MAX_SAMPLERS 11
 #define MAX_IMAGES 4096
 
+namespace engine {
 struct VulkanFogData {
     // Base fog (screen-space)
     vec4  fogColor;              // rgb: fog color, w: unused
@@ -80,29 +81,29 @@ int vulkanAddStorageImageViewToPool(VkImageView view);
 void vulkanRemoveStorageImageViewFromPool(int poolIndex);
 
 struct VulkanIblSetInfo {
-    u32 environmentMapIndex;
-    u32 irradianceMapIndex;
-    u32 prefilterMapIndex;
-    u32 brdfLutIndex;
-    u32 blueNoiseIndex;
-    u32 tonemapLutIndex;
-    float environmentMapMaxLod;
-    float prefilterMapMaxLod;
-    bool enabled;
-    float intensity;
-    float specularIntensity;
-    float sunThreshold;
-    bool hasSH;
-    u32 tonemapMode;
-    u32 tonemapLutPunchyIndex;
-    float shL0_M0[4];
-    float shL1_Mn1[4];
-    float shL1_M0[4];
-    float shL1_Mp1[4];
-    float envRotation[16]; // mat4, column-major
+    u32 environmentMapIndex = 0;
+    u32 irradianceMapIndex = 0;
+    u32 prefilterMapIndex = 0;
+    u32 brdfLutIndex = 0;
+    u32 blueNoiseIndex = 0;
+    u32 tonemapLutIndex = 0;
+    float environmentMapMaxLod = 0.0f;
+    float prefilterMapMaxLod = 0.0f;
+    bool enabled = false;
+    float intensity = 0.0f;
+    float specularIntensity = 0.0f;
+    float sunThreshold = 0.0f;
+    bool hasSH = false;
+    u32 tonemapMode = 0;
+    u32 tonemapLutPunchyIndex = 0;
+    float shL0_M0[4] = {};
+    float shL1_Mn1[4] = {};
+    float shL1_M0[4] = {};
+    float shL1_Mp1[4] = {};
+    float envRotation[16] = {}; // mat4, column-major
 };
 
-#define vulkanResourceSetIbl(...) r_vulkanResourceSetIbl(VulkanIblSetInfo{__VA_ARGS__})
+#define vulkanResourceSetIbl(...) engine::r_vulkanResourceSetIbl(engine::VulkanIblSetInfo{__VA_ARGS__})
 void r_vulkanResourceSetIbl(VulkanIblSetInfo info);
 
 VulkanCommand* vulkanTransientBegin(void);
@@ -179,9 +180,9 @@ VulkanWaterData vulkanResourceGetWaterData(void);
 /* Must match AzgaarPropsData in globalset.shader (std430 layout).  Pushed by
  * the game each frame for the Azgaar props pass (workstream B). */
 struct VulkanAzgaarPropsData {
-    vec4 wind;    // xy = dir (unit), z = speed (rad/s), w = strength (m)
-    vec4 density; // xyz = global multipliers (grass / tree / rock), w = enabled
-    vec4 lod;     // x = hard LOD switch distance (m): near inside, far outside
+    vec4 wind = {};    // xy = dir (unit), z = speed (rad/s), w = strength (m)
+    vec4 density = {}; // xyz = global multipliers (grass / tree / rock), w = enabled
+    vec4 lod = {};     // x = hard LOD switch distance (m): near inside, far outside
 };
 void vulkanResourceSetAzgaarPropsData(const VulkanAzgaarPropsData* params);
 VulkanAzgaarPropsData vulkanResourceGetAzgaarPropsData(void);
@@ -190,11 +191,11 @@ VulkanAzgaarPropsData vulkanResourceGetAzgaarPropsData(void);
  * game each frame (AzgaarWeather) and read by the azgaar_weather compute
  * + billboard pass.  look.w < 0.5 turns the whole pass off. */
 struct VulkanWeatherData {
-    vec4 wind;    // xy = dir (unit, world xz), z = speed m/s, w = turbulence 0..1
-    vec4 types;   // spawn weights: x snow, y rain, z dust, w leaves (normalized)
-    vec4 params;  // x = box half xz (m), y = box half y (m), z = density 0..1, w = size scale
-    vec4 look;    // x = global opacity, y = fall speed scale, z = far fade start (m), w = enabled
-    vec4 tint;    // rgb = particle tint (dust = biome colour), a unused
+    vec4 wind = {};    // xy = dir (unit, world xz), z = speed m/s, w = turbulence 0..1
+    vec4 types = {};   // spawn weights: x snow, y rain, z dust, w leaves (normalized)
+    vec4 params = {};  // x = box half xz (m), y = box half y (m), z = density 0..1, w = size scale
+    vec4 look = {};    // x = global opacity, y = fall speed scale, z = far fade start (m), w = enabled
+    vec4 tint = {};    // rgb = particle tint (dust = biome colour), a unused
 };
 void vulkanResourceSetWeather(const VulkanWeatherData* data);
 VulkanWeatherData vulkanResourceGetWeatherData(void);
@@ -204,3 +205,4 @@ void vulkanResourceSetCameraOccluders(const u32* entities, const float* alphas, 
 
 
 
+}  // namespace engine

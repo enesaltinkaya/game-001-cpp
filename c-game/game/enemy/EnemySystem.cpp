@@ -1,3 +1,4 @@
+#include "EnemySystem.h"
 #include "enemy/EnemySystem.h"
 #include "enemy/Enemy.h"
 #include "combat/Combat.h"
@@ -37,29 +38,18 @@
 #define ENEMY_TURN_SPEED 8.0f
 #define ENEMY_DEATH_ROT_DURATION 0.4f  // time to rotate onto ground
 
+namespace game {
 static vec3 Y_UP = {0.0f, 1.0f, 0.0f};
 static vec3 X_AXIS = {1.0f, 0.0f, 0.0f};
 
-static void added(void);
-static void removed(void);
-static void update(void);
 
-System enemySystem = {
-    .name                = "enemy",
-    .added               = added,
-    .removed             = removed,
-    .preUpdate           = nullptr,
-    .update              = update,
-    .postUpdate          = nullptr,
-    .cpuElapsedLastFrame = 0.0,
-    .cpuElapsed          = 0.0,
-    .gpuElapsed          = 0.0,
-    .priority            = 1200,
-};
+EnemySystem enemySystem;
+
+EnemySystem::EnemySystem() : engine::System("enemy") {}
 
 // ── State transition helpers ────────────────────────────────────────────────
 
-static void enemySetState(Enemy* enemy, Entity* entity, EnemyState newState) {
+static void enemySetState(Enemy* enemy, engine::Entity* entity, EnemyState newState) {
     static_cast<void>(entity);
     if (enemy->state == newState) return;
 
@@ -94,16 +84,16 @@ static void enemySetState(Enemy* enemy, Entity* entity, EnemyState newState) {
 
 // ── Target detection ────────────────────────────────────────────────────────
 
-static Entity* enemyGetTarget(Enemy* enemy) {
+static engine::Entity* enemyGetTarget(Enemy* enemy) {
     if (!enemy->targetScene || !enemy->targetEntityId) return nullptr;
-    return getEntity(enemy->targetScene, enemy->targetEntityId);
+    return engine::getEntity(enemy->targetScene, enemy->targetEntityId);
 }
 
 static u8 enemyIsPlayerInRange(Enemy* enemy, vec3 enemyPos) {
-    Entity* player = combatGetPlayerEntity();
+    engine::Entity* player = combatGetPlayerEntity();
     if (!player) return 0;
 
-    Transform* pT = getComponent(player->scene, Transform, player->id);
+    engine::Transform* pT = getComponent(player->scene, engine::Transform, player->id);
     if (!pT) return 0;
 
     vec3 dir;
@@ -115,10 +105,10 @@ static u8 enemyIsPlayerInRange(Enemy* enemy, vec3 enemyPos) {
 }
 
 static u8 enemyIsPlayerInAttackRange(Enemy* enemy, vec3 enemyPos) {
-    Entity* player = combatGetPlayerEntity();
+    engine::Entity* player = combatGetPlayerEntity();
     if (!player) return 0;
 
-    Transform* pT = getComponent(player->scene, Transform, player->id);
+    engine::Transform* pT = getComponent(player->scene, engine::Transform, player->id);
     if (!pT) return 0;
 
     vec3 dir;
@@ -130,10 +120,10 @@ static u8 enemyIsPlayerInAttackRange(Enemy* enemy, vec3 enemyPos) {
 }
 
 static u8 enemyIsFarEnoughToRegain(Enemy* enemy, vec3 enemyPos) {
-    Entity* player = combatGetPlayerEntity();
+    engine::Entity* player = combatGetPlayerEntity();
     if (!player) return 1;  // no player = safe
 
-    Transform* pT = getComponent(player->scene, Transform, player->id);
+    engine::Transform* pT = getComponent(player->scene, engine::Transform, player->id);
     if (!pT) return 1;
 
     vec3 dir;
@@ -147,7 +137,7 @@ static u8 enemyIsFarEnoughToRegain(Enemy* enemy, vec3 enemyPos) {
 
 // ── Rotation toward target ──────────────────────────────────────────────────
 
-static void enemyRotateToward(vec3 enemyPos, vec3 targetPos, Enemy* enemy, Transform* transform) {
+static void enemyRotateToward(vec3 enemyPos, vec3 targetPos, Enemy* enemy, engine::Transform* transform) {
     vec3 dir;
     glm_vec3_sub(targetPos, enemyPos, dir);
     dir[1] = 0.0f;
@@ -161,14 +151,14 @@ static void enemyRotateToward(vec3 enemyPos, vec3 targetPos, Enemy* enemy, Trans
     versor targetRot;
     glm_quat_mul(yawQuat, enemy->baseRot, targetRot);
 
-    float t = glm_clamp(enemy->turnSpeed * timer.dt, 0.0f, 1.0f);
-    quatSlerpShortest(transform->rot, targetRot, t, transform->rot);
+    float t = glm_clamp(enemy->turnSpeed * utils::timer.dt, 0.0f, 1.0f);
+    engine::quatSlerpShortest(transform->rot, targetRot, t, transform->rot);
     glm_quat_normalize(transform->rot);
 }
 
 // ── Attack execution ────────────────────────────────────────────────────────
 
-static void enemyAttack(Enemy* enemy, Entity* entity) {
+static void enemyAttack(Enemy* enemy, engine::Entity* entity) {
     if (enemy->attackCooldown > 0.0f) return;
 
     enemy->attackCooldown = enemy->attackCooldownMax;
@@ -190,7 +180,7 @@ static void enemyAttack(Enemy* enemy, Entity* entity) {
 #define ENEMY_SEPARATION_RADIUS 1.2f
 #define ENEMY_SEPARATION_STRENGTH 3.0f
 
-static Scene* enemySepScene;
+static engine::Scene* enemySepScene;
 static u32 enemySepCount;
 static vec3 enemySepPositions[256];  // scene-local cache
 
@@ -216,16 +206,16 @@ static void enemyApplySeparation(vec3 pos, vec3 desiredVel) {
 
 // ── State update functions ──────────────────────────────────────────────────
 
-static void enemyStateIdle(Enemy* enemy, Entity* entity, Transform* transform, vec3 pos) {
+static void enemyStateIdle(Enemy* enemy, engine::Entity* entity, engine::Transform* transform, vec3 pos) {
     // Check for player aggro
     if (enemyIsPlayerInRange(enemy, pos)) {
         enemy->targetScene = nullptr;  // will be set by combatGetPlayerEntity path
-        Entity* player     = combatGetPlayerEntity();
+        engine::Entity* player     = combatGetPlayerEntity();
         if (player) {
             enemy->targetScene           = player->scene;
             enemy->targetEntityId        = player->id;
             enemy->lastKnownTargetPos[0] = player->scene ? 0 : 0;
-            Transform* pT                = getComponent(player->scene, Transform, player->id);
+            engine::Transform* pT                = getComponent(player->scene, engine::Transform, player->id);
             if (pT) {
                 enemy->lastKnownTargetPos[0] = pT->pos[0];
                 enemy->lastKnownTargetPos[1] = pT->pos[1];
@@ -262,7 +252,7 @@ static void enemyStateIdle(Enemy* enemy, Entity* entity, Transform* transform, v
             enemyApplySeparation(pos, desiredVel);
         } else {
             // Reached patrol point, wait then advance
-            enemy->patrolWaitTimer += timer.dt;
+            enemy->patrolWaitTimer += utils::timer.dt;
             if (enemy->patrolWaitTimer >= enemy->patrolWaitDuration) {
                 enemy->patrolWaitTimer = 0.0f;
                 enemy->currentPatrolIndex =
@@ -271,7 +261,7 @@ static void enemyStateIdle(Enemy* enemy, Entity* entity, Transform* transform, v
             return;
         }
 
-        joltCharacterUpdate(enemy->character, desiredVel, timer.dt);
+        joltCharacterUpdate(enemy->character, desiredVel, utils::timer.dt);
         joltCharacterGetPosition(enemy->character, pos);
         transform->pos[0] = pos[0];
         transform->pos[1] = pos[1];
@@ -280,13 +270,13 @@ static void enemyStateIdle(Enemy* enemy, Entity* entity, Transform* transform, v
     }
 }
 
-static void enemyStateAlert(Enemy* enemy, Entity* entity, Transform* transform, vec3 pos) {
-    enemy->stateTimer += timer.dt;
+static void enemyStateAlert(Enemy* enemy, engine::Entity* entity, engine::Transform* transform, vec3 pos) {
+    enemy->stateTimer += utils::timer.dt;
 
     // Face player
-    Entity* player = enemyGetTarget(enemy);
+    engine::Entity* player = enemyGetTarget(enemy);
     if (player) {
-        Transform* pT = getComponent(player->scene, Transform, player->id);
+        engine::Transform* pT = getComponent(player->scene, engine::Transform, player->id);
         if (pT) {
             enemyRotateToward(pos, pT->pos, enemy, transform);
             enemy->lastKnownTargetPos[0] = pT->pos[0];
@@ -302,8 +292,8 @@ static void enemyStateAlert(Enemy* enemy, Entity* entity, Transform* transform, 
     }
 }
 
-static void enemyStateChase(Enemy* enemy, Entity* entity, Transform* transform, vec3 pos) {
-    enemy->stateTimer += timer.dt;
+static void enemyStateChase(Enemy* enemy, engine::Entity* entity, engine::Transform* transform, vec3 pos) {
+    enemy->stateTimer += utils::timer.dt;
 
     // Check HP for retreat
     CharacterStats* stats = getComponent(entity->scene, CharacterStats, entity->id);
@@ -314,9 +304,9 @@ static void enemyStateChase(Enemy* enemy, Entity* entity, Transform* transform, 
 
     // Only give up if player is very far away
     {
-        Entity* player = combatGetPlayerEntity();
+        engine::Entity* player = combatGetPlayerEntity();
         if (player) {
-            Transform* pT = getComponent(player->scene, Transform, player->id);
+            engine::Transform* pT = getComponent(player->scene, engine::Transform, player->id);
             if (pT) {
                 vec3 dir;
                 glm_vec3_sub(pT->pos, pos, dir);
@@ -342,9 +332,9 @@ static void enemyStateChase(Enemy* enemy, Entity* entity, Transform* transform, 
 
     // Determine target position
     vec3 targetPos;
-    Entity* player = enemyGetTarget(enemy);
+    engine::Entity* player = enemyGetTarget(enemy);
     if (player) {
-        Transform* pT = getComponent(player->scene, Transform, player->id);
+        engine::Transform* pT = getComponent(player->scene, engine::Transform, player->id);
         if (pT) {
             targetPos[0]               = pT->pos[0];
             targetPos[1]               = pT->pos[1];
@@ -358,7 +348,7 @@ static void enemyStateChase(Enemy* enemy, Entity* entity, Transform* transform, 
     }
 
     // ── NavMesh pathfinding ────────────────────────────────────────────
-    enemy->pathRecalcTimer -= timer.dt;
+    enemy->pathRecalcTimer -= utils::timer.dt;
     if (enemy->pathRecalcTimer <= 0.0f || enemy->pathCurrentWaypoint >= enemy->pathWaypointCount) {
         enemy->pathRecalcTimer = 0.5f;
         enemy->pathWaypointCount =
@@ -402,7 +392,7 @@ static void enemyStateChase(Enemy* enemy, Entity* entity, Transform* transform, 
         // Push away from nearby enemies
         enemyApplySeparation(pos, desiredVel);
 
-        joltCharacterUpdate(enemy->character, desiredVel, timer.dt);
+        joltCharacterUpdate(enemy->character, desiredVel, utils::timer.dt);
         joltCharacterGetPosition(enemy->character, pos);
         transform->pos[0] = pos[0];
         transform->pos[1] = pos[1];
@@ -413,9 +403,9 @@ static void enemyStateChase(Enemy* enemy, Entity* entity, Transform* transform, 
     enemyRotateToward(pos, moveTarget, enemy, transform);
 }
 
-static void enemyStateAttack(Enemy* enemy, Entity* entity, Transform* transform, vec3 pos) {
-    enemy->stateTimer += timer.dt;
-    enemy->attackCooldown -= timer.dt;
+static void enemyStateAttack(Enemy* enemy, engine::Entity* entity, engine::Transform* transform, vec3 pos) {
+    enemy->stateTimer += utils::timer.dt;
+    enemy->attackCooldown -= utils::timer.dt;
     if (enemy->attackCooldown < 0.0f) enemy->attackCooldown = 0.0f;
 
     // Check HP for retreat
@@ -439,9 +429,9 @@ static void enemyStateAttack(Enemy* enemy, Entity* entity, Transform* transform,
     }
 
     // Face player
-    Entity* player = enemyGetTarget(enemy);
+    engine::Entity* player = enemyGetTarget(enemy);
     if (player) {
-        Transform* pT = getComponent(player->scene, Transform, player->id);
+        engine::Transform* pT = getComponent(player->scene, engine::Transform, player->id);
         if (pT) {
             enemyRotateToward(pos, pT->pos, enemy, transform);
             enemy->lastKnownTargetPos[0] = pT->pos[0];
@@ -456,8 +446,8 @@ static void enemyStateAttack(Enemy* enemy, Entity* entity, Transform* transform,
     }
 }
 
-static void enemyStateRetreat(Enemy* enemy, Entity* entity, Transform* transform, vec3 pos) {
-    enemy->stateTimer += timer.dt;
+static void enemyStateRetreat(Enemy* enemy, engine::Entity* entity, engine::Transform* transform, vec3 pos) {
+    enemy->stateTimer += utils::timer.dt;
 
     // Check if far enough from player
     if (enemyIsFarEnoughToRegain(enemy, pos)) {
@@ -476,10 +466,10 @@ static void enemyStateRetreat(Enemy* enemy, Entity* entity, Transform* transform
 
     // Compute a flee point behind the enemy (away from player)
     vec3 fleeDir   = {0.0f, 0.0f, 0.0f};
-    Entity* player = enemyGetTarget(enemy);
+    engine::Entity* player = enemyGetTarget(enemy);
     vec3 playerPos;
     if (player) {
-        Transform* pT = getComponent(player->scene, Transform, player->id);
+        engine::Transform* pT = getComponent(player->scene, engine::Transform, player->id);
         if (pT) {
             glm_vec3_sub(pos, pT->pos, fleeDir);
             enemy->lastKnownTargetPos[0] = pT->pos[0];
@@ -507,7 +497,7 @@ static void enemyStateRetreat(Enemy* enemy, Entity* entity, Transform* transform
     glm_vec3_add(pos, fleeTarget, fleeTarget);
 
     // Use navmesh to find a path to the flee target
-    enemy->pathRecalcTimer -= timer.dt;
+    enemy->pathRecalcTimer -= utils::timer.dt;
     if (enemy->pathRecalcTimer <= 0.0f || enemy->pathCurrentWaypoint >= enemy->pathWaypointCount) {
         enemy->pathRecalcTimer = 0.5f;
         enemy->pathWaypointCount =
@@ -549,7 +539,7 @@ static void enemyStateRetreat(Enemy* enemy, Entity* entity, Transform* transform
         // Push away from nearby enemies
         enemyApplySeparation(pos, desiredVel);
 
-        joltCharacterUpdate(enemy->character, desiredVel, timer.dt);
+        joltCharacterUpdate(enemy->character, desiredVel, utils::timer.dt);
         joltCharacterGetPosition(enemy->character, pos);
         transform->pos[0] = pos[0];
         transform->pos[1] = pos[1];
@@ -563,23 +553,23 @@ static void enemyStateRetreat(Enemy* enemy, Entity* entity, Transform* transform
 
 // ── System lifecycle ────────────────────────────────────────────────────────
 
-static void update(void) {
-    u32 numScenes = arraySize(ecs.scenes);
+void EnemySystem::update() {
+    u32 numScenes = static_cast<i32>(engine::ecs.scenes.size());
     for (u32 si = 0; si < numScenes; si++) {
-        Scene* scene = ecs.scenes[si];
+        engine::Scene* scene = engine::ecs.scenes[si];
         if (!scene || !scene->ready) continue;
 
-        SparseSet* enemies = getComponents(scene, Enemy);
+        utils::SparseSet* enemies = getComponents(scene, Enemy);
         if (!enemies || enemies->size == 0) continue;
 
         // Pre-pass: cache all alive enemy positions for separation
         enemySepScene = scene;
         enemySepCount = 0;
         for (u32 i = 0; i < enemies->size; i++) {
-            u32 entityId = ssGetValueByIndex(enemies, i);
-            Enemy* enemy = (Enemy*)ssGetDataByIndex(enemies, i);
+            u32 entityId = utils::ssGetValueByIndex(enemies, i);
+            Enemy* enemy = (Enemy*)utils::ssGetDataByIndex(enemies, i);
             if (!enemy || enemy->state == ENEMY_STATE_DEAD) continue;
-            Transform* transform = getComponent(scene, Transform, entityId);
+            engine::Transform* transform = getComponent(scene, engine::Transform, entityId);
             if (!transform) continue;
             if (enemySepCount < 256) {
                 if (enemy->character) {
@@ -592,13 +582,13 @@ static void update(void) {
         }
 
         for (u32 i = 0; i < enemies->size; i++) {
-            u32 entityId = ssGetValueByIndex(enemies, i);
-            Enemy* enemy = (Enemy*)ssGetDataByIndex(enemies, i);
+            u32 entityId = utils::ssGetValueByIndex(enemies, i);
+            Enemy* enemy = (Enemy*)utils::ssGetDataByIndex(enemies, i);
             if (!enemy) continue;
 
             // Death rotation: tilt enemy onto ground (no death anim yet)
             if (enemy->state == ENEMY_STATE_DEAD) {
-                Transform* dT = getComponent(scene, Transform, entityId);
+                engine::Transform* dT = getComponent(scene, engine::Transform, entityId);
                 if (dT) {
                     if (enemy->stateTimer < 0.001f) {
                         glm_vec4_copy(dT->rot, enemy->deathRotStart);
@@ -610,19 +600,19 @@ static void update(void) {
                     if (t > 1.0f) t = 1.0f;
                     if (t > 0.0f) {
                         versor current = {};
-                        quatSlerpShortest(enemy->deathRotStart, enemy->deathRotTarget, t, current);
+                        engine::quatSlerpShortest(enemy->deathRotStart, enemy->deathRotTarget, t, current);
                         glm_vec4_copy(current, dT->rot);
                     }
-                    enemy->stateTimer += timer.dt;
-                    transformSaveLast(scene, entityId);
+                    enemy->stateTimer += utils::timer.dt;
+                    engine::transformSaveLast(scene, entityId);
                 }
                 continue;
             }
 
-            Entity* entity = getEntity(scene, entityId);
+            engine::Entity* entity = engine::getEntity(scene, entityId);
             if (!entity) continue;
 
-            Transform* transform = getComponent(scene, Transform, entityId);
+            engine::Transform* transform = getComponent(scene, engine::Transform, entityId);
             if (!transform) continue;
 
             vec3 pos;
@@ -636,7 +626,7 @@ static void update(void) {
                 glm_vec3_sub(pos, prevPos, delta);
                 float deltaLen = glm_vec3_norm(delta);
                 if (deltaLen > 2.0f) {
-                    warn(
+                    utils::warn(
                         "enemy: large position jump %.2fm (%.1f,%.1f,%.1f)->(%.1f,%.1f,%.1f) "
                         "state=%d",
                         deltaLen,
@@ -676,12 +666,12 @@ static void update(void) {
             }
 
             // Mark transform as active so it keeps getting uploaded to GPU
-            transformSaveLast(scene, entityId);
+            engine::transformSaveLast(scene, entityId);
         }
     }
 }
 
-Enemy* enemyCreate(Entity* entity,
+Enemy* enemyCreate(engine::Entity* entity,
                    float aggroRange,
                    float attackRange,
                    float loseTargetRange,
@@ -744,7 +734,7 @@ Enemy* enemyCreate(Entity* entity,
         static_cast<float>(rand()) / static_cast<float>(RAND_MAX) * (ENEMY_PATROL_WAIT_MAX - ENEMY_PATROL_WAIT_MIN);
 
     // Start with idle animation
-    animationPlayBlended(entity, ENEMY_ANIM_IDLE, 1.0f, true, 0.15f);
+    engine::animationPlayBlended(entity, ENEMY_ANIM_IDLE, 1.0f, true, 0.15f);
 
     return enemy;
 }
@@ -761,30 +751,30 @@ void enemySetBaseRot(Enemy* enemy, versor baseRot) {
     glm_quat_copy(baseRot, enemy->baseRot);
 }
 
-static Mesh* enemyFindMesh(Entity* entity) {
-    Mesh* mesh = getComponent(entity->scene, Mesh, entity->id);
+static engine::Mesh* enemyFindMesh(engine::Entity* entity) {
+    engine::Mesh* mesh = getComponent(entity->scene, engine::Mesh, entity->id);
     if (mesh) return mesh;
 
-    u32 childCount = arraySize(entity->children);
+    u32 childCount = static_cast<i32>(entity->children.size());
     for (u32 i = 0; i < childCount; i++) {
-        Entity* child = entity->children[i];
-        mesh          = getComponent(child->scene, Mesh, child->id);
+        engine::Entity* child = entity->children[i];
+        mesh          = getComponent(child->scene, engine::Mesh, child->id);
         if (mesh) return mesh;
     }
     return nullptr;
 }
 
-static void enemySetupComponents(Scene* scene,
-                                 Entity* entity,
+static void enemySetupComponents(engine::Scene* scene,
+                                 engine::Entity* entity,
                                  vec3 spawnPos,
                                  float dist,
-                                 Mesh* templateMesh) {
-    Transform* t = getComponent(scene, Transform, entity->id);
+                                 engine::Mesh* templateMesh) {
+    engine::Transform* t = getComponent(scene, engine::Transform, entity->id);
     if (t) {
         t->pos[0] = spawnPos[0];
         t->pos[1] = spawnPos[1];
         t->pos[2] = spawnPos[2];
-        transformActivateAndSaveLastSubtree(scene, entity->id);
+        engine::transformActivateAndSaveLastSubtree(scene, entity->id);
     }
 
     CharacterStats* stats = createComponent(scene, CharacterStats, entity->id);
@@ -843,7 +833,7 @@ static void enemySetupComponents(Scene* scene,
                                                     enemy->capsuleRadius,
                                                     startPos,
                                                     (uint64_t)entity->id);
-        info("enemy: created '%s' at (%.1f, %.1f, %.1f) [%.0fm from player]",
+        utils::info("enemy: created '%s' at (%.1f, %.1f, %.1f) [%.0fm from player]",
              entity->name,
              spawnPos[0],
              spawnPos[1],
@@ -851,11 +841,11 @@ static void enemySetupComponents(Scene* scene,
              dist);
 
         // Immediately aggro the player on spawn
-        Entity* player = combatGetPlayerEntity();
+        engine::Entity* player = combatGetPlayerEntity();
         if (player) {
             enemy->targetScene    = player->scene;
             enemy->targetEntityId = player->id;
-            Transform* pT         = getComponent(player->scene, Transform, player->id);
+            engine::Transform* pT         = getComponent(player->scene, engine::Transform, player->id);
             if (pT) {
                 enemy->lastKnownTargetPos[0] = pT->pos[0];
                 enemy->lastKnownTargetPos[1] = pT->pos[1];
@@ -865,23 +855,23 @@ static void enemySetupComponents(Scene* scene,
             enemy->state = ENEMY_STATE_CHASE;
         }
 
-        vulkanDebugPhysicsRegisterCharacter(enemy->character);
+        engine::vulkanDebugPhysicsRegisterCharacter(enemy->character);
     }
 }
 
-static Scene* runtimeScene;
+static engine::Scene* runtimeScene;
 
-static Mesh* enemyCloneMesh(Scene* dstScene, u32 dstEntityId, Mesh* srcMesh) {
-    Mesh* dstMesh = createComponent(dstScene, Mesh, dstEntityId);
+static engine::Mesh* enemyCloneMesh(engine::Scene* dstScene, u32 dstEntityId, engine::Mesh* srcMesh) {
+    engine::Mesh* dstMesh = createComponent(dstScene, engine::Mesh, dstEntityId);
 
     // Copy local AABB
     glm_vec3_copy(srcMesh->aabbLocal[0], dstMesh->aabbLocal[0]);
     glm_vec3_copy(srcMesh->aabbLocal[1], dstMesh->aabbLocal[1]);
 
     // Deep-copy each primitive (vertex/index data)
-    for (u32 p = 0; p < arraySize(srcMesh->primitives); p++) {
-        Primitive* srcPrim = &srcMesh->primitives[p];
-        Primitive dstPrim  = {};
+    for (u32 p = 0; p < srcMesh->primitives.size(); p++) {
+        engine::Primitive* srcPrim = &srcMesh->primitives[p];
+        engine::Primitive dstPrim  = {};
 
         dstPrim.materialId    = srcPrim->materialId;
         dstPrim.attributeMask = srcPrim->attributeMask;
@@ -889,42 +879,42 @@ static Mesh* enemyCloneMesh(Scene* dstScene, u32 dstEntityId, Mesh* srcMesh) {
         dstPrim.vertexCount   = srcPrim->vertexCount;
 
         // Copy indices
-        if (srcPrim->indexCount > 0 && srcPrim->indices) {
-            arraySetSize(dstPrim.indices, srcPrim->indexCount);
-            memcpy(dstPrim.indices, srcPrim->indices, srcPrim->indexCount * sizeof(u32));
+        if (srcPrim->indexCount > 0 && !srcPrim->indices.empty()) {
+            dstPrim.indices.resize(srcPrim->indexCount);
+            memcpy(dstPrim.indices.data(), srcPrim->indices.data(), srcPrim->indexCount * sizeof(u32));
         }
 
         // Copy positions
-        if (srcPrim->vertexCount > 0 && srcPrim->positions) {
-            arraySetSize(dstPrim.positions, srcPrim->vertexCount * 3);
-            memcpy(dstPrim.positions, srcPrim->positions, srcPrim->vertexCount * 3 * sizeof(float));
+        if (srcPrim->vertexCount > 0 && !srcPrim->positions.empty()) {
+            dstPrim.positions.resize(srcPrim->vertexCount * 3);
+            memcpy(dstPrim.positions.data(), srcPrim->positions.data(), srcPrim->vertexCount * 3 * sizeof(float));
         }
 
         // Copy all attribute channels
         for (u32 a = 0; a < cgltf_attribute_type_max_enum; a++) {
-            if (!srcPrim->attributes[a]) continue;
+            if (srcPrim->attributes[a].empty()) continue;
             // attribute size was stored as byte count (attrSize = vertexCount * accessor->stride)
-            u32 attrSize = arraySize(srcPrim->attributes[a]);
-            arraySetSize(dstPrim.attributes[a], attrSize);
-            memcpy(dstPrim.attributes[a], srcPrim->attributes[a], attrSize);
+            u32 attrSize = static_cast<i32>(srcPrim->attributes[a].size());
+            dstPrim.attributes[a].resize(attrSize);
+            memcpy(dstPrim.attributes[a].data(), srcPrim->attributes[a].data(), attrSize);
         }
 
-        arrayPut(dstMesh->primitives, dstPrim);
+        dstMesh->primitives.push_back(dstPrim);
     }
 
     return dstMesh;
 }
 
-static void added(void) {
-    Entity* playerEntity = combatGetPlayerEntity();
+void EnemySystem::added() {
+    engine::Entity* playerEntity = combatGetPlayerEntity();
     vec3 playerPos       = {0.0f, 0.0f, 0.0f};
     if (playerEntity) {
-        Transform* playerTransform = getComponent(playerEntity->scene, Transform, playerEntity->id);
+        engine::Transform* playerTransform = getComponent(playerEntity->scene, engine::Transform, playerEntity->id);
         if (playerTransform) {
             glm_vec3_copy(playerTransform->pos, playerPos);
         }
     }
-    info("enemy: spawning around player at (%.1f, %.1f, %.1f)",
+    utils::info("enemy: spawning around player at (%.1f, %.1f, %.1f)",
          playerPos[0],
          playerPos[1],
          playerPos[2]);
@@ -932,42 +922,41 @@ static void added(void) {
     // Create a dedicated runtime scene for dynamically spawned entities.
     // alwaysVisible = true ensures it is never CPU-frustum-culled regardless
     // of where enemies move.  hasBounds = false means AABB tests are skipped.
-    runtimeScene                 = static_cast<Scene*>(memoryAlloc(sizeof(Scene)));
-    *runtimeScene               = Scene{};
+    runtimeScene = new engine::Scene{};
     runtimeScene->alwaysVisible = true;
-    arrayPut(ecs.scenes, runtimeScene);
-    info("enemy: created runtime scene for dynamic entities");
+    engine::ecs.scenes.push_back(runtimeScene);
+    utils::info("enemy: created runtime scene for dynamic entities");
 
     // Scan all loaded scenes for enemy templates
-    u32 numScenes = arraySize(ecs.scenes);
+    u32 numScenes = static_cast<i32>(engine::ecs.scenes.size());
     for (u32 si = 0; si < numScenes; si++) {
-        Scene* scene = ecs.scenes[si];
+        engine::Scene* scene = engine::ecs.scenes[si];
         if (!scene || !scene->ready) continue;
         if (scene == runtimeScene) continue;
 
         u32 enemyTemplateCount = 0;
-        u32 numEntities        = arraySize(scene->entities);
+        u32 numEntities        = static_cast<i32>(scene->entities.size());
         for (u32 ei = 0; ei < numEntities; ei++) {
-            Entity* entity = scene->entities[ei];
+            engine::Entity* entity = scene->entities[ei];
             if (!entity || !entity->name) continue;
 
             if (strncmp(entity->name, "enemy_", 6) != 0) continue;
 
-            Mesh* templateMesh = enemyFindMesh(entity);
+            engine::Mesh* templateMesh = enemyFindMesh(entity);
             if (!templateMesh) {
-                warn("enemy: '%s' has no Mesh, skipping", entity->name);
+                utils::warn("enemy: '%s' has no Mesh, skipping", entity->name);
                 continue;
             }
 
             enemyTemplateCount++;
 
-            info("enemy: template '%s' (id %u), mesh on entity %u, creating %d instances",
+            utils::info("enemy: template '%s' (id %u), mesh on entity %u, creating %d instances",
                  entity->name,
                  entity->id,
-                 templateMesh == getComponent(scene, Mesh, entity->id) ? entity->id : 0,
+                 templateMesh == getComponent(scene, engine::Mesh, entity->id) ? entity->id : 0,
                  ENEMY_INSTANCES_PER_MODEL);
 
-            Transform* templateTransform = getComponent(scene, Transform, entity->id);
+            engine::Transform* templateTransform = getComponent(scene, engine::Transform, entity->id);
             versor templateRot           = {0.0f, 0.0f, 0.0f, 1.0f};
             if (templateTransform) {
                 glm_quat_copy(templateTransform->rot, templateRot);
@@ -976,9 +965,9 @@ static void added(void) {
             for (u32 inst = 0; inst < ENEMY_INSTANCES_PER_MODEL; inst++) {
                 char name[64];
                 snprintf(name, sizeof(name), "%s_inst%u", entity->name, inst);
-                Entity* newEntity = createEntity(runtimeScene, name);
+                engine::Entity* newEntity = engine::createEntity(runtimeScene, name);
 
-                Transform* t = createComponent(runtimeScene, Transform, newEntity->id);
+                engine::Transform* t = createComponent(runtimeScene, engine::Transform, newEntity->id);
                 glm_quat_copy(templateRot, t->rot);
                 t->pos[3] = 1.0f;
 
@@ -1003,7 +992,7 @@ static void added(void) {
                 vec3 spawnPos  = {rayOrigin[0], playerPos[1], rayOrigin[2]};
                 vec3 hitPos;
                 if (!joltCastRay(rayOrigin, rayDir, 200.0f, hitPos)) {
-                    warn("enemy: raycast missed terrain for '%s' instance %u, using fallback Y",
+                    utils::warn("enemy: raycast missed terrain for '%s' instance %u, using fallback Y",
                          entity->name,
                          inst);
                 } else {
@@ -1017,50 +1006,50 @@ static void added(void) {
                 t->pos[2] = spawnPos[2];
 
                 // Clone mesh data into the runtime scene for this instance
-                Mesh* instMesh = enemyCloneMesh(runtimeScene, newEntity->id, templateMesh);
-                InstanceData instanceData = {.entity = newEntity->id};
-                arrayPut(instMesh->instances, instanceData);
+                engine::Mesh* instMesh = enemyCloneMesh(runtimeScene, newEntity->id, templateMesh);
+                engine::InstanceData instanceData = {.entity = newEntity->id};
+                instMesh->instances.push_back(instanceData);
 
-                transformActivateAndSaveLastSubtree(runtimeScene, newEntity->id);
+                engine::transformActivateAndSaveLastSubtree(runtimeScene, newEntity->id);
 
                 enemySetupComponents(runtimeScene, newEntity, spawnPos, spawnDist, instMesh);
             }
 
             // Hide the template entity in the source scene (scale to 0)
-            Transform* origT = getComponent(scene, Transform, entity->id);
+            engine::Transform* origT = getComponent(scene, engine::Transform, entity->id);
             if (origT) {
                 origT->pos[3] = 0.0f;
-                transformActivateAndSaveLastSubtree(scene, entity->id);
+                engine::transformActivateAndSaveLastSubtree(scene, entity->id);
             }
         }
 
         // Rebuild the source scene GPU data (template entities now hidden)
         if (enemyTemplateCount > 0) {
-            info("enemy: rebuilding Vulkan scene for '%s'", scene->name.data);
-            rendererSceneDestroy(scene);
-            rendererSceneCreate(scene);
+            utils::info("enemy: rebuilding Vulkan scene for '%s'", scene->name.data);
+            engine::rendererSceneDestroy(scene);
+            engine::rendererSceneCreate(scene);
         }
     }
 
     // Create GPU representation for the runtime scene
-    rendererSceneCreate(runtimeScene);
+    engine::rendererSceneCreate(runtimeScene);
     runtimeScene->ready = true;
 }
 
-void removed(void) {
+void EnemySystem::removed() {
     // Clean up Jolt characters in all scenes
-    u32 numScenes = arraySize(ecs.scenes);
+    u32 numScenes = static_cast<i32>(engine::ecs.scenes.size());
     for (u32 si = 0; si < numScenes; si++) {
-        Scene* scene = ecs.scenes[si];
+        engine::Scene* scene = engine::ecs.scenes[si];
         if (!scene || !scene->ready) continue;
 
-        SparseSet* enemies = getComponents(scene, Enemy);
+        utils::SparseSet* enemies = getComponents(scene, Enemy);
         if (!enemies || enemies->size == 0) continue;
 
         for (u32 i = 0; i < enemies->size; i++) {
-            Enemy* enemy = (Enemy*)ssGetDataByIndex(enemies, i);
+            Enemy* enemy = (Enemy*)utils::ssGetDataByIndex(enemies, i);
             if (enemy && enemy->character) {
-                vulkanDebugPhysicsUnregisterCharacter(enemy->character);
+                engine::vulkanDebugPhysicsUnregisterCharacter(enemy->character);
                 joltCharacterDestroy(enemy->character);
                 enemy->character = nullptr;
             }
@@ -1073,8 +1062,9 @@ void removed(void) {
 
     // Destroy the runtime scene
     if (runtimeScene) {
-        rendererSceneDestroy(runtimeScene);
-        sceneDestroy(runtimeScene);
+        engine::rendererSceneDestroy(runtimeScene);
+        engine::sceneDestroy(runtimeScene);
         runtimeScene = nullptr;
     }
 }
+}  // namespace game

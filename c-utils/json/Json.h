@@ -2,6 +2,7 @@
 
 #include "jansson/git/build-linux/include/jansson.h"
 
+namespace utils {
 void jsonInit(void);
 const char* json_typeof_str(json_type type);
 
@@ -56,3 +57,4 @@ const char* json_typeof_str(json_type type);
 // these toString functions allocate memory, dont forget to free
 #define jsonToStringAlloc(object) json_dumps((object), JSON_COMPACT)
 #define jsonToStringPrettyAlloc(object) json_dumps((object), JSON_INDENT(4))
+}  // namespace utils

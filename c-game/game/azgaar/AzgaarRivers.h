@@ -10,6 +10,7 @@
 // functions become no-ops.
 
 // A river-point hit from the spatial hash (10 m buckets).
+namespace game {
 struct AzgaarRiverNearHit {
     float wx, wz;   // world position of the river point
     u32   riverId;  // which river (section 32 id)
@@ -27,3 +28,4 @@ void azgaarRiversClear(void);
 // `radius` metres of (wx,wz); returns the number written (capped at maxPts).
 u32 azgaarRiversNear(float wx, float wz, float radius,
                        AzgaarRiverNearHit* out, u32 maxPts);
+}  // namespace game

@@ -1,35 +1,36 @@
 #include "ecs/system/window/WindowSystem.h"
 #include "ecs/system/System.h"
 
+namespace engine {
 Window window;
 struct Input input = {.focused = 1};
 
 struct WindowBackendApi {
-    const char* name;
-    void (*added)(void);
-    void (*removed)(void);
-    void (*preUpdate)(void);
-    void (*postUpdate)(void);
-    void (*hide)(void);
-    void (*show)(void);
-    void (*toggleFullscreen)(char fullScreen);
-    void (*reloadCursors)(void);
-    void* (*getPointerCursor)(void);
-    void* (*getArrowCursor)(void);
-    void* (*getTextCursor)(void);
-    void (*updateDimensions)(void);
-    void (*warpCenter)(void);
-    void (*warp)(float x, float y);
-    void (*hideCursor)(void);
-    void (*showCursor)(void);
-    bool (*isCursorVisible)(void);
-    void (*getRelativeMouseDelta)(float* dx, float* dy);
-    bool (*isLeftMouseDown)(void);
-    bool (*isRightMouseDown)(void);
-    bool (*isMiddleMouseDown)(void);
-    char const* const* (*getRequiredVulkanExtensions)(u32* extensionCount);
-    bool (*createVulkanSurface)(VkInstance instance, VkSurfaceKHR* surface);
-    SetCursorFn (*getSetCursorFn)(void);
+    const char* name = nullptr;
+    void (*added)(void) = nullptr;
+    void (*removed)(void) = nullptr;
+    void (*preUpdate)(void) = nullptr;
+    void (*postUpdate)(void) = nullptr;
+    void (*hide)(void) = nullptr;
+    void (*show)(void) = nullptr;
+    void (*toggleFullscreen)(char fullScreen) = nullptr;
+    void (*reloadCursors)(void) = nullptr;
+    void* (*getPointerCursor)(void) = nullptr;
+    void* (*getArrowCursor)(void) = nullptr;
+    void* (*getTextCursor)(void) = nullptr;
+    void (*updateDimensions)(void) = nullptr;
+    void (*warpCenter)(void) = nullptr;
+    void (*warp)(float x, float y) = nullptr;
+    void (*hideCursor)(void) = nullptr;
+    void (*showCursor)(void) = nullptr;
+    bool (*isCursorVisible)(void) = nullptr;
+    void (*getRelativeMouseDelta)(float* dx, float* dy) = nullptr;
+    bool (*isLeftMouseDown)(void) = nullptr;
+    bool (*isRightMouseDown)(void) = nullptr;
+    bool (*isMiddleMouseDown)(void) = nullptr;
+    char const* const* (*getRequiredVulkanExtensions)(u32* extensionCount) = nullptr;
+    bool (*createVulkanSurface)(VkInstance instance, VkSurfaceKHR* surface) = nullptr;
+    SetCursorFn (*getSetCursorFn)(void) = nullptr;
 };
 
 extern WindowBackendApi glfwWindowBackendApi;
@@ -43,18 +44,18 @@ static WindowBackendApi* activeBackend;
 static WindowBackendApi* windowSystemSelectBackend(void) {
     const char* env = getenv("ENGINE_WINDOW_BACKEND");
     if (env && *env) {
-        if (strequals(env, "sdl") || strequals(env, "SDL")) {
+        if (utils::strequals(env, "sdl") || utils::strequals(env, "SDL")) {
             return &sdlWindowBackendApi;
         }
-        if (strequals(env, "glfw") || strequals(env, "GLFW")) {
+        if (utils::strequals(env, "glfw") || utils::strequals(env, "GLFW")) {
             return &glfwWindowBackendApi;
         }
 #ifdef __linux__
-        if (strequals(env, "x11") || strequals(env, "X11")) {
+        if (utils::strequals(env, "x11") || utils::strequals(env, "X11")) {
             return &x11WindowBackendApi;
         }
 #endif
-        warn("windowSystem: unknown ENGINE_WINDOW_BACKEND='%s', falling back to sdl", env);
+        utils::warn("windowSystem: unknown ENGINE_WINDOW_BACKEND='%s', falling back to sdl", env);
     }
 
     // SDL is the safest default on Linux/Wayland/XWayland: its relative mouse
@@ -64,36 +65,27 @@ static WindowBackendApi* windowSystemSelectBackend(void) {
     return &sdlWindowBackendApi;
 }
 
-static void added(void) {
+void WindowSystem::added() {
     activeBackend = windowSystemSelectBackend();
-    info("windowSystem: selected backend %s", activeBackend->name);
+    utils::info("windowSystem: selected backend %s", activeBackend->name);
     activeBackend->added();
 }
 
-static void removed(void) {
+void WindowSystem::removed() {
     activeBackend->removed();
 }
 
-static void preUpdate(void) {
+void WindowSystem::preUpdate() {
     activeBackend->preUpdate();
 }
 
-static void postUpdate(void) {
+void WindowSystem::postUpdate() {
     activeBackend->postUpdate();
 }
 
-System windowSystem = {
-    .name                = "window",
-    .added               = added,
-    .removed             = removed,
-    .preUpdate           = preUpdate,
-    .update              = nullptr,
-    .postUpdate          = postUpdate,
-    .cpuElapsedLastFrame = 0.0,
-    .cpuElapsed          = 0.0,
-    .gpuElapsed          = 0.0,
-    .priority            = 0,
-};
+WindowSystem windowSystem;
+
+WindowSystem::WindowSystem() : System("window") {}
 
 void windowSystemHide(void) {
     activeBackend->hide();
@@ -199,3 +191,4 @@ void inputReset(void) {
 char inputShouldProcess(void) {
     return input.focused && !input.skip;
 }
+}  // namespace engine

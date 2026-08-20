@@ -1,6 +1,7 @@
 #pragma once
 #include "ecs/system/scene/SceneSystem.h"
 
+namespace engine {
 enum CameraType {
     PERSPECTIVE,
     ORTHOGRAPHIC,
@@ -56,3 +57,4 @@ typedef struct Camera {
     float exposure;
 
 } Camera;
+}  // namespace engine

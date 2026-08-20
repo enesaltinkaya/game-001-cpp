@@ -4,15 +4,15 @@
 #include <signal.h>
 #include <stdio.h>
 #include <string.h>
-#include "memorymanager/MemoryManager.h"
 #include "platform/Platform.h"
 #include "thpool/thpool.h"
 #include "logger/Logger.h"
 
+namespace utils {
 static pthread_key_t threadLocalNameKey;
 
 Thread* threadNew(FnPtrPtr fn, void* userData) {
-    Thread* thread = static_cast<Thread*>(memoryAlloc(sizeof *thread));
+    Thread* thread = new Thread{};
     pthread_create(&thread->thread, 0, fn, userData);
     return thread;
 }
@@ -22,7 +22,7 @@ void threadJoin(Thread* thread) {
 }
 
 void threadDestroy(Thread* thread) {
-    memoryFree(thread);
+    delete thread;
 }
 
 void threadNewDetached(FnPtrPtr fn, void* userData) {
@@ -136,3 +136,4 @@ void threadRaiseTrap(void) {
 #endif
 #endif
 }
+}  // namespace utils

@@ -4,7 +4,16 @@
 #include "azgaar/AzgaarWorld.h"
 #include "ecs/system/System.h"
 
-extern struct System loadingAzgaarSystem;
+namespace game {
+class LoadingAzgaarSystem : public engine::System {
+public:
+    LoadingAzgaarSystem();
+    void added() override;
+    void removed() override;
+    void update() override;
+};
+
+extern LoadingAzgaarSystem loadingAzgaarSystem;
 
 const char* loadingAzgaarStageText(void);
 
@@ -29,3 +38,4 @@ AzgaarHeightmapSource* loadingAzgaarGetHeightmapSource(void);
 // Release the retained world. Called by gameplay teardown to free the world
 // data once streaming no longer needs it. Safe to call when nothing is retained.
 void loadingAzgaarReleaseWorld(void);
+}  // namespace game

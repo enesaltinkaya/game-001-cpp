@@ -5,6 +5,7 @@
 #include "renderer/vulkan/Vulkan.h"
 #include "renderer/vulkan/resources/VulkanResourceManager.h"
 
+namespace engine {
 struct VulkanFrameResources {
     VulkanImage sceneColor;
     VulkanImage compositeColor;
@@ -32,7 +33,7 @@ static void destroyAll(void);
 static void transitionInitialLayouts(void);
 
 void vulkanFrameResourcesInit(void) {
-    signalSubscribe("swapchainCreated", swapchainCreated);
+    utils::signalSubscribe("swapchainCreated", swapchainCreated);
     recreate();
 }
 
@@ -314,3 +315,4 @@ static void transitionInitialLayouts(void) {
 
     vulkanTransientEnd(cmd, 1);
 }
+}  // namespace engine

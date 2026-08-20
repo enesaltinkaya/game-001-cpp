@@ -16,6 +16,7 @@
 // `color` is a per-part albedo multiplier: white (1,1,1) marks a part as
 // "tintable" (receives the per-instance biome tint, e.g. leaves); a baked
 // non-white color (e.g. brown trunk) keeps its own colour and is NOT tinted.
+namespace engine {
 typedef struct PropsVertex {
     float position[3];   // 12 bytes
     float normal[3];     // 12 bytes
@@ -95,7 +96,16 @@ typedef struct PropTileRange {
     u32 count;   // instance count
 } PropTileRange;
 
-extern struct System vulkanAzgaarPropsPass;
+class VulkanAzgaarPropsPass : public System {
+public:
+    VulkanAzgaarPropsPass();
+    void added() override;
+    void removed() override;
+    void preUpdate() override;
+    void update() override;
+};
+
+extern VulkanAzgaarPropsPass vulkanAzgaarPropsPass;
 
 // ── Mesh + variant table (uploaded once per world load, or never for non-Azgaar
 //    scenes) ─────────────────────────────────────────────────────────
@@ -149,3 +159,4 @@ void vulkanAzgaarPropsDrawPrepass(void);
 // view-projection so vegetation / settlement buildings / landmarks cast sun
 // shadows.  No-op when props are not active.
 void vulkanAzgaarPropsDrawShadow(struct VulkanCommand* cmd, u32 cascadeIndex);
+}  // namespace engine

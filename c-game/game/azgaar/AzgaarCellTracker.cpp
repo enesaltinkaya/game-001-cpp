@@ -1,3 +1,4 @@
+#include "AzgaarCellTracker.h"
 #include "Utils.h"
 #include "ecs/system/System.h"
 #include "events/Events.h"
@@ -6,9 +7,7 @@
 #include "azgaar/AzgaarWorld.h"
 #include "loadingAzgaar/LoadingAzgaar.h"
 
-static void added(void);
-static void update(void);
-static void removed(void);
+namespace game {
 
 // A location tracker for the player over the Azgaar world. Each frame it
 // resolves the player's pack cell and, when that cell changes, emits the
@@ -16,18 +15,9 @@ static void removed(void);
 // source of truth for "where is the player on the Azgaar map" so that other
 // systems (zone banner, biome hints, encounters, ...) can react without each
 // running their own per-frame cell scan.
-System azgaarCellTrackerSystem = {
-    .name                = "azgaarCellTracker",
-    .added               = added,
-    .removed             = removed,
-    .preUpdate           = nullptr,
-    .update              = update,
-    .postUpdate          = nullptr,
-    .cpuElapsedLastFrame = 0.0,
-    .cpuElapsed          = 0.0,
-    .gpuElapsed          = 0.0,
-    .priority            = 0,
-};
+AzgaarCellTrackerSystem azgaarCellTrackerSystem;
+
+AzgaarCellTrackerSystem::AzgaarCellTrackerSystem() : engine::System("azgaarCellTracker") {}
 
 #define AZGAAR_CELL_ENTERED_SIGNAL "azgaarCellEntered"
 
@@ -44,7 +34,7 @@ static float  lastMapX;
 static float  lastMapY;
 static float  moveThresholdPx;   // cached avg spacing * fraction; 0 until known
 
-static void added(void) {
+void AzgaarCellTrackerSystem::added() {
     initialized     = false;
     lastPackCellIndex = 0u;
     lastMapX        = 0.0f;
@@ -52,11 +42,11 @@ static void added(void) {
     moveThresholdPx = 0.0f;
 }
 
-static void removed(void) {
+void AzgaarCellTrackerSystem::removed() {
     initialized = false;
 }
 
-static void update(void) {
+void AzgaarCellTrackerSystem::update() {
     const AzgaarWorld* world = loadingAzgaarGetWorld();
     if (!world || world->metersPerPixel <= 0.0f) return;
 
@@ -103,6 +93,7 @@ static void update(void) {
             .mapX          = mapX,
             .mapY          = mapY,
         };
-        signalEmit(AZGAAR_CELL_ENTERED_SIGNAL, &payload);
+        utils::signalEmit(AZGAAR_CELL_ENTERED_SIGNAL, &payload);
     }
 }
+}  // namespace game

@@ -2,18 +2,19 @@
 #include "file/File.h"
 #include "json/Json.h"
 #include "platform/Platform.h"
-#include "memorymanager/MemoryManager.h"
 #include "logger/Logger.h"
 #include "string/String.h"
 #include <assert.h>
+#include <cstdlib>
 
+namespace utils {
 struct Template {
     const char* name;
     const char* type;
     double defaultValue;
 };
 
-Array(Template) templates;
+std::vector<Template> templates;
 
 static void writeDefault(void);
 static void readSettingsFile(void);
@@ -24,32 +25,32 @@ static Json* json;
 void settingsInit(void) {
     info("settings: initializing");
 
-    arrayPut(templates, (Template{"effects", "double", 80.}));
-    arrayPut(templates, (Template{"music", "double", 40.}));
-    arrayPut(templates, (Template{"fpsLimit", "double", 60.}));
-    arrayPut(templates, (Template{"fpsLimitChecked", "boolean", 1.}));
-    arrayPut(templates, (Template{"uiScale", "double", 0.}));
-    arrayPut(templates, (Template{"cursorScale", "double", 0.}));
-    arrayPut(templates, (Template{"showFps", "boolean", 1.}));
-    arrayPut(templates, (Template{"vsync", "boolean", 0.}));
-    arrayPut(templates, (Template{"aaMode", "double", 0.}));
-    arrayPut(templates, (Template{"aaCasStrength", "double", 50.}));
+    templates.push_back((Template{"effects", "double", 80.}));
+    templates.push_back((Template{"music", "double", 40.}));
+    templates.push_back((Template{"fpsLimit", "double", 60.}));
+    templates.push_back((Template{"fpsLimitChecked", "boolean", 1.}));
+    templates.push_back((Template{"uiScale", "double", 0.}));
+    templates.push_back((Template{"cursorScale", "double", 0.}));
+    templates.push_back((Template{"showFps", "boolean", 1.}));
+    templates.push_back((Template{"vsync", "boolean", 0.}));
+    templates.push_back((Template{"aaMode", "double", 0.}));
+    templates.push_back((Template{"aaCasStrength", "double", 50.}));
 
-    arrayPut(templates, (Template{"upscalerMode", "double", 2.}));
-    arrayPut(templates, (Template{"renderScale", "double", 1.}));
-    arrayPut(templates, (Template{"fullScreen", "boolean", 0.}));
-    arrayPut(templates, (Template{"busyLoopLinux", "boolean", 1.}));
-    arrayPut(templates, (Template{"moreShadows", "boolean", 1.}));
-    arrayPut(templates, (Template{"shadowsDisabled", "boolean", 0.}));
-    arrayPut(templates, (Template{"gtaoDisabled", "boolean", 0.}));
-    arrayPut(templates, (Template{"ssrDisabled", "boolean", 0.}));
-    arrayPut(templates, (Template{"bloomDisabled", "boolean", 0.}));
-    arrayPut(templates, (Template{"contactShadowDisabled", "boolean", 0.}));
-    arrayPut(templates, (Template{"fogMode", "double", 1.}));
-    arrayPut(templates, (Template{"taaEnabled", "boolean", 0.}));
-    arrayPut(templates, (Template{"taaWeight", "double", 0.9}));
-    arrayPut(templates, (Template{"taaGhost", "double", 1.0}));
-    arrayPut(templates, (Template{"taaDepth", "double", 0.06}));
+    templates.push_back((Template{"upscalerMode", "double", 2.}));
+    templates.push_back((Template{"renderScale", "double", 1.}));
+    templates.push_back((Template{"fullScreen", "boolean", 0.}));
+    templates.push_back((Template{"busyLoopLinux", "boolean", 1.}));
+    templates.push_back((Template{"moreShadows", "boolean", 1.}));
+    templates.push_back((Template{"shadowsDisabled", "boolean", 0.}));
+    templates.push_back((Template{"gtaoDisabled", "boolean", 0.}));
+    templates.push_back((Template{"ssrDisabled", "boolean", 0.}));
+    templates.push_back((Template{"bloomDisabled", "boolean", 0.}));
+    templates.push_back((Template{"contactShadowDisabled", "boolean", 0.}));
+    templates.push_back((Template{"fogMode", "double", 1.}));
+    templates.push_back((Template{"taaEnabled", "boolean", 0.}));
+    templates.push_back((Template{"taaWeight", "double", 0.9}));
+    templates.push_back((Template{"taaGhost", "double", 1.0}));
+    templates.push_back((Template{"taaDepth", "double", 0.06}));
 
     settingsPath = stringNew("%s%s%s%s", platform.cwd, "data", platform.seperator, "settings.json");
     debug("settings: path %s", settingsPath->data);
@@ -63,7 +64,7 @@ void settingsInit(void) {
         readSettingsFile();
     }
 
-    for (i32 i = 0, si = arraySize(templates); i < si; i++) {
+    for (i32 i = 0, si = static_cast<i32>(templates.size()); i < si; i++) {
         Template* tpl = &templates[i];
         if (json_object_get(json, tpl->name) == nullptr) {
             /* New key (tpl added after the user's file was last
@@ -83,13 +84,12 @@ void settingsInit(void) {
             break;
         }
     }
-    arrayFree(templates);
 }
 
 void writeDefault(void) {
     Json* settingsJson = jsonNew();
 
-    for (i32 i = 0, si = arraySize(templates); i < si; i++) {
+    for (i32 i = 0, si = static_cast<i32>(templates.size()); i < si; i++) {
         Template* tpl = &templates[i];
         if (strcmp(tpl->type, "boolean") == 0) {
             jsonSetBool(settingsJson, tpl->name, (int)tpl->defaultValue);
@@ -105,7 +105,7 @@ void writeDefault(void) {
     char* settingsJsonString = jsonToStringPrettyAlloc(settingsJson);
     fileWrite(settingsPath->data, settingsJsonString);
     jsonFree(settingsJson);
-    memoryFree(settingsJsonString);
+    free(settingsJsonString);
 
     warn("settings: write default settings");
 }
@@ -114,7 +114,7 @@ void settingsWrite(void) {
     char* settingsJsonString = jsonToStringPrettyAlloc(json);
     fileWrite(settingsPath->data, settingsJsonString);
     signalEmit("settingsSaved", nullptr);
-    memoryFree(settingsJsonString);
+    free(settingsJsonString);
 }
 
 void settingsDestroy(void) {
@@ -188,3 +188,4 @@ void settingsSetBool(const char* key, bool value) {
     assert(jsonIsBool(json, key) && "not bool");
     jsonSetBool(json, key, value);
 }
+}  // namespace utils

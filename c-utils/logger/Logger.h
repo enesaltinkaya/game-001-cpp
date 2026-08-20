@@ -1,6 +1,7 @@
 #pragma once
 
 
+namespace utils {
 typedef enum { LOGGER_DEBUG, LOGGER_INFO, LOGGER_WARNING, LOGGER_ERROR, LOGGER_CRITICAL } LogLevel;
 
 void loggerInit(void);
@@ -17,3 +18,4 @@ void debugRml(const char*);
 void errorRml(const char*);
 void infoRml(const char*);
 void warnRml(const char*);
+}  // namespace utils

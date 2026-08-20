@@ -17,10 +17,11 @@
 #include "timer/Timer.h"
 #include <math.h>
 
+namespace engine {
 struct ImageArrayData {
-    struct Thread lock;
-    u32 textureArrayCounter;
-    Array(u32) emptySlots;
+    struct utils::Thread lock = {};
+    u32 textureArrayCounter  = 0;
+    std::vector<u32> emptySlots = {};
     enum VulkanDescType descType;
     int slot;
 };
@@ -44,7 +45,7 @@ struct BufferGarbage {
 };
 
 struct ImageGarbage {
-    Array(VkImageView) views;
+    std::vector<VkImageView> views;
     VkImageView view;
     VkFence fence;
     std::atomic<bool>* submitted;
@@ -59,12 +60,12 @@ struct CommandGarbage {
     VulkanCommand* cmd;
 };
 
-static Array(VkFence) fencesToDestroy   = nullptr;
-static Array(VulkanCommand*) cmdsToFree = nullptr;
-static Array(BufferGarbage) buffersToClean;
-static Array(ImageGarbage) imagesToClean;
-static Array(CommandGarbage) commandsToClean;
-static Thread garbageLock = {.mutex = PTHREAD_MUTEX_INITIALIZER};
+static std::vector<VkFence> fencesToDestroy;
+static std::vector<VulkanCommand*> cmdsToFree;
+static std::vector<BufferGarbage> buffersToClean;
+static std::vector<ImageGarbage> imagesToClean;
+static std::vector<CommandGarbage> commandsToClean;
+static utils::Thread garbageLock = {.mutex = PTHREAD_MUTEX_INITIALIZER};
 
 struct VulkanIblData {
     u32 environmentMapIndex;
@@ -82,7 +83,7 @@ struct VulkanIblData {
     u32 hasSH;
     u32 tonemapMode;
     u32 tonemapLutPunchyIndex;
-    u32 pad_ibl2;
+    u32 pad_ibl2 = 0;
     vec4 shL0_M0;
     vec4 shL1_Mn1;
     vec4 shL1_M0;
@@ -148,13 +149,13 @@ struct VulkanSceneBuffer {
 };
 
 struct VulkanAddressBuffer {
-    u64 sceneBufferAddress;
-    u64 materialBufferAddress;
-    u64 lightGridAddress;
-    u64 lightIndexAddress;
-    u64 jointMatrixBufferAddress;
-    u64 entitySkinMapBufferAddress;
-    u64 prevJointMatrixBufferAddress;
+    u64 sceneBufferAddress = 0;
+    u64 materialBufferAddress = 0;
+    u64 lightGridAddress = 0;
+    u64 lightIndexAddress = 0;
+    u64 jointMatrixBufferAddress = 0;
+    u64 entitySkinMapBufferAddress = 0;
+    u64 prevJointMatrixBufferAddress = 0;
 };
 
 VulkanResources vulkanResources;
@@ -267,7 +268,7 @@ static void swapchainCreated(void*) {
 
 void vulkanResourceInit(void) {
     initSamplers();
-    signalSubscribe("swapchainCreated", swapchainCreated);
+    utils::signalSubscribe("swapchainCreated", swapchainCreated);
 
     globalMaterialBuffer = vulkanCreateGpuBuffer(
         "globalMaterialBuffer",  //
@@ -305,12 +306,8 @@ void vulkanResourceDestroy(void) {
     vulkanDestroyImage(&vulkanResources.dummyImage, nullptr);
     vulkanDestroyImage(&vulkanResources.dummyCubeImage, nullptr);
 
-    arrayFree(storageImageArrayData.emptySlots);
-    arrayFree(sampledImageArrayData.emptySlots);
-    arrayFree(sampledCubeImageArrayData.emptySlots);
 
     vulkanCleanupGarbage();
-    arrayFree(fencesToDestroy);
 }
 
 void writeSamplers(int i) {
@@ -369,7 +366,7 @@ void writeSamplers(int i) {
 
 void writeAddressBuffer(int i) {
     sceneBuffer[i] = vulkanCreateCpuBuffer(
-        strtmp("sceneBuffer %i", i),
+        utils::strtmp("sceneBuffer %i", i),
         sizeof(VulkanSceneBuffer),
         VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
 
@@ -378,7 +375,7 @@ void writeAddressBuffer(int i) {
     memset(sceneBuffer[i].vmaInfo.pMappedData, 0, sizeof(VulkanSceneBuffer));
 
     VulkanDesc* desc = &vulkanResources.globalSet0[i];
-    char* name       = strtmp("addressBuffer %i", i);
+    char* name       = utils::strtmp("addressBuffer %i", i);
     addressBuffer[i] = vulkanCreateCpuBuffer(name,
                                              sizeof(VulkanAddressBuffer),
                                              VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
@@ -391,7 +388,7 @@ void writeAddressBuffer(int i) {
     };
 
     // Wire skinning addresses from the first scene that has skinning buffers
-    for (size_t si = 0; si < arraySize(ecs.scenes); si++) {
+    for (size_t si = 0; si < ecs.scenes.size(); si++) {
         Scene* s = ecs.scenes[si];
         if (!s || !s->backendScene) continue;
         VulkanScene* vs  = static_cast<VulkanScene*>(s->backendScene);
@@ -416,7 +413,7 @@ void vulkanResourceUpdate(void) {
     int flightIndex          = renderer.flightIndex;
     VulkanSceneBuffer* scene  = static_cast<VulkanSceneBuffer*>(sceneBuffer[flightIndex].vmaInfo.pMappedData);
     static int lastTimeMs    = 0;
-    int currentTimeMs        = (int)(timer.timeSinceStart / 1000000.0);  // nanos -> milliseconds
+    int currentTimeMs        = (int)(utils::timer.timeSinceStart / 1000000.0);  // nanos -> milliseconds
     scene->prevTime          = lastTimeMs;
     scene->time              = currentTimeMs;
     lastTimeMs               = currentTimeMs;
@@ -463,7 +460,7 @@ void vulkanResourceUpdate(void) {
 
     // Flush transforms for ALL scenes (keeps upload queues drained even
     // when a scene is frustum-culled, preventing unbounded memory growth).
-    for (size_t si = 0; si < arraySize(ecs.scenes); si++) {
+    for (size_t si = 0; si < ecs.scenes.size(); si++) {
         Scene* s = ecs.scenes[si];
         if (!s->backendScene) continue;
         VulkanScene* vs  = static_cast<VulkanScene*>(s->backendScene);
@@ -627,7 +624,7 @@ void initSamplers(void) {
     samplerInfo.unnormalizedCoordinates = VK_FALSE;
     samplerInfo.mipLodBias              = 0.0F;
     vkCreateSampler(vulkan.device, &samplerInfo, NULL, &samplers[SAMPLER_NEAREST]);
-    if (isDebug()) {
+    if (utils::isDebug()) {
         vulkanUtilsSetName((u64)samplers[SAMPLER_NEAREST],
                            VK_OBJECT_TYPE_SAMPLER,
                            "sampler nearest");
@@ -648,7 +645,7 @@ void initSamplers(void) {
     samplerInfo.unnormalizedCoordinates = VK_FALSE;
     samplerInfo.mipLodBias              = 0.0F;
     vkCreateSampler(vulkan.device, &samplerInfo, NULL, &samplers[SAMPLER_LINEAR]);
-    if (isDebug()) {
+    if (utils::isDebug()) {
         vulkanUtilsSetName((u64)samplers[SAMPLER_LINEAR], VK_OBJECT_TYPE_SAMPLER, "sampler linear");
     }
 
@@ -659,7 +656,7 @@ void initSamplers(void) {
     samplerInfo.addressModeW = samplerInfo.addressModeU;
     // samplerInfo.mipLodBias   = 0.25F;
     vkCreateSampler(vulkan.device, &samplerInfo, NULL, &samplers[SAMPLER_NORMALMAP]);
-    if (isDebug()) {
+    if (utils::isDebug()) {
         vulkanUtilsSetName((u64)samplers[SAMPLER_NORMALMAP],
                            VK_OBJECT_TYPE_SAMPLER,
                            "sampler normalmap");
@@ -681,7 +678,7 @@ void initSamplers(void) {
     samplerInfo.unnormalizedCoordinates = VK_FALSE;
     samplerInfo.mipLodBias              = 0.0F;
     vkCreateSampler(vulkan.device, &samplerInfo, NULL, &samplers[SAMPLER_BORDER]);
-    if (isDebug()) {
+    if (utils::isDebug()) {
         vulkanUtilsSetName((u64)samplers[SAMPLER_BORDER], VK_OBJECT_TYPE_SAMPLER, "sampler border");
     }
 
@@ -701,7 +698,7 @@ void initSamplers(void) {
     samplerInfo.unnormalizedCoordinates = VK_FALSE;
     samplerInfo.mipLodBias              = 0.0F;
     vkCreateSampler(vulkan.device, &samplerInfo, NULL, &samplers[SAMPLER_BORDER_NEAREST]);
-    if (isDebug()) {
+    if (utils::isDebug()) {
         vulkanUtilsSetName((u64)samplers[SAMPLER_BORDER_NEAREST],
                            VK_OBJECT_TYPE_SAMPLER,
                            "sampler border nearest");
@@ -726,7 +723,7 @@ void initSamplers(void) {
     samplerInfo.unnormalizedCoordinates = VK_FALSE;
     samplerInfo.mipLodBias              = 0.0F;
     vkCreateSampler(vulkan.device, &samplerInfo, NULL, &samplers[SAMPLER_SHADOW_CMP]);
-    if (isDebug()) {
+    if (utils::isDebug()) {
         vulkanUtilsSetName((u64)samplers[SAMPLER_SHADOW_CMP],
                            VK_OBJECT_TYPE_SAMPLER,
                            "sampler shadow compare");
@@ -750,7 +747,7 @@ void initSamplers(void) {
     samplerInfo.mipLodBias              = 0;
 
     vkCreateSampler(vulkan.device, &samplerInfo, NULL, &samplers[SAMPLER_SPLATMAP]);
-    if (isDebug()) {
+    if (utils::isDebug()) {
         vulkanUtilsSetName((u64)samplers[SAMPLER_SPLATMAP],
                            VK_OBJECT_TYPE_SAMPLER,
                            "sampler splatmap");
@@ -772,7 +769,7 @@ void initSamplers(void) {
     samplerInfo.unnormalizedCoordinates = VK_FALSE;
     samplerInfo.mipLodBias              = 0.0F;
     vkCreateSampler(vulkan.device, &samplerInfo, NULL, &samplers[SAMPLER_CLAMP_LINEAR]);
-    if (isDebug()) {
+    if (utils::isDebug()) {
         vulkanUtilsSetName((u64)samplers[SAMPLER_CLAMP_LINEAR],
                            VK_OBJECT_TYPE_SAMPLER,
                            "sampler clamp linear");
@@ -794,7 +791,7 @@ void initSamplers(void) {
     samplerInfo.unnormalizedCoordinates = VK_FALSE;
     samplerInfo.mipLodBias              = 0.0F;
     vkCreateSampler(vulkan.device, &samplerInfo, NULL, &samplers[SAMPLER_CLAMP_NEAREST]);
-    if (isDebug()) {
+    if (utils::isDebug()) {
         vulkanUtilsSetName((u64)samplers[SAMPLER_CLAMP_NEAREST],
                            VK_OBJECT_TYPE_SAMPLER,
                            "sampler clamp nearest");
@@ -817,7 +814,7 @@ void initSamplers(void) {
     samplerInfo.unnormalizedCoordinates = VK_FALSE;
     samplerInfo.mipLodBias              = 0.0F;
     vkCreateSampler(vulkan.device, &samplerInfo, NULL, &samplers[SAMPLER_CLAMP_LINEAR_MIPMAP]);
-    if (isDebug()) {
+    if (utils::isDebug()) {
         vulkanUtilsSetName((u64)samplers[SAMPLER_CLAMP_LINEAR_MIPMAP],
                            VK_OBJECT_TYPE_SAMPLER,
                            "sampler clamp linear mipmap");
@@ -849,23 +846,22 @@ static void recreateSamplerWithBias(u32 index,
                                     const char* debugName) {
     vkDestroySampler(vulkan.device, samplers[index], nullptr);
 
-    VkSamplerCreateInfo ci = {
-        .sType            = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
-        .minFilter        = minFilter,
-        .magFilter        = magFilter,
-        .addressModeU     = addressMode,
-        .addressModeV     = addressMode,
-        .addressModeW     = addressMode,
-        .borderColor      = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK,
-        .mipmapMode       = mipmapMode,
-        .minLod           = 0,
-        .maxLod           = VK_LOD_CLAMP_NONE,
-        .anisotropyEnable = anisotropy,
-        .maxAnisotropy    = maxAniso,
-        .mipLodBias       = bias,
-    };
+    VkSamplerCreateInfo ci = {};
+    ci.sType            = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    ci.magFilter        = magFilter;
+    ci.minFilter        = minFilter;
+    ci.mipmapMode       = mipmapMode;
+    ci.addressModeU     = addressMode;
+    ci.addressModeV     = addressMode;
+    ci.addressModeW     = addressMode;
+    ci.mipLodBias       = bias;
+    ci.anisotropyEnable = anisotropy;
+    ci.maxAnisotropy    = maxAniso;
+    ci.minLod           = 0.0f;
+    ci.maxLod           = VK_LOD_CLAMP_NONE;
+    ci.borderColor      = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK;
     vkCreateSampler(vulkan.device, &ci, NULL, &samplers[index]);
-    if (isDebug()) {
+    if (utils::isDebug()) {
         vulkanUtilsSetName((u64)samplers[index], VK_OBJECT_TYPE_SAMPLER, debugName);
     }
 }
@@ -923,7 +919,7 @@ static void updateSamplerMipBias(void) {
         writeSamplers(i);
     }
 
-    info("vulkanResources: FSR mip LOD bias updated to %.3f", (double)bias);
+    utils::info("vulkanResources: FSR mip LOD bias updated to %.3f", (double)bias);
 }
 
 void initDummyImage(void) {
@@ -984,7 +980,7 @@ void initDummyCubeImage(void) {
 }
 
 VulkanCommand* vulkanTransientBegin(void) {
-    VulkanCommand* cmd = static_cast<VulkanCommand*>(memoryAlloc(sizeof(VulkanCommand)));
+    VulkanCommand* cmd = new VulkanCommand{};
     cmd->transient     = 1;
 
     // create a new pool
@@ -1007,7 +1003,7 @@ VulkanCommand* vulkanTransientBegin(void) {
     fenceCreateInfo.sType             = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
     vkCreateFence(vulkan.device, &fenceCreateInfo, NULL, &cmd->fence);
 
-    if (isDebug()) {
+    if (utils::isDebug()) {
         vulkanUtilsSetName((u64)cmd->cmd, VK_OBJECT_TYPE_COMMAND_BUFFER, "transient cmd buffer");
         vulkanUtilsSetName((u64)cmd->pool, VK_OBJECT_TYPE_COMMAND_POOL, "transient cmd pool");
         vulkanUtilsSetName((u64)cmd->fence, VK_OBJECT_TYPE_FENCE, "transient fence");
@@ -1043,11 +1039,12 @@ void vulkanTransientFinish(VulkanCommand* cmd) {
 }
 
 static void addToPool(ImageArrayData* imageArrayData, VulkanImage* image) {
-    threadLock(&imageArrayData->lock);
+    utils::threadLock(&imageArrayData->lock);
 
     u32 newIndex = 0;
-    if (arraySize(imageArrayData->emptySlots) > 0) {
-        newIndex = arrayPop(imageArrayData->emptySlots);
+    if (!imageArrayData->emptySlots.empty()) {
+        newIndex = imageArrayData->emptySlots.back();
+        imageArrayData->emptySlots.pop_back();
     } else {
         newIndex = imageArrayData->textureArrayCounter;
         imageArrayData->textureArrayCounter++;
@@ -1064,7 +1061,7 @@ static void addToPool(ImageArrayData* imageArrayData, VulkanImage* image) {
         vulkanUpdateDesc(desc, imageArrayData->descType, image, imageArrayData->slot, newIndex);
     }
 
-    threadUnlock(&imageArrayData->lock);
+    utils::threadUnlock(&imageArrayData->lock);
 }
 
 void vulkanAddImageToPool(VulkanImage* image) {
@@ -1079,8 +1076,8 @@ void vulkanAddImageToPool(VulkanImage* image) {
                                             ? &sampledCubeImageArrayData
                                             : &sampledImageArrayData;
 
-        threadLock(&sampledArray->lock);
-        threadLock(&storageImageArrayData.lock);
+        utils::threadLock(&sampledArray->lock);
+        utils::threadLock(&storageImageArrayData.lock);
 
         // Ensure both counters are at the same value. Use the higher one
         // so we don't overwrite existing indices in either pool.
@@ -1090,11 +1087,11 @@ void vulkanAddImageToPool(VulkanImage* image) {
 
         // Advance both counters, filling empty slots for each skipped index
         while (sampledCounter < aligned) {
-            arrayPut(sampledArray->emptySlots, sampledCounter);
+            sampledArray->emptySlots.push_back(sampledCounter);
             sampledCounter++;
         }
         while (storageCounter < aligned) {
-            arrayPut(storageImageArrayData.emptySlots, storageCounter);
+            storageImageArrayData.emptySlots.push_back(storageCounter);
             storageCounter++;
         }
 
@@ -1113,8 +1110,8 @@ void vulkanAddImageToPool(VulkanImage* image) {
                              storageImageArrayData.slot, image->storagePoolIndex);
         }
 
-        threadUnlock(&storageImageArrayData.lock);
-        threadUnlock(&sampledArray->lock);
+        utils::threadUnlock(&storageImageArrayData.lock);
+        utils::threadUnlock(&sampledArray->lock);
 
         image->inPool = 1;
         return;
@@ -1143,26 +1140,27 @@ void vulkanRemoveImageFromPool(VulkanImage* image) {
         ImageArrayData* sampledArray = image->viewType == VK_IMAGE_VIEW_TYPE_CUBE
                                            ? &sampledCubeImageArrayData
                                            : &sampledImageArrayData;
-        threadLock(&sampledArray->lock);
-        arrayPut(sampledArray->emptySlots, image->sampledPoolIndex);
-        threadUnlock(&sampledArray->lock);
+        utils::threadLock(&sampledArray->lock);
+        sampledArray->emptySlots.push_back(image->sampledPoolIndex);
+        utils::threadUnlock(&sampledArray->lock);
     }
 
     if (image->usage & VK_IMAGE_USAGE_STORAGE_BIT) {
-        threadLock(&storageImageArrayData.lock);
-        arrayPut(storageImageArrayData.emptySlots, image->storagePoolIndex);
-        threadUnlock(&storageImageArrayData.lock);
+        utils::threadLock(&storageImageArrayData.lock);
+        storageImageArrayData.emptySlots.push_back(image->storagePoolIndex);
+        utils::threadUnlock(&storageImageArrayData.lock);
     }
 
     image->inPool = 0;
 }
 
 int vulkanAddImageViewToPool(VkImageView view) {
-    threadLock(&sampledImageArrayData.lock);
+    utils::threadLock(&sampledImageArrayData.lock);
 
     u32 newIndex = 0;
-    if (arraySize(sampledImageArrayData.emptySlots) > 0) {
-        newIndex = arrayPop(sampledImageArrayData.emptySlots);
+    if (!sampledImageArrayData.emptySlots.empty()) {
+        newIndex = sampledImageArrayData.emptySlots.back();
+        sampledImageArrayData.emptySlots.pop_back();
     } else {
         newIndex = sampledImageArrayData.textureArrayCounter;
         sampledImageArrayData.textureArrayCounter++;
@@ -1171,7 +1169,7 @@ int vulkanAddImageViewToPool(VkImageView view) {
     for (i32 i = 0, si = FRAMES_IN_FLIGHT; i < si; i++) {
         VulkanDesc* desc = &vulkanResources.globalSet0[i];
 
-        threadLock(&desc->lock);
+        utils::threadLock(&desc->lock);
         VkDescriptorImageInfo descriptorImageInfo = {};
         descriptorImageInfo.imageView             = view;
         descriptorImageInfo.imageLayout           = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
@@ -1185,25 +1183,26 @@ int vulkanAddImageViewToPool(VkImageView view) {
         writeDescriptor.dstBinding           = SLOT_IMAGE;
         writeDescriptor.dstArrayElement      = newIndex;
         vkUpdateDescriptorSets(vulkan.device, 1, &writeDescriptor, 0, 0);
-        threadUnlock(&desc->lock);
+        utils::threadUnlock(&desc->lock);
     }
 
-    threadUnlock(&sampledImageArrayData.lock);
+    utils::threadUnlock(&sampledImageArrayData.lock);
     return newIndex;
 }
 
 void vulkanRemoveImageViewFromPool(int poolIndex) {
-    threadLock(&sampledImageArrayData.lock);
-    arrayPut(sampledImageArrayData.emptySlots, (u32)poolIndex);
-    threadUnlock(&sampledImageArrayData.lock);
+    utils::threadLock(&sampledImageArrayData.lock);
+    sampledImageArrayData.emptySlots.push_back((u32)poolIndex);
+    utils::threadUnlock(&sampledImageArrayData.lock);
 }
 
 int vulkanAddStorageImageViewToPool(VkImageView view) {
-    threadLock(&storageImageArrayData.lock);
+    utils::threadLock(&storageImageArrayData.lock);
 
     u32 newIndex = 0;
-    if (arraySize(storageImageArrayData.emptySlots) > 0) {
-        newIndex = arrayPop(storageImageArrayData.emptySlots);
+    if (!storageImageArrayData.emptySlots.empty()) {
+        newIndex = storageImageArrayData.emptySlots.back();
+        storageImageArrayData.emptySlots.pop_back();
     } else {
         newIndex = storageImageArrayData.textureArrayCounter;
         storageImageArrayData.textureArrayCounter++;
@@ -1212,7 +1211,7 @@ int vulkanAddStorageImageViewToPool(VkImageView view) {
     for (i32 i = 0, si = FRAMES_IN_FLIGHT; i < si; i++) {
         VulkanDesc* desc = &vulkanResources.globalSet0[i];
 
-        threadLock(&desc->lock);
+        utils::threadLock(&desc->lock);
         VkDescriptorImageInfo descriptorImageInfo = {};
         descriptorImageInfo.imageView             = view;
         descriptorImageInfo.imageLayout           = VK_IMAGE_LAYOUT_GENERAL;
@@ -1226,47 +1225,47 @@ int vulkanAddStorageImageViewToPool(VkImageView view) {
         writeDescriptor.dstBinding           = SLOT_STORAGE_IMAGE;
         writeDescriptor.dstArrayElement      = newIndex;
         vkUpdateDescriptorSets(vulkan.device, 1, &writeDescriptor, 0, 0);
-        threadUnlock(&desc->lock);
+        utils::threadUnlock(&desc->lock);
     }
 
-    threadUnlock(&storageImageArrayData.lock);
+    utils::threadUnlock(&storageImageArrayData.lock);
     return newIndex;
 }
 
 void vulkanRemoveStorageImageViewFromPool(int poolIndex) {
-    threadLock(&storageImageArrayData.lock);
-    arrayPut(storageImageArrayData.emptySlots, (u32)poolIndex);
-    threadUnlock(&storageImageArrayData.lock);
+    utils::threadLock(&storageImageArrayData.lock);
+    storageImageArrayData.emptySlots.push_back((u32)poolIndex);
+    utils::threadUnlock(&storageImageArrayData.lock);
 }
 
 void addBufferGarbage(VulkanBuffer* buffer, VkFence fence, std::atomic<bool>* submitted) {
-    threadLock(&garbageLock);
+    utils::threadLock(&garbageLock);
     BufferGarbage garbage = {buffer->buf, buffer->virtualBlock, fence, submitted, buffer->vma};
-    arrayPut(buffersToClean, garbage);
-    threadUnlock(&garbageLock);
+    buffersToClean.push_back(garbage);
+    utils::threadUnlock(&garbageLock);
 }
 
 void addImageGarbage(VulkanImage* image, VkFence fence, std::atomic<bool>* submitted) {
-    threadLock(&garbageLock);
+    utils::threadLock(&garbageLock);
     ImageGarbage garbage = {.views     = image->views,
                             .view      = image->view,
                             .fence     = fence,
                             .submitted = submitted,
                             .vma       = image->vma,
                             .img       = image->img};
-    arrayPut(imagesToClean, garbage);
-    threadUnlock(&garbageLock);
+    imagesToClean.push_back(garbage);
+    utils::threadUnlock(&garbageLock);
 }
 
 void addCommandGarbage(VulkanCommand* command) {
     assert(command->cmd && command->pool && command->fence);
-    threadLock(&garbageLock);
+    utils::threadLock(&garbageLock);
     CommandGarbage garbage = {.fence     = command->fence,
                               .submitted = &command->submitted,
                               .pool      = command->pool,
                               .cmd       = command};
-    arrayPut(commandsToClean, garbage);
-    threadUnlock(&garbageLock);
+    commandsToClean.push_back(garbage);
+    utils::threadUnlock(&garbageLock);
 }
 
 // Check if a garbage entry's fence is complete. If submitted is non-NULL,
@@ -1279,25 +1278,26 @@ static bool isFenceComplete(VkFence fence, std::atomic<bool>* submitted) {
 }
 
 void vulkanCleanupGarbage() {
-    double gT0     = nanos();
+    double gT0     = utils::nanos();
     static int gHitchOn = -1;
     if (gHitchOn < 0) gHitchOn = getenv("ENGINE_HITCH_DEBUG") != nullptr;
     u32 cleaned     = 0;
-    threadLock(&garbageLock);
+    utils::threadLock(&garbageLock);
 
     // 1. Evaluate commandsToClean first. If the fence is signaled,
     // we extract the fence to destroy it AFTER cleaning up images and buffers
     // that might share the same fence.
-    for (u32 i = 0; i < arraySize(commandsToClean);) {
+    for (u32 i = 0; i < commandsToClean.size();) {
         CommandGarbage* garbage = &commandsToClean[i];
         if (isFenceComplete(garbage->fence, garbage->submitted)) {
             if (garbage->fence) {
-                arrayPut(fencesToDestroy, garbage->fence);
+                fencesToDestroy.push_back(garbage->fence);
             }
             vkDestroyCommandPool(vulkan.device, garbage->pool, nullptr);
-            arrayPut(cmdsToFree, garbage->cmd);
+            cmdsToFree.push_back(garbage->cmd);
             cleaned++;
-            arrayDeleteSwap(commandsToClean, i);
+            commandsToClean[i] = commandsToClean.back();
+            commandsToClean.pop_back();
         } else {
             i++;
         }
@@ -1305,7 +1305,7 @@ void vulkanCleanupGarbage() {
 
     // 2. Clean up buffers (VMA destroys are serialized against pool-thread
     //    allocations, see vulkanVmaLock in VulkanBuffer.c).
-    for (u32 i = 0; i < arraySize(buffersToClean);) {
+    for (u32 i = 0; i < buffersToClean.size();) {
         BufferGarbage* garbage = &buffersToClean[i];
         if (isFenceComplete(garbage->fence, garbage->submitted)) {
             vulkanVmaLock();
@@ -1313,26 +1313,27 @@ void vulkanCleanupGarbage() {
             vmaDestroyBuffer(vulkan.vmaAllocator, garbage->buffer, garbage->vma);
             vulkanVmaUnlock();
             cleaned++;
-            arrayDeleteSwap(buffersToClean, i);
+            buffersToClean[i] = buffersToClean.back();
+            buffersToClean.pop_back();
         } else {
             i++;
         }
     }
 
     // 3. Clean up images
-    for (u32 i = 0; i < arraySize(imagesToClean);) {
+    for (u32 i = 0; i < imagesToClean.size();) {
         ImageGarbage* garbage = &imagesToClean[i];
         if (isFenceComplete(garbage->fence, garbage->submitted)) {
             vkDestroyImageView(vulkan.device, garbage->view, nullptr);
-            for (i32 j = 0, s = arraySize(garbage->views); j < s; j++) {
+            for (i32 j = 0, s = static_cast<i32>(garbage->views.size()); j < s; j++) {
                 vkDestroyImageView(vulkan.device, garbage->views[j], nullptr);
             }
             vulkanVmaLock();
             vmaDestroyImage(vulkan.vmaAllocator, garbage->img, garbage->vma);
             vulkanVmaUnlock();
             cleaned++;
-            arrayFree(garbage->views);
-            arrayDeleteSwap(imagesToClean, i);
+            imagesToClean[i] = imagesToClean.back();
+            imagesToClean.pop_back();
         } else {
             i++;
         }
@@ -1340,23 +1341,23 @@ void vulkanCleanupGarbage() {
 
     // 4. Safely destroy fences now that all resources sharing them have been
     // removed
-    for (u32 i = 0; i < arraySize(fencesToDestroy); i++) {
+    for (u32 i = 0; i < fencesToDestroy.size(); i++) {
         vkDestroyFence(vulkan.device, fencesToDestroy[i], nullptr);
     }
-    arrayClear(fencesToDestroy);
+    fencesToDestroy.clear();
 
     // 5. Free transient VulkanCommand structs now that no garbage entry
     // references their submitted field.
-    for (u32 i = 0; i < arraySize(cmdsToFree); i++) {
-        memoryFree(cmdsToFree[i]);
+    for (u32 i = 0; i < cmdsToFree.size(); i++) {
+        delete cmdsToFree[i];
     }
-    arrayClear(cmdsToFree);
+    cmdsToFree.clear();
 
-    threadUnlock(&garbageLock);
+    utils::threadUnlock(&garbageLock);
     if (gHitchOn) {
-        double ms = (nanos() - gT0) / 1e6;
+        double ms = (utils::nanos() - gT0) / 1e6;
         if (ms > 3.0 || cleaned > 8)
-            info("HITCH: cleanupGarbage cleaned=%u in %.1f ms", (unsigned)cleaned, ms);
+            utils::info("HITCH: cleanupGarbage cleaned=%u in %.1f ms", (unsigned)cleaned, ms);
     }
 }
 
@@ -1444,7 +1445,7 @@ static u32 splatUdimCallCount = 0;
 void vulkanResourceSetTerrainSplatUdim(u32 groupIndex, u32 udimTileIndex, u32 textureId) {
     splatUdimCallCount++;
     if (splatUdimCallCount == 1) {
-        info("vulkanResource: FIRST splatUdim call: group=%u tile=%u texId=%u", groupIndex, udimTileIndex, textureId);
+        utils::info("vulkanResource: FIRST splatUdim call: group=%u tile=%u texId=%u", groupIndex, udimTileIndex, textureId);
     }
     if (groupIndex >= MAX_SPLAT_GROUPS || udimTileIndex >= SPLAT_UDIM_TILES) return;
     for (i32 i = 0; i < FRAMES_IN_FLIGHT; i++) {
@@ -1452,32 +1453,32 @@ void vulkanResourceSetTerrainSplatUdim(u32 groupIndex, u32 udimTileIndex, u32 te
         buf->terrain.splatGroups[groupIndex].weightTextures[udimTileIndex] = textureId;
     }
     if (splatUdimCallCount <= 3) {
-        info("vulkanResource: SetTerrainSplatUdim group=%u tile=%u texId=%u (total calls=%u)",
+        utils::info("vulkanResource: SetTerrainSplatUdim group=%u tile=%u texId=%u (total calls=%u)",
              groupIndex, udimTileIndex, textureId, splatUdimCallCount);
     }
     // After first call, verify frame[0] was written
     if (splatUdimCallCount == 1) {
         VulkanSceneBuffer* buf0 = (VulkanSceneBuffer*)sceneBuffer[0].vmaInfo.pMappedData;
-        info("vulkanResource: After first write, frame[0] group[%u].tile[%u]=%u",
+        utils::info("vulkanResource: After first write, frame[0] group[%u].tile[%u]=%u",
              groupIndex, udimTileIndex, buf0->terrain.splatGroups[groupIndex].weightTextures[udimTileIndex]);
     }
 }
 
 void vulkanResourceDebugTerrainSplat(void) {
     VulkanSceneBuffer* buf  = static_cast<VulkanSceneBuffer*>(sceneBuffer[0].vmaInfo.pMappedData);
-    info("vulkanResource: splatGroupCount=%u, buf=%p, addr=%p", buf->terrain.splatGroupCount, (void*)buf, (void*)buf->terrain.splatGroups[0].weightTextures);
+    utils::info("vulkanResource: splatGroupCount=%u, buf=%p, addr=%p", buf->terrain.splatGroupCount, (void*)buf, (void*)buf->terrain.splatGroups[0].weightTextures);
     for (u32 g = 0; g < buf->terrain.splatGroupCount && g < MAX_SPLAT_GROUPS; g++) {
         bool anyNonzero = false;
         for (u32 i = 0; i < SPLAT_UDIM_TILES; i++) {
             if (buf->terrain.splatGroups[g].weightTextures[i] != 0) {
-                if (!anyNonzero) info("vulkanResource:   splatGroup[%u] nonzero weights:", g);
-                info("    [idx=%u]=%u", i, buf->terrain.splatGroups[g].weightTextures[i]);
+                if (!anyNonzero) utils::info("vulkanResource:   splatGroup[%u] nonzero weights:", g);
+                utils::info("    [idx=%u]=%u", i, buf->terrain.splatGroups[g].weightTextures[i]);
                 anyNonzero = true;
             }
         }
-        if (!anyNonzero) info("vulkanResource:   splatGroup[%u] all weights are 0", g);
+        if (!anyNonzero) utils::info("vulkanResource:   splatGroup[%u] all weights are 0", g);
     }
-    info("vulkanResource: total vulkanResourceSetTerrainSplatUdim calls: %u", splatUdimCallCount);
+    utils::info("vulkanResource: total vulkanResourceSetTerrainSplatUdim calls: %u", splatUdimCallCount);
 }
 
 u32 vulkanResourceGetTerrainSplatGroupCount(void) {
@@ -1581,3 +1582,4 @@ void vulkanResourceSetCameraOccluders(const u32* entities, const float* alphas, 
 }
 
 
+}  // namespace engine

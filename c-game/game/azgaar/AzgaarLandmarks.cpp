@@ -22,6 +22,7 @@
 
 // ── Deterministic RNG (seeded by map name + marker id) ────────────────────
 
+namespace game {
 static u32 landHash3(u32 a, u32 b, u32 c) {
     u32 h = a * 0x8da6b343u ^ b * 0xc2b2ae35u ^ c * 0x27d4eb2fu;
     h = (h ^ (h >> 15)) * 0x2c1b3c6du;
@@ -56,31 +57,31 @@ static const AzgaarWorld* g_world = nullptr;
 static bool               g_disabled = false;
 static u32                g_mapSeed;
 
-static PropInstance*  g_instances = nullptr;
-static u32            g_instanceCount = 0;
-static PropTileRange* g_ranges = nullptr;
-static u32            g_rangeCount = 0;
+static std::vector<engine::PropInstance>  g_instances;
+static u32                        g_instanceCount = 0;
+static std::vector<engine::PropTileRange> g_ranges;
+static u32                        g_rangeCount = 0;
 
 // Pool decal handles (hot-springs / water-sources).
-static u32* g_decals = nullptr; // Array(u32)
+static std::vector<u32> g_decals;
 
 // Sacred-forest density discs.  `g_discCount` is published LAST (pool threads
 // read it via azgaarLandmarksForestBoost while tiles stream).
 struct LandDisc {
     float wx, wz;
 };
-static LandDisc* g_discs = nullptr;
+static std::vector<LandDisc> g_discs;
 static volatile u32 g_discCount = 0;
 #define LANDMARK_FOREST_DISC_R 300.0f
 #define LANDMARK_FOREST_BOOST 3.0f
 
 // ── Instance staging ───────────────────────────────────────────────────────
 
-static void landPush(PropInstance* temp, u32 cap, u32* w,
+static void landPush(engine::PropInstance* temp, u32 cap, u32* w,
                      float x, float y, float z, float yaw, float scale, u32 species,
                      float cr, float cg, float cb) {
     if (*w >= cap) return;
-    PropInstance* p = &temp[(*w)++];
+    engine::PropInstance* p = &temp[(*w)++];
     p->pos[0]   = x;
     p->pos[1]   = y;
     p->pos[2]   = z;
@@ -103,7 +104,7 @@ static float landGroundY(float (*groundAt)(void*, float, float), void* ud, float
 // range), grey rock tinted with deterministic jitter.
 static void landGenVolcano(const AzgaarMarker* m, u32 seed,
                            float (*groundAt)(void*, float, float), void* ud,
-                           PropInstance* temp, u32 cap, u32* w) {
+                           engine::PropInstance* temp, u32 cap, u32* w) {
     float jit   = landClamp01Jit(seed, 1, 0.90f, 1.10f);
     float scale = landClamp01Jit(seed, 2, 420.0f, 850.0f);
     if (scale > 900.0f) scale = 900.0f;
@@ -117,7 +118,7 @@ static void landGenVolcano(const AzgaarMarker* m, u32 seed,
 // (22% of the total height), reading as the lit lantern from afar.
 static void landGenLighthouse(const AzgaarMarker* m, u32 seed,
                               float (*groundAt)(void*, float, float), void* ud,
-                              PropInstance* temp, u32 cap, u32* w) {
+                              engine::PropInstance* temp, u32 cap, u32* w) {
     float h   = landClamp01Jit(seed, 1, 22.0f, 30.0f);
     float jit = landClamp01Jit(seed, 2, 0.92f, 1.08f);
     float yaw = landRand(seed, 3) * 2.0f * M_PI;
@@ -131,7 +132,7 @@ static void landGenLighthouse(const AzgaarMarker* m, u32 seed,
 // Ruins: 3-5 half-buried broken columns/arches in a golden-angle cluster.
 static void landGenRuins(const AzgaarMarker* m, u32 seed,
                          float (*groundAt)(void*, float, float), void* ud,
-                         PropInstance* temp, u32 cap, u32* w) {
+                         engine::PropInstance* temp, u32 cap, u32* w) {
     u32   n  = 3u + static_cast<u32>(landRand(seed, 1) * 3.0f); // 3..5
     float ga = 2.39996f;                              // golden angle
     for (u32 k = 0; k < n; k++) {
@@ -156,7 +157,7 @@ static void landGenRuins(const AzgaarMarker* m, u32 seed,
 // Mine: timber headframe + 2-3 scattered rocks.
 static void landGenMine(const AzgaarMarker* m, u32 seed,
                         float (*groundAt)(void*, float, float), void* ud,
-                        PropInstance* temp, u32 cap, u32* w) {
+                        engine::PropInstance* temp, u32 cap, u32* w) {
     float jit = landClamp01Jit(seed, 1, 0.90f, 1.10f);
     float sc  = landClamp01Jit(seed, 2, 4.0f, 6.0f);
     float gy  = landGroundY(groundAt, ud, m->wx, m->wz);
@@ -184,14 +185,14 @@ static void landGenMine(const AzgaarMarker* m, u32 seed,
 // and the local flow direction sets the yaw.
 static void landGenBridge(const AzgaarWorld* world, const AzgaarMarker* m, u32 seed,
                           float (*groundAt)(void*, float, float), void* ud,
-                          PropInstance* temp, u32 cap, u32* w) {
+                          engine::PropInstance* temp, u32 cap, u32* w) {
     AzgaarRiverNearHit hits[16];
     u32 nh = azgaarRiversNear(m->wx, m->wz, 60.0f, hits, 16);
     if (nh == 0) {
         static bool warned = false;
         if (!warned) {
             warned = true;
-            warn("azgaarLandmarks: bridge marker %u has no river within 60 m; skipped", m->id);
+            utils::warn("azgaarLandmarks: bridge marker %u has no river within 60 m; skipped", m->id);
         }
         return;
     }
@@ -253,7 +254,7 @@ static void landGenPoolDecal(const AzgaarMarker* m, u32 seed, bool hot,
                    : landClamp01Jit(seed, 1, 4.0f, 8.0f);
     float gy = landGroundY(groundAt, ud, m->wx, m->wz);
 
-    DecalInstance d = {};
+    engine::DecalInstance d = {};
     d.position[0]   = m->wx;
     d.position[1]   = gy + 40.0f; // tall projector like the river decals
     d.position[2]   = m->wz;
@@ -264,14 +265,14 @@ static void landGenPoolDecal(const AzgaarMarker* m, u32 seed, bool hot,
     vec4 col = {hot ? 0.36f : 0.25f, hot ? 0.52f : 0.40f, 0.55f, hot ? 0.85f : 0.80f};
     glm_vec4_copy(col, d.color);
     d.textureId      = DECAL_PROCEDURAL_CIRCLE_TEXTURE;
-    d.flags          = DECAL_FLAG_GROUND_ONLY;
+    d.flags          = engine::DECAL_FLAG_GROUND_ONLY;
     d.opacity        = 1.0f;
     d.normalThreshold = 0.28f;
     d.edgeFeather    = 0.5f;
     d.uvScale[0]     = 1.0f;
     d.uvScale[1]     = 1.0f;
-    u32 handle = decalAdd(&d);
-    if (handle != DECAL_INVALID_HANDLE) arrayPut(g_decals, handle);
+    u32 handle = engine::decalAdd(&d);
+    if (handle != DECAL_INVALID_HANDLE) g_decals.push_back(handle);
 }
 
 // ── Public API ─────────────────────────────────────────────────────────────
@@ -284,7 +285,7 @@ void azgaarLandmarksInit(const AzgaarWorld* world,
     g_world    = world;
     g_mapSeed  = landMapSeed(world->mapName);
     g_disabled = getenv("ENGINE_AZGAAR_LANDMARKS_DISABLED") != nullptr;
-    if (g_disabled || world->markerCount == 0 || !world->markers) return;
+    if (g_disabled || world->markerCount == 0 || world->markers.empty()) return;
 
     // Budget the temp buffer exactly: worst case per marker kind.
     u32 cap = 0;
@@ -300,7 +301,7 @@ void azgaarLandmarksInit(const AzgaarWorld* world,
     }
     if (cap == 0) return;
 
-    PropInstance* temp = static_cast<PropInstance*>(memoryAlloc(sizeof(PropInstance) * cap));
+    std::vector<engine::PropInstance> temp(cap);
     u32 write = 0;
     u32 volcanoes = 0, lighthouses = 0, ruins = 0, mines = 0, bridges = 0, pools = 0,
         sacred = 0;
@@ -309,23 +310,23 @@ void azgaarLandmarksInit(const AzgaarWorld* world,
         u32 seed = g_mapSeed ^ m->id * 374761393u;
         switch (m->kind) {
         case AZGAAR_MARKER_VOLCANO:
-            landGenVolcano(m, seed, groundAt, groundUserData, temp, cap, &write);
+            landGenVolcano(m, seed, groundAt, groundUserData, temp.data(), cap, &write);
             volcanoes++;
             break;
         case AZGAAR_MARKER_LIGHTHOUSE:
-            landGenLighthouse(m, seed, groundAt, groundUserData, temp, cap, &write);
+            landGenLighthouse(m, seed, groundAt, groundUserData, temp.data(), cap, &write);
             lighthouses++;
             break;
         case AZGAAR_MARKER_RUINS:
-            landGenRuins(m, seed, groundAt, groundUserData, temp, cap, &write);
+            landGenRuins(m, seed, groundAt, groundUserData, temp.data(), cap, &write);
             ruins++;
             break;
         case AZGAAR_MARKER_MINE:
-            landGenMine(m, seed, groundAt, groundUserData, temp, cap, &write);
+            landGenMine(m, seed, groundAt, groundUserData, temp.data(), cap, &write);
             mines++;
             break;
         case AZGAAR_MARKER_BRIDGE:
-            landGenBridge(world, m, seed, groundAt, groundUserData, temp, cap, &write);
+            landGenBridge(world, m, seed, groundAt, groundUserData, temp.data(), cap, &write);
             bridges++;
             break;
         case AZGAAR_MARKER_HOT_SPRING:
@@ -338,10 +339,7 @@ void azgaarLandmarksInit(const AzgaarWorld* world,
             break;
         case AZGAAR_MARKER_SACRED_FOREST: {
             // Publish discs with the count LAST (pool threads poll it).
-            LandDisc* discs = static_cast<LandDisc*>(memoryAlloc(sizeof(LandDisc) * static_cast<u32>(sacred + 1u)));
-            if (g_discs) memcpy(discs, g_discs, sizeof(LandDisc) * sacred);
-            memoryFree(g_discs);
-            g_discs = discs;
+            g_discs.resize(sacred + 1u);
             g_discs[sacred].wx = m->wx;
             g_discs[sacred].wz = m->wz;
             sacred++;
@@ -360,9 +358,7 @@ void azgaarLandmarksInit(const AzgaarWorld* world,
         if (sp < AZGAAR_PROP_COUNT) perSpecies[sp]++;
     }
     if (g_instanceCount > 0) {
-        memoryFree(g_instances);
-        memoryFree(g_ranges);
-        g_instances  = static_cast<PropInstance*>(memoryAlloc(sizeof(PropInstance) * g_instanceCount));
+        g_instances.resize(g_instanceCount);
         u32 offsets[AZGAAR_PROP_COUNT] = {};
         u32 acc = 0;
         for (u32 s = 0; s < AZGAAR_PROP_COUNT; s++) {
@@ -375,11 +371,11 @@ void azgaarLandmarksInit(const AzgaarWorld* world,
             u32 dst = offsets[sp] + cursor[sp]++;
             g_instances[dst] = temp[i];
         }
-        g_ranges  = static_cast<PropTileRange*>(memoryAlloc(sizeof(PropTileRange) * AZGAAR_PROP_COUNT));
+        g_ranges.clear();
         u32 rc = 0;
         for (u32 s = 0; s < AZGAAR_PROP_COUNT; s++) {
             if (perSpecies[s] > 0) {
-                g_ranges[rc] = PropTileRange{.species = s, .variant = 0, .start = offsets[s], .count = perSpecies[s]};
+                g_ranges.push_back(engine::PropTileRange{.species = s, .variant = 0, .start = offsets[s], .count = perSpecies[s]});
                 rc++;
             }
         }
@@ -389,12 +385,11 @@ void azgaarLandmarksInit(const AzgaarWorld* world,
         float halfH = static_cast<float>(world->heightPx * 0.5) * static_cast<float>(world->metersPerPixel) + 40.0f;
         float aabbMin[3] = {-halfW, -20.0f, -halfH};
         float aabbMax[3] = {halfW, world->maxLandHeightM + 900.0f + 20.0f, halfH};
-        azgaarPropsRegisterGlobal(g_instances, g_instanceCount,
-                                      g_ranges, g_rangeCount, aabbMin, aabbMax, true);
+        azgaarPropsRegisterGlobal(g_instances.data(), g_instanceCount,
+                                      g_ranges.data(), g_rangeCount, aabbMin, aabbMax, true);
     }
-    memoryFree(temp);
 
-    info("azgaarLandmarks: %u instances in %u species ranges "
+    utils::info("azgaarLandmarks: %u instances in %u species ranges "
          "(volcanoes=%u lighthouses=%u ruins=%u mines=%u bridges=%u pool-decals=%u sacred-forests=%u)",
          g_instanceCount, g_rangeCount, volcanoes, lighthouses, ruins, mines, bridges,
          pools, sacred);
@@ -403,7 +398,7 @@ void azgaarLandmarksInit(const AzgaarWorld* world,
         u32 sp = g_instances[i].species;
         if (sp == AZGAAR_PROP_VOLCANO || sp == AZGAAR_PROP_LIGHTHOUSE ||
             sp == AZGAAR_PROP_BRIDGE) {
-            info("TEMP landmark species=%u pos=(%.1f, %.1f, %.1f) yaw=%.1f scale=%.1f",
+            utils::info("TEMP landmark species=%u pos=(%.1f, %.1f, %.1f) yaw=%.1f scale=%.1f",
                  sp, g_instances[i].pos[0], g_instances[i].pos[1], g_instances[i].pos[2],
                  static_cast<double>(g_instances[i].yaw), g_instances[i].scale);
         }
@@ -412,28 +407,24 @@ void azgaarLandmarksInit(const AzgaarWorld* world,
 
 void azgaarLandmarksClear(void) {
     azgaarPropsClearGlobal(true);
-    memoryFree(g_instances);
-    g_instances     = nullptr;
+    g_instances.clear();
     g_instanceCount = 0;
-    memoryFree(g_ranges);
-    g_ranges     = nullptr;
+    g_ranges.clear();
     g_rangeCount = 0;
-    if (g_decals) {
-        for (u32 i = 0; i < arraySize(g_decals); i++) {
-            decalRemove(g_decals[i]);
+    if (!g_decals.empty()) {
+        for (u32 i = 0; i < g_decals.size(); i++) {
+            engine::decalRemove(g_decals[i]);
         }
-        arrayFree(g_decals);
     }
     g_discCount = 0; // before freeing: queries fall back to 1.0 immediately
-    memoryFree(g_discs);
-    g_discs     = nullptr;
+    g_discs.clear();
     g_world     = nullptr;
     g_disabled  = false;
 }
 
 float azgaarLandmarksForestBoost(float wx, float wz) {
     u32 count = g_discCount; // published last by init
-    if (count == 0 || !g_discs) return 1.0f;
+    if (count == 0 || g_discs.empty()) return 1.0f;
     for (u32 i = 0; i < count; i++) {
         float dx = wx - g_discs[i].wx;
         float dz = wz - g_discs[i].wz;
@@ -443,3 +434,4 @@ float azgaarLandmarksForestBoost(float wx, float wz) {
     }
     return 1.0f;
 }
+}  // namespace game

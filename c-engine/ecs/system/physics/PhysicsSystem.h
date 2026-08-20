@@ -1,8 +1,19 @@
 #pragma once
+#include "ecs/system/System.h"
 
 #include "ecs/system/scene/SceneSystem.h"
 
-extern struct System pyhsicsSystem;
+namespace engine {
+class PhysicsSystem : public System {
+public:
+    PhysicsSystem();
+    void added() override;
+    void removed() override;
+    void preUpdate() override;
+    void update() override;
+};
+
+extern PhysicsSystem pyhsicsSystem;
 
 /// True while the Jolt physics world is alive (between the physics system's
 /// added() and removed()). Consumers that create/destroy Jolt bodies outside
@@ -66,3 +77,4 @@ void physicsCreateRigidBody(Scene* scene,
                             u32 indexCount,
                             float* pos,
                             float* rot);
+}  // namespace engine

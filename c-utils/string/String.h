@@ -1,6 +1,7 @@
 #pragma once
-#include "../container/Array.h"
+#include <vector>
 
+namespace utils {
 struct String {
     char* data;
     u32 allocated;
@@ -33,12 +34,13 @@ void stringAppendBinary(String* string, void* data, u32 size);
 
 char* strtmp(const char* format, ...);
 
-Array(String*) stringSplit(String* string, const char* delim);
-void stringArrayDestroy(Array(String*) array);
+std::vector<String*> stringSplit(String* string, const char* delim);
+void stringArrayDestroy(std::vector<String*> array);
 
-Array(char*) strSplit(const char* input, const char* delimiter);
-void strSplitFree(Array(char*) result);
+std::vector<char*> strSplit(const char* input, const char* delimiter);
+void strSplitFree(std::vector<char*> result);
 
 const char* strBaseName(const char* path);
 void strToLowerInPlace(char* s);
 void strToUpperInPlace(char* s);
+}  // namespace utils

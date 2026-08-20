@@ -1,3 +1,4 @@
+#include "ZoneGui.h"
 #include "Utils.h"
 #include "ecs/Ecs.h"
 #include "ecs/system/System.h"
@@ -9,22 +10,11 @@
 #include "rmlui/wrapper/src/crmlui.h"
 #include "events/Events.h"
 
-static void added(void);
-static void update(void);
-static void removed(void);
+namespace game {
 
-System zoneGui = {
-    .name                = "zoneGui",
-    .added               = added,
-    .removed             = removed,
-    .preUpdate           = nullptr,
-    .update              = update,
-    .postUpdate          = nullptr,
-    .cpuElapsedLastFrame = 0.0,
-    .cpuElapsed          = 0.0,
-    .gpuElapsed          = 0.0,
-    .priority            = 0,
-};
+ZoneGui zoneGui;
+
+ZoneGui::ZoneGui() : engine::System("zoneGui") {}
 
 static void* document;
 static void* model;
@@ -99,17 +89,17 @@ static void onCellEntered(void* userData) {
     curProvinceId = ev->zone.provinceId;
     curStateId    = ev->zone.stateId;
     initialized   = true;
-    changeTimeMs  = millies();
+    changeTimeMs  = utils::millies();
     active        = true;
     pickDisplayText(&ev->zone);
 
-    info("zoneGui: entered '%s'%s%s",
+    utils::info("zoneGui: entered '%s'%s%s",
          zoneTextBuf,
          zoneSubBuf[0] ? ", " : "",
          zoneSubBuf[0] ? zoneSubBuf : "");
 }
 
-static void added(void) {
+void ZoneGui::added() {
     document = rmlNewDocument("gui/zone/zone.html");
     model    = rmlCreateModel("zone");
 
@@ -128,7 +118,7 @@ static void added(void) {
     initialized    = false;
     active         = false;
 
-    signalSubscribe("azgaarCellEntered", onCellEntered);
+    utils::signalSubscribe("azgaarCellEntered", onCellEntered);
 
     rmlLoadDocument(document);
     rmlShowDocumentWithoutFocus(document);
@@ -165,9 +155,9 @@ static void added(void) {
             } else {
                 zoneSubBuf[0] = '\0';
             }
-            changeTimeMs = millies();
+            changeTimeMs = utils::millies();
             active       = true;
-            info("zoneGui: spawned in settlement '%s'%s%s",
+            utils::info("zoneGui: spawned in settlement '%s'%s%s",
                  s->name,
                  zoneSubBuf[0] ? " - " : "",
                  zoneSubBuf[0] ? zoneSubBuf : "");
@@ -175,8 +165,8 @@ static void added(void) {
     }
 }
 
-static void removed(void) {
-    signalRemoveSubscription("azgaarCellEntered", onCellEntered);
+void ZoneGui::removed() {
+    utils::signalRemoveSubscription("azgaarCellEntered", onCellEntered);
 
     rmlUnloadDocument(document);
     rmlUnloadModel(model);
@@ -187,7 +177,7 @@ static void removed(void) {
     curSettlementId = 0u;
 }
 
-static void update(void) {
+void ZoneGui::update() {
     // Workstream D: poll the nearest settlement every frame (settlement
     // boundaries are not cells, so the cell signal can't detect entering or
     // leaving a town).  Cheap: one linear scan of ~800 entries.
@@ -198,7 +188,7 @@ static void update(void) {
         u32 sid = s ? s->id : 0u;
         if (sid != curSettlementId) {
             curSettlementId = sid;
-            changeTimeMs    = millies();
+            changeTimeMs    = utils::millies();
             active          = true;
             if (s) {
                 snprintf(zoneTextBuf, sizeof(zoneTextBuf), "%s", s->name);
@@ -207,7 +197,7 @@ static void update(void) {
                 } else {
                     zoneSubBuf[0] = '\0';
                 }
-                info("zoneGui: entered settlement '%s'%s%s",
+                utils::info("zoneGui: entered settlement '%s'%s%s",
                      s->name,
                      zoneSubBuf[0] ? " - " : "",
                      zoneSubBuf[0] ? zoneSubBuf : "");
@@ -234,7 +224,7 @@ static void update(void) {
         return;
     }
 
-    double elapsed = millies() - changeTimeMs;
+    double elapsed = utils::millies() - changeTimeMs;
     float  total   = ZONE_FADE_IN_MS + ZONE_HOLD_MS + ZONE_FADE_OUT_MS;
 
     if (elapsed >= total) {
@@ -255,3 +245,4 @@ static void update(void) {
 
     rmlUpdateDirtyAll(model);
 }
+}  // namespace game

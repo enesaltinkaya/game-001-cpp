@@ -66,32 +66,33 @@
 #define XK_Delete 0xffff
 
 // ── WindowBackendApi ────────────────────────────────────────────────────────
+namespace engine {
 struct WindowBackendApi {
-    const char* name;
-    void (*added)(void);
-    void (*removed)(void);
-    void (*preUpdate)(void);
-    void (*postUpdate)(void);
-    void (*hide)(void);
-    void (*show)(void);
-    void (*toggleFullscreen)(char fullScreen);
-    void (*reloadCursors)(void);
-    void* (*getPointerCursor)(void);
-    void* (*getArrowCursor)(void);
-    void* (*getTextCursor)(void);
-    void (*updateDimensions)(void);
-    void (*warpCenter)(void);
-    void (*warp)(float x, float y);
-    void (*hideCursor)(void);
-    void (*showCursor)(void);
-    bool (*isCursorVisible)(void);
-    void (*getRelativeMouseDelta)(float* dx, float* dy);
-    bool (*isLeftMouseDown)(void);
-    bool (*isRightMouseDown)(void);
-    bool (*isMiddleMouseDown)(void);
-    char const* const* (*getRequiredVulkanExtensions)(u32* extensionCount);
-    bool (*createVulkanSurface)(VkInstance instance, VkSurfaceKHR* surface);
-    SetCursorFn (*getSetCursorFn)(void);
+    const char* name = nullptr;
+    void (*added)(void) = nullptr;
+    void (*removed)(void) = nullptr;
+    void (*preUpdate)(void) = nullptr;
+    void (*postUpdate)(void) = nullptr;
+    void (*hide)(void) = nullptr;
+    void (*show)(void) = nullptr;
+    void (*toggleFullscreen)(char fullScreen) = nullptr;
+    void (*reloadCursors)(void) = nullptr;
+    void* (*getPointerCursor)(void) = nullptr;
+    void* (*getArrowCursor)(void) = nullptr;
+    void* (*getTextCursor)(void) = nullptr;
+    void (*updateDimensions)(void) = nullptr;
+    void (*warpCenter)(void) = nullptr;
+    void (*warp)(float x, float y) = nullptr;
+    void (*hideCursor)(void) = nullptr;
+    void (*showCursor)(void) = nullptr;
+    bool (*isCursorVisible)(void) = nullptr;
+    void (*getRelativeMouseDelta)(float* dx, float* dy) = nullptr;
+    bool (*isLeftMouseDown)(void) = nullptr;
+    bool (*isRightMouseDown)(void) = nullptr;
+    bool (*isMiddleMouseDown)(void) = nullptr;
+    char const* const* (*getRequiredVulkanExtensions)(u32* extensionCount) = nullptr;
+    bool (*createVulkanSurface)(VkInstance instance, VkSurfaceKHR* surface) = nullptr;
+    SetCursorFn (*getSetCursorFn)(void) = nullptr;
 };
 
 // ── State ───────────────────────────────────────────────────────────────────
@@ -102,7 +103,7 @@ static bool cursorVisible = true;
 static float cursorSaveX, cursorSaveY;
 static float pendingRelDx, pendingRelDy;
 static u32 mouseButtonState;
-static Array(SDL_Gamepad*) gamepads;
+static std::vector<SDL_Gamepad*> gamepads;
 
 // ── Key mapping ─────────────────────────────────────────────────────────────
 
@@ -248,7 +249,7 @@ static void pushKeyEvent(int type, KeyCode key, bool repeat) {
     ev.type            = static_cast<InputEventType>(type);
     ev.data.key.key    = key;
     ev.data.key.repeat = repeat;
-    arrayPut(input.events, ev);
+    input.events.push_back(ev);
 }
 
 static void pushMouseMoveEvent(float x, float y, float dx, float dy) {
@@ -261,7 +262,7 @@ static void pushMouseMoveEvent(float x, float y, float dx, float dy) {
     ev.data.motion.y  = y;
     ev.data.motion.dx = dx;
     ev.data.motion.dy = dy;
-    arrayPut(input.events, ev);
+    input.events.push_back(ev);
 }
 
 static void pushMouseButtonEvent(int type, MouseButton button) {
@@ -271,7 +272,7 @@ static void pushMouseButtonEvent(int type, MouseButton button) {
     ev.alt                     = input.alt;
     ev.type                    = static_cast<InputEventType>(type);
     ev.data.mouseButton.button = button;
-    arrayPut(input.events, ev);
+    input.events.push_back(ev);
 }
 
 static void pushMouseWheelEvent(float x, float y) {
@@ -282,7 +283,7 @@ static void pushMouseWheelEvent(float x, float y) {
     ev.type         = INPUT_EVENT_MOUSE_WHEEL;
     ev.data.wheel.x = x;
     ev.data.wheel.y = y;
-    arrayPut(input.events, ev);
+    input.events.push_back(ev);
 }
 
 static void pushTextEvent(const char* text) {
@@ -292,7 +293,7 @@ static void pushTextEvent(const char* text) {
     ev.alt        = input.alt;
     ev.type       = INPUT_EVENT_TEXT_INPUT;
     strncpy(ev.data.text.text, text, sizeof(ev.data.text.text) - 1);
-    arrayPut(input.events, ev);
+    input.events.push_back(ev);
 }
 
 static void pushResizeEvent(int w, int h) {
@@ -300,13 +301,13 @@ static void pushResizeEvent(int w, int h) {
     ev.type               = INPUT_EVENT_WINDOW_RESIZED;
     ev.data.resize.width  = w;
     ev.data.resize.height = h;
-    arrayPut(input.events, ev);
+    input.events.push_back(ev);
 }
 
 static void pushQuitEvent(void) {
     InputEvent ev = {};
     ev.type       = INPUT_EVENT_QUIT;
-    arrayPut(input.events, ev);
+    input.events.push_back(ev);
 }
 
 // ── Backend API ─────────────────────────────────────────────────────────────
@@ -317,10 +318,10 @@ static void x11Added(void) {
     // Create a temporary backend to get screen size, then the real one
     // Actually, let backend handle dimensions
     int width, height;
-    bool fullScreen = settingsGetBool("fullScreen");
+    bool fullScreen = utils::settingsGetBool("fullScreen");
 
     // We need screen size first — create backend, it'll figure it out
-    double elapsed = elapsedBegin();
+    double elapsed = utils::elapsedBegin();
     // Temporary: get screen size from a quick XOpenDisplay
     // Actually the backend needs width/height. Compute here.
     // For now, create with dummy size, then query screen
@@ -340,21 +341,21 @@ static void x11Added(void) {
     window.ratio  = static_cast<float>(width) / static_cast<float>(height);
 
     backend = x11BackendCreate("Mini", width, height, fullScreen);
-    elapsed = elapsedEnd(elapsed);
+    elapsed = utils::elapsedEnd(elapsed);
 
     window.xscale           = 1.0f;
     window.yscale           = 1.0f;
     window.sdlWindowHandle  = nullptr;
     window.glfwWindowHandle = nullptr;
 
-    if (settingsGetDouble("uiScale") == 0) {
-        settingsSetDouble("uiScale", 1.0);
-        settingsSetDouble("cursorScale", 1.0);
-        settingsWrite();
+    if (utils::settingsGetDouble("uiScale") == 0) {
+        utils::settingsSetDouble("uiScale", 1.0);
+        utils::settingsSetDouble("cursorScale", 1.0);
+        utils::settingsWrite();
     }
 
-    info("windowSystem: initialized in %.02f ms (X11)", elapsed);
-    debug("windowSystem: dimensions    %dx%d", window.width, window.height);
+    utils::info("windowSystem: initialized in %.02f ms (X11)", elapsed);
+    utils::debug("windowSystem: dimensions    %dx%d", window.width, window.height);
 
     x11LoadCursors();
 
@@ -365,18 +366,16 @@ static void x11Added(void) {
 
 static void x11RemovedDelayed(void* _) {
     (void)_;
-    foreach (SDL_Gamepad* gp, gamepads) {
+    for (SDL_Gamepad* gp : gamepads) {
         SDL_CloseGamepad(gp);
     }
-    arrayFree(gamepads);
-    arrayFree(input.events);
     x11BackendDestroy(backend);
     backend = nullptr;
     SDL_Quit();
 }
 
 static void x11Removed(void) {
-    futureTaskAdd(0, x11RemovedDelayed, nullptr);
+    utils::futureTaskAdd(0, x11RemovedDelayed, nullptr);
 }
 
 static void x11Hide(void) {
@@ -416,33 +415,33 @@ static void x11SetCursorType(int cursorType) {
 }
 
 static void x11LoadCursors(void) {
-    double scale = settingsGetDouble("cursorScale");
+    double scale = utils::settingsGetDouble("cursorScale");
     if (scale <= 0) scale = 1.0;
 
-    Image arrowImg     = imageLoadKtx("images/cursorArrow.png.ktx2", KTX_FORMAT_RGBA32);
+    utils::Image arrowImg     = utils::imageLoadKtx("images/cursorArrow.png.ktx2", utils::KTX_FORMAT_RGBA32);
     u64 aw             = static_cast<u64>(arrowImg.width / 2.5 * scale);
     u64 ah             = static_cast<u64>(arrowImg.height / 2.5 * scale);
     u64 ahx            = static_cast<u64>(8 / 2.5 * scale);
     u64 ahy            = static_cast<u64>(8 / 2.5 * scale);
-    Image arrowResized = imageResize(&arrowImg, aw, ah);
+    utils::Image arrowResized = utils::imageResize(&arrowImg, aw, ah);
     x11BackendSetCustomCursorArrow(backend,
                                    reinterpret_cast<const unsigned char*>(arrowResized.data),
                                    static_cast<int>(aw),
                                    static_cast<int>(ah),
                                    static_cast<int>(ahx),
                                    static_cast<int>(ahy));
-    imageDestory(&arrowImg);
-    imageDestory(&arrowResized);
+    utils::imageDestory(&arrowImg);
+    utils::imageDestory(&arrowResized);
 
-    Image handImg     = imageLoadKtx("images/cursorHand.png.ktx2", KTX_FORMAT_RGBA32);
+    utils::Image handImg     = utils::imageLoadKtx("images/cursorHand.png.ktx2", utils::KTX_FORMAT_RGBA32);
     u64 hw            = static_cast<u64>(handImg.width / 2.5 * scale);
     u64 hh            = static_cast<u64>(handImg.height / 2.5 * scale);
     u64 hhx           = static_cast<u64>(25 / 2.5 * scale);
     u64 hhy           = static_cast<u64>(4 / 2.5 * scale);
-    Image handResized = imageResize(&handImg, hw, hh);
+    utils::Image handResized = utils::imageResize(&handImg, hw, hh);
     x11BackendSetCustomCursorHand(backend, reinterpret_cast<const unsigned char*>(handResized.data), static_cast<int>(hw), static_cast<int>(hh), static_cast<int>(hhx), static_cast<int>(hhy));
-    imageDestory(&handImg);
-    imageDestory(&handResized);
+    utils::imageDestory(&handImg);
+    utils::imageDestory(&handResized);
 }
 
 static void x11ReloadCursors(void) {
@@ -490,7 +489,7 @@ static void showCursorDelayed(void*) {
 static void x11ShowCursor(void) {
     cursorVisible = true;
     x11BackendWarp(backend, static_cast<int>(cursorSaveX), static_cast<int>(cursorSaveY));
-    futureTaskAdd(10, showCursorDelayed, nullptr);
+    utils::futureTaskAdd(10, showCursorDelayed, nullptr);
     // x11BackendSetCursorVisible(backend, true);
 }
 
@@ -559,15 +558,15 @@ static void x11PreUpdate(void) {
     memset(input.gamepadButtonReleased, 0, sizeof(input.gamepadButtonReleased));
 
     input.focused = x11BackendHasFocus(backend);
-    arrayClear(input.events);
+    input.events.clear();
 
     // SDL gamepad events
     SDL_Event sdlEvent;
     while (SDL_PollEvent(&sdlEvent)) {
         if (sdlEvent.type == SDL_EVENT_JOYSTICK_ADDED && SDL_IsGamepad(sdlEvent.adevice.which)) {
             SDL_Gamepad* gp = SDL_OpenGamepad(sdlEvent.adevice.which);
-            arrayPut(gamepads, gp);
-            debug("  controller    : %s", SDL_GetGamepadName(gp));
+            gamepads.push_back(gp);
+            utils::debug("  controller    : %s", SDL_GetGamepadName(gp));
         }
         if (sdlEvent.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN)
             input.gamepadButtonPressed[sdlEvent.gbutton.button] = 1;
@@ -659,7 +658,7 @@ static void x11PreUpdate(void) {
                     window.width  = e->resize.width;
                     window.height = e->resize.height;
                     window.ratio  = static_cast<float>(window.width) / static_cast<float>(window.height);
-                    signalEmit("windowResized", nullptr);
+                    utils::signalEmit("windowResized", nullptr);
                     pushResizeEvent(window.width, window.height);
                 }
             } break;
@@ -689,9 +688,9 @@ static void x11PreUpdate(void) {
     // Alt+Enter fullscreen
     if (input.alt && (input.pressed == KEY_RETURN || input.pressed == KEY_KP_ENTER)) {
         input.skip      = 1;
-        char fullScreen = settingsGetBool("fullScreen");
-        settingsSetBool("fullScreen", !fullScreen);
-        settingsWrite();
+        char fullScreen = utils::settingsGetBool("fullScreen");
+        utils::settingsSetBool("fullScreen", !fullScreen);
+        utils::settingsWrite();
         x11ToggleFullscreen(!fullScreen);
     }
 
@@ -733,4 +732,5 @@ WindowBackendApi x11WindowBackendApi = {
     .getSetCursorFn              = x11GetSetCursorFn,
 };
 
+}  // namespace engine
 #endif  // __linux__

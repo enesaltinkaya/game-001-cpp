@@ -33,6 +33,7 @@
 // azgaarRiversInit (bridges query the river hash).  `groundAt` is the
 // heightmap source' exact heightAt callback (same contract as
 // azgaarSettlementsInit).  No-op when disabled or markerless.
+namespace game {
 void azgaarLandmarksInit(const AzgaarWorld* world,
                          float (*groundAt)(void* userData, float wx, float wz),
                          void* groundUserData);
@@ -42,3 +43,4 @@ void azgaarLandmarksClear(void);
 // outside.  Read-only and pool-thread safe (the disc count is published
 // last, same discipline as the settlement plateau grid).
 float azgaarLandmarksForestBoost(float wx, float wz);
+}  // namespace game

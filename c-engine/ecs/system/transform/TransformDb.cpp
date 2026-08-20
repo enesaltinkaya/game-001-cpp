@@ -1,8 +1,9 @@
 #include "ecs/system/transform/TransformComponent.h"
 
+namespace engine {
 void transformDbInit(void) {
-    if (!sqliteTableExists("transform")) {
-        sqliteExecute(
+    if (!utils::sqliteTableExists("transform")) {
+        utils::sqliteExecute(
             "CREATE TABLE IF NOT EXISTS transform ("
             "name TEXT PRIMARY KEY, "
             "transform BLOB);");
@@ -10,22 +11,23 @@ void transformDbInit(void) {
 }
 
 void transformDbSave(const char* name, Transform* transformIn) {
-    void* stmt = sqliteStatement("REPLACE INTO transform (name, transform) VALUES (?, ?);");
-    sqliteBindText(stmt, 1, name);
-    sqliteBindBlob(stmt, 2, transformIn, sizeof(Transform));
-    sqliteStep(stmt);
-    sqliteFinalize(stmt);
+    void* stmt = utils::sqliteStatement("REPLACE INTO transform (name, transform) VALUES (?, ?);");
+    utils::sqliteBindText(stmt, 1, name);
+    utils::sqliteBindBlob(stmt, 2, transformIn, sizeof(Transform));
+    utils::sqliteStep(stmt);
+    utils::sqliteFinalize(stmt);
 }
 
 char transformDbLoad(const char* name, Transform* transformOut) {
-    void* stmt  = sqliteStatement("SELECT transform FROM transform WHERE name = ?;");
+    void* stmt  = utils::sqliteStatement("SELECT transform FROM transform WHERE name = ?;");
     char result = 0;
-    sqliteBindText(stmt, 1, name);
-    if (sqliteStep(stmt)) {
-        void* transformBlob = sqliteGetBlob(stmt, 0);
+    utils::sqliteBindText(stmt, 1, name);
+    if (utils::sqliteStep(stmt)) {
+        void* transformBlob = utils::sqliteGetBlob(stmt, 0);
         memcpy(transformOut, transformBlob, sizeof(Transform));
         result = 1;
     }
-    sqliteFinalize(stmt);
+    utils::sqliteFinalize(stmt);
     return result;
 }
+}  // namespace engine

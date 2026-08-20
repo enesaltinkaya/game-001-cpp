@@ -2,8 +2,9 @@
 #include "renderer/vulkan/Vulkan.h"
 #include "thread/Thread.h"
 
+namespace engine {
 struct VulkanBuffer {
-    struct Thread lock;
+    struct utils::Thread lock;
     VmaAllocationInfo vmaInfo;
     VkBuffer buf;
     VmaAllocation vma;
@@ -54,7 +55,7 @@ VulkanBuffer vulkanCreateStagingBuffer(u64 size);
 
 void vulkanDestroyBuffer(VulkanBuffer* buffer, VkFence fence);
 
-#define vulkanCopy(...) r_vulkanCopy(VulkanCopyInfo{__VA_ARGS__})
+#define vulkanCopy(...) engine::r_vulkanCopy(engine::VulkanCopyInfo{__VA_ARGS__})
 void r_vulkanCopy(VulkanCopyInfo info);
 
 VulkanVirtualBuf vulkanBufferAllocateVirtual(VulkanBuffer* buf, u32 size, u32 align);
@@ -66,3 +67,4 @@ void vulkanBufferDestroyVirtual(VulkanVirtualBuf* virtualBuf);
 // outside VulkanBuffer.c.
 void vulkanVmaLock(void);
 void vulkanVmaUnlock(void);
+}  // namespace engine

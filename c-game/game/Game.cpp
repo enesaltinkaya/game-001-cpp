@@ -1,4 +1,5 @@
 #include "Game.h"
+#include "Game.h"
 #include "ecs/Ecs.h"
 #include "ecs/system/System.h"
 #include "events/Events.h"
@@ -8,25 +9,12 @@
 #include "c-game/game/playerGui/PlayerGui.h"
 #include "c-game/game/playerActionsGui/PlayerActionsGui.h"
 
-static void added(void);
-static void removed(void);
-static void preUpdate(void);
-static void update(void);
-static void postUpdate(void);
+namespace game {
 static void onAzgaarMapLoaded(void* _);
 
-System gameSystem = {
-    .name                = "game",
-    .added               = added,
-    .removed             = removed,
-    .preUpdate           = preUpdate,
-    .update              = update,
-    .postUpdate          = postUpdate,
-    .cpuElapsedLastFrame = 0.0,
-    .cpuElapsed          = 0.0,
-    .gpuElapsed          = 0.0,
-    .priority            = 0,
-};
+GameSystem gameSystem;
+
+GameSystem::GameSystem() : engine::System("game") {}
 
 [[maybe_unused]]
 static void autoEnter(void*) {
@@ -36,8 +24,8 @@ static void autoEnter(void*) {
 static void gameRendererInitialized(void* _) {
     static_cast<void>(_);
     // futureTaskAdd(500, autoEnter, nullptr);
-    guiManagerAddGuiNextFrame(&cameraGui);
-    guiManagerAddGuiNextFrame(&playerGui);
+    engine::guiManagerAddGuiNextFrame(&cameraGui);
+    engine::guiManagerAddGuiNextFrame(&playerGui);
 }
 
 // The player actions GUI is only useful once the Azgaar map is loaded, so add
@@ -49,7 +37,7 @@ static char playerActionsGuiAdded;
 static void onAzgaarMapLoaded(void* _) {
     if (playerActionsGuiAdded) return;
     playerActionsGuiAdded = 1;
-    guiManagerAddGuiNextFrame(&playerActionsGui);
+    engine::guiManagerAddGuiNextFrame(&playerActionsGui);
 }
 
 // The retained Azgaar world is only released through the loading state's exit
@@ -58,38 +46,35 @@ static void onAzgaarMapLoaded(void* _) {
 // Release it at teardown instead. Higher priority than the render system
 // (10000), so ecsDestroy() (reverse order) runs this before the renderer
 // disposes Vulkan.
-static void azgaarWorldCleanupRemoved(void);
 
-System azgaarWorldCleanupSystem = {
-    .name                = "azgaarWorldCleanup",
-    .added               = nullptr,
-    .removed             = azgaarWorldCleanupRemoved,
-    .preUpdate           = nullptr,
-    .update              = nullptr,
-    .postUpdate          = nullptr,
-    .cpuElapsedLastFrame = 0.0,
-    .cpuElapsed          = 0.0,
-    .gpuElapsed          = 0.0,
-    .priority            = 0,
+class AzgaarWorldCleanupSystem : public engine::System {
+public:
+    AzgaarWorldCleanupSystem();
+    void removed() override;
 };
 
-static void azgaarWorldCleanupRemoved(void) {
+AzgaarWorldCleanupSystem azgaarWorldCleanupSystem;
+
+AzgaarWorldCleanupSystem::AzgaarWorldCleanupSystem() : engine::System("azgaarWorldCleanup") {}
+
+void AzgaarWorldCleanupSystem::removed() {
     loadingAzgaarReleaseWorld();
 }
 
-void added(void) {
+void GameSystem::added() {
     gameStateInit();
-    signalSubscribe("rendererInitialized", gameRendererInitialized);
-    signalSubscribe("azgaarMapLoaded", onAzgaarMapLoaded);
-    systemAddNow(10500, &azgaarWorldCleanupSystem);
+    utils::signalSubscribe("rendererInitialized", gameRendererInitialized);
+    utils::signalSubscribe("azgaarMapLoaded", onAzgaarMapLoaded);
+    engine::systemAddNow(10500, &azgaarWorldCleanupSystem);
 }
 
-void removed(void) {}
+void GameSystem::removed() {}
 
-void preUpdate(void) {}
+void GameSystem::preUpdate() {}
 
-void update(void) {
+void GameSystem::update() {
     gameStateUpdate();
 }
 
-void postUpdate(void) {}
+void GameSystem::postUpdate() {}
+}  // namespace game

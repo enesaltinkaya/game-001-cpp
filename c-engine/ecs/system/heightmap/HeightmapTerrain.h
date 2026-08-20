@@ -1,5 +1,7 @@
 #pragma once
+#include "ecs/system/System.h"
 
+#include <vector>
 #include "ecs/system/scene/SceneSystem.h"
 #include "ecs/system/heightmap/HeightmapSource.h"
 
@@ -37,6 +39,7 @@
 #define HEIGHTMAP_TEX           512
 #define HEIGHTMAP_PHYSICS_PSN   256
 
+namespace engine {
 enum HeightmapTileState {
     HEIGHTMAP_TILE_EMPTY = 0,  // allocated, no data (phase-0 terminal state)
     HEIGHTMAP_TILE_GENERATING, // background thread filling grids (phase 1)
@@ -51,8 +54,8 @@ struct HeightmapTile {
     bool inWindow;              // set by updateWindow while inside the window
 
     // Phase 1: CPU grids (allocated when generation completes).
-    float* heights;        // [HEIGHTMAP_TEX]^2, row-major, metres
-    float* physicsHeights; // [HEIGHTMAP_PHYSICS_PSN]^2
+    std::vector<float> heights = {};        // [HEIGHTMAP_TEX]^2, row-major, metres
+    std::vector<float> physicsHeights = {}; // [HEIGHTMAP_PHYSICS_PSN]^2
     double genMs;          // last generation duration (stats)
 
     // Bumped (global counter) every time this tile's grids are (re)published
@@ -73,7 +76,7 @@ struct HeightmapTerrain {
     HeightmapSource source;        // vtable + userData (copied at init)
     float tileSizeMeters;
     u32   windowSize;              // tiles per side (forced odd)
-    Array(HeightmapTile*) tiles;   // resident tiles
+    std::vector<HeightmapTile*> tiles;   // resident tiles
     u64  lruCounter;
     u32  tilesReady;               // tiles in HEIGHTMAP_TILE_READY
     u32  inFlight;                 // builder jobs currently executing (this ht)
@@ -86,7 +89,17 @@ struct HeightmapTerrain {
 
 REGISTER_COMPONENT(HeightmapTerrain);
 
-extern struct System heightmapTerrainSystem;
+class HeightmapTerrainSystem : public System {
+public:
+    HeightmapTerrainSystem();
+    void added() override;
+    void removed() override;
+    void preUpdate() override;
+    void update() override;
+    void postUpdate() override;
+};
+
+extern HeightmapTerrainSystem heightmapTerrainSystem;
 
 // Configure the component (idempotent: frees any previously resident tiles).
 // source may later become invalid only after heightmapTerrainDestroyData.
@@ -163,3 +176,4 @@ bool heightmapTerrainCopyTile(HeightmapTerrain* ht,
 // grid of a READY tile (matches the GPU/physics bilinear surface exactly);
 // falls back to the source for tiles that are not READY yet.
 float heightmapTerrainSample(const HeightmapTerrain* ht, float wx, float wz);
+}  // namespace engine

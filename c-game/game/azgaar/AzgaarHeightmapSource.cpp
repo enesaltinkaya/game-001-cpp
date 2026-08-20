@@ -13,6 +13,7 @@
 // ring-0 lattice (a 16 m octave is 1 sample/wavelength there — it vanishes
 // from the rendered surface while CPU/physics keep it, so grass and the
 // player float above the rendered ground).
+namespace game {
 enum {
     AZGAAR_HM_DETAIL_OCTAVES = 2,
 };
@@ -119,4 +120,4 @@ void azgaarHeightmapSourceInit(AzgaarHeightmapSource* src,
     src->detailEnabled = true;
     src->vtable.heightAt = azgaarHeightmapHeightAt;
     src->vtable.userData = src;
-}
+}}  // namespace game

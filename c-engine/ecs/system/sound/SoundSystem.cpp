@@ -5,6 +5,7 @@
 #include "soloud/git/include/soloud_c.h"
 #include "soloud/git/src/backend/miniaudio/miniaudio.h"
 
+namespace engine {
 struct Sound {
     Wav sample;
     int handle;
@@ -12,31 +13,19 @@ struct Sound {
 
 static struct {
     Soloud soloud;
-    Array(int) loopingHandles;
+    std::vector<int> loopingHandles;
     Sound* buttonHoverEffect;
     Sound* buttonClickEffect;
     Sound* errorEffect;
 } audio;
 
 static void settingsSaved(void* _);
-static void added(void);
-static void preUpdate(void);
-static void removed(void);
 
-System soundSystem = {
-    .name                = "sound",
-    .added               = added,
-    .removed             = removed,
-    .preUpdate           = preUpdate,
-    .update              = nullptr,
-    .postUpdate          = nullptr,
-    .cpuElapsedLastFrame = 0.0,
-    .cpuElapsed          = 0.0,
-    .gpuElapsed          = 0.0,
-    .priority            = 0,
-};
+SoundSystem soundSystem;
 
-void added(void) {
+SoundSystem::SoundSystem() : System("sound") {}
+
+void SoundSystem::added() {
     // -- loop playback devices
     // ma_result result;
     // ma_context context;
@@ -57,13 +46,13 @@ void added(void) {
     audio.buttonClickEffect = soundLoad("sound/click.ogg");
     audio.errorEffect       = soundLoad("sound/error.ogg");
 
-    signalSubscribe("settingsSaved", settingsSaved);
+    utils::signalSubscribe("settingsSaved", settingsSaved);
 
     const char* backend = Soloud_getBackendString((Soloud*)audio.soloud);
     ma_device* device    = static_cast<ma_device*>(Soloud_getBackendData(audio.soloud));
-    debug("soundSystem: audio engine  %s", "SoLoud");
-    debug("soundSystem: audio backend %s", backend);
-    debug("soundSystem: audio device  %s", device->playback.name);
+    utils::debug("soundSystem: audio engine  %s", "SoLoud");
+    utils::debug("soundSystem: audio backend %s", backend);
+    utils::debug("soundSystem: audio device  %s", device->playback.name);
 }
 
 static void soundRemovedDelayed(void* _) {
@@ -76,18 +65,18 @@ static void soundRemovedDelayed(void* _) {
     audio.soloud = 0;
 }
 
-void removed(void) {
+void SoundSystem::removed() {
     // let systems using sound files close their handles first
-    futureTaskAdd(0, soundRemovedDelayed, 0);
+    utils::futureTaskAdd(0, soundRemovedDelayed, 0);
 }
 
 Sound* soundLoad(const char* path) {
-    Sound* sound = static_cast<Sound*>(memoryAlloc(sizeof(Sound)));
+    Sound* sound = new Sound{};
     sound->sample = (Wav)Wav_create();
 
-    struct String soundFileContents = dataManagerRead(path);
+    struct utils::String soundFileContents = utils::dataManagerRead(path);
     Wav_loadMemEx((AudioSource*)sound->sample, reinterpret_cast<const unsigned char*>(soundFileContents.data), soundFileContents.size, 1, 1);
-    stringDestroy(&soundFileContents);
+    utils::stringDestroy(&soundFileContents);
     return sound;
 }
 
@@ -95,7 +84,7 @@ void soundDestroy(Sound* sound) {
     if (!sound) return;
     soundStop(sound);
     Wav_destroy((AudioSource*)sound->sample);
-    memoryFree(sound);
+    delete sound;
     // Note: the handle is unlinked from audio.loopingHandles inside
     // soundStop.  That array is process-wide (owned by the sound system,
     // shared by every looping sound), so it must NOT be freed here — freeing
@@ -106,7 +95,7 @@ void soundPlay(Sound* sound, float volume, bool loop) {
     if (loop) {
         sound->handle = Soloud_playBackgroundEx((Soloud*)audio.soloud, (AudioSource*)sound->sample, volume, 0, 0);
         Soloud_setLooping((Soloud*)audio.soloud, sound->handle, 1);
-        arrayPut(audio.loopingHandles, sound->handle);
+        audio.loopingHandles.push_back(sound->handle);
     } else {
         Soloud_playEx((Soloud*)audio.soloud, (AudioSource*)sound->sample, volume, 0, 0, 0);
     }
@@ -118,51 +107,53 @@ void soundStop(Sound* sound) {
     }
     Soloud_stop((Soloud*)audio.soloud, sound->handle);
 
-    for (i32 i = 0, s = arraySize(audio.loopingHandles); i < s; i++) {
+    for (i32 i = 0, s = static_cast<i32>(audio.loopingHandles.size()); i < s; i++) {
         if (audio.loopingHandles[i] == sound->handle) {
-            arrayDeleteSwap(audio.loopingHandles, i);
+            audio.loopingHandles[i] = audio.loopingHandles.back();
+            audio.loopingHandles.pop_back();
             break;
         }
     }
 }
 
 void settingsSaved(void* _) {
-    for (i32 i = 0, si = arraySize(audio.loopingHandles); i < si; i++) {
+    for (i32 i = 0, si = static_cast<i32>(audio.loopingHandles.size()); i < si; i++) {
         int handle = audio.loopingHandles[i];
-        Soloud_setVolume((Soloud*)audio.soloud, handle, settingsGetDouble("music") / 100.);
+        Soloud_setVolume((Soloud*)audio.soloud, handle, utils::settingsGetDouble("music") / 100.);
     }
 }
 
 static double lastPlayed;
 
 void soundPlayHover(void) {
-    if (nanos() > lastPlayed + MILLION * 50) {
-        lastPlayed = nanos();
-        soundPlay(audio.buttonHoverEffect, settingsGetDouble("effects") / 100 / 5.f, 0);
+    if (utils::nanos() > lastPlayed + MILLION * 50) {
+        lastPlayed = utils::nanos();
+        soundPlay(audio.buttonHoverEffect, utils::settingsGetDouble("effects") / 100 / 5.f, 0);
     }
 }
 
 void soundPlayClick(void) {
-    if (nanos() > lastPlayed + MILLION * 50) {
-        lastPlayed = nanos();
-        soundPlay(audio.buttonClickEffect, settingsGetDouble("effects") / 100., 0);
+    if (utils::nanos() > lastPlayed + MILLION * 50) {
+        lastPlayed = utils::nanos();
+        soundPlay(audio.buttonClickEffect, utils::settingsGetDouble("effects") / 100., 0);
     }
 }
 
 void soundPlayError(void) {
-    if (nanos() > lastPlayed + MILLION * 50) {
-        lastPlayed = nanos();
-        soundPlay(audio.errorEffect, settingsGetDouble("effects") / 100., 0);
+    if (utils::nanos() > lastPlayed + MILLION * 50) {
+        lastPlayed = utils::nanos();
+        soundPlay(audio.errorEffect, utils::settingsGetDouble("effects") / 100., 0);
     }
 }
 
 void soundPlayClickOnMusicLevel(void) {
-    soundPlay(audio.buttonClickEffect, settingsGetDouble("music") / 100., 0);
+    soundPlay(audio.buttonClickEffect, utils::settingsGetDouble("music") / 100., 0);
 }
 
-void preUpdate(void) {
+void SoundSystem::preUpdate() {
     if (input.ctrl && input.pressed == KEY_M) {
-        settingsSetDouble("music", 0);
-        settingsWrite();
+        utils::settingsSetDouble("music", 0);
+        utils::settingsWrite();
     }
 }
+}  // namespace engine

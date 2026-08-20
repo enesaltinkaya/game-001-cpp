@@ -1,4 +1,5 @@
 #include "VulkanOcclusionPass.h"
+#include "VulkanOcclusionPass.h"
 #include "ecs/Ecs.h"
 #include "ecs/system/scene/Scene.h"
 #include "events/Events.h"
@@ -12,28 +13,15 @@
 #include "renderer/vulkan/scene/VulkanScene.h"
 #include "renderer/vulkan/scene/VulkanVisibleScenes.h"
 
-static void added(void);
-static void preUpdate(void);
-static void update(void);
-static void postUpdate(void);
-static void removed(void);
+namespace engine {
 static void recreateDepthPipelines(void);
 
 static double elapsedCPU;
 static double elapsedGPU;
 
-System vulkanOcclusionPass = {
-    .name                = "occlusion",
-    .added               = added,
-    .removed             = removed,
-    .preUpdate           = preUpdate,
-    .update              = update,
-    .postUpdate          = postUpdate,
-    .cpuElapsedLastFrame = 0.0,
-    .cpuElapsed          = 0.0,
-    .gpuElapsed          = 0.0,
-    .priority            = 0,
-};
+VulkanOcclusionPass vulkanOcclusionPass;
+
+VulkanOcclusionPass::VulkanOcclusionPass() : System("occlusion") {}
 
 #define MAX_HIZ_MIPS 16
 
@@ -163,7 +151,7 @@ static void destroyEarlyHiZ(void) {
     }
     if (earlyHiZImage.img) {
         vulkanDestroyImage(&earlyHiZImage, NULL);
-        earlyHiZImage = VulkanImage{0};
+        earlyHiZImage = VulkanImage{};
     }
     earlyMipCount = 0;
 }
@@ -173,8 +161,8 @@ static void swapchainCreated(void*) {
     destroyEarlyHiZ();
 }
 
-static void added(void) {
-    signalSubscribe("swapchainCreated", swapchainCreated);
+void VulkanOcclusionPass::added() {
+    utils::signalSubscribe("swapchainCreated", swapchainCreated);
 
     copyDepthPipe = vulkanCreatePipe(
         .name = "phase2_hiz_copy_depth",
@@ -227,7 +215,7 @@ static void recreateDepthPipelines(void) {
         .vertexBindingCount = 1);
 }
 
-static void preUpdate(void) {
+void VulkanOcclusionPass::preUpdate() {
     if (vulkan.skipFrame) return;
 
     VulkanImage* depthImg = vulkanFrameResourcesGetDepth();
@@ -252,7 +240,7 @@ static void preUpdate(void) {
     vulkanResetProfile(vulkan.currentCmd, &copyDepthPipe.profile, 0);
 }
 
-static void update(void) {
+void VulkanOcclusionPass::update() {
     if (vulkan.skipFrame) return;
 
     VulkanImage* depthImg        = vulkanFrameResourcesGetDepth();
@@ -446,11 +434,11 @@ static void update(void) {
     // ========== STEP B: Phase 2 culling ==========
 
     u32 visibleSceneCount = 0;
-    Scene** visibleScenes = vulkanGetVisibleScenes(&visibleSceneCount);
+    const Scene** visibleScenes = vulkanGetVisibleScenes(&visibleSceneCount);
 
     // Reset Phase 2 draw counts
     for (u32 si = 0; si < visibleSceneCount; si++) {
-        Scene* scene = visibleScenes[si];
+        const Scene* scene = visibleScenes[si];
         if (!scene->backendScene) continue;
         VulkanScene* vs  = static_cast<VulkanScene*>(scene->backendScene);
         if (!vs->totalDraws) continue;
@@ -479,7 +467,7 @@ static void update(void) {
     // Phase 2 culling dispatch
     vulkanBindPipe(cmd, &phase2CullingPipe);
     for (u32 si = 0; si < visibleSceneCount; si++) {
-        Scene* scene = visibleScenes[si];
+        const Scene* scene = visibleScenes[si];
         if (!scene->backendScene) continue;
         VulkanScene* vs  = static_cast<VulkanScene*>(scene->backendScene);
         if (!vs->totalDraws) continue;
@@ -529,7 +517,7 @@ static void update(void) {
     // Phase 2: single-sided depth draws
     vulkanBindPipe(cmd, &phase2DepthPipe);
     for (u32 si = 0; si < visibleSceneCount; si++) {
-        Scene* scene = visibleScenes[si];
+        const Scene* scene = visibleScenes[si];
         if (!scene->backendScene) continue;
         VulkanScene* vs  = static_cast<VulkanScene*>(scene->backendScene);
         if (!vs->totalDraws) continue;
@@ -558,7 +546,7 @@ static void update(void) {
     // Phase 2: double-sided depth draws
     vulkanBindPipe(cmd, &phase2DepthDSPipe);
     for (u32 si = 0; si < visibleSceneCount; si++) {
-        Scene* scene = visibleScenes[si];
+        const Scene* scene = visibleScenes[si];
         if (!scene->backendScene) continue;
         VulkanScene* vs  = static_cast<VulkanScene*>(scene->backendScene);
         if (!vs->totalDraws) continue;
@@ -603,7 +591,7 @@ static void update(void) {
     if (ecs.showStats) {
         // Zero stats readback buffers
         for (u32 si = 0; si < visibleSceneCount; si++) {
-            Scene* scene = visibleScenes[si];
+            const Scene* scene = visibleScenes[si];
             if (!scene->backendScene) continue;
             VulkanScene* vs  = static_cast<VulkanScene*>(scene->backendScene);
             if (!vs->totalDraws) continue;
@@ -634,7 +622,7 @@ static void update(void) {
         // (opaque, ds, trans, phase2 opaque, phase2 ds)
         vulkanBindPipe(cmd, &statsPipe);
         for (u32 si = 0; si < visibleSceneCount; si++) {
-            Scene* scene = visibleScenes[si];
+            const Scene* scene = visibleScenes[si];
             if (!scene->backendScene) continue;
             VulkanScene* vs  = static_cast<VulkanScene*>(scene->backendScene);
             if (!vs->totalDraws) continue;
@@ -693,7 +681,7 @@ static void update(void) {
     elapsedGPU = copyDepthPipe.profile.elapsed;
 }
 
-static void postUpdate(void) {
+void VulkanOcclusionPass::postUpdate() {
     vulkanOcclusionPass.cpuElapsed = elapsedCPU;
     vulkanOcclusionPass.gpuElapsed = elapsedGPU;
 
@@ -705,9 +693,9 @@ static void postUpdate(void) {
         u32 readbackFi = renderer.flightIndex;
 
         u32 visibleSceneCount = 0;
-        Scene** visibleScenes = vulkanGetVisibleScenes(&visibleSceneCount);
+        const Scene** visibleScenes = vulkanGetVisibleScenes(&visibleSceneCount);
         for (u32 si = 0; si < visibleSceneCount; si++) {
-            Scene* scene = visibleScenes[si];
+            const Scene* scene = visibleScenes[si];
             if (!scene->backendScene) continue;
             VulkanScene* vs  = static_cast<VulkanScene*>(scene->backendScene);
             if (!vs->totalDraws) continue;
@@ -723,7 +711,7 @@ static void postUpdate(void) {
     }
 }
 
-static void removed(void) {
+void VulkanOcclusionPass::removed() {
     destroyEarlyHiZ();
     vulkanDestroyPipe(&copyDepthPipe);
     vulkanDestroyPipe(&downsamplePipe);
@@ -732,3 +720,4 @@ static void removed(void) {
     vulkanDestroyPipe(&phase2DepthDSPipe);
     vulkanDestroyPipe(&statsPipe);
 }
+}  // namespace engine

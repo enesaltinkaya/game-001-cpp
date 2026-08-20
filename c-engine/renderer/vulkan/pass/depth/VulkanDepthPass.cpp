@@ -1,4 +1,5 @@
 #include "VulkanDepthPass.h"
+#include "VulkanDepthPass.h"
 #include "ecs/Ecs.h"
 #include "ecs/system/scene/Scene.h"
 #include "ecs/system/camera/CameraComponent.h"
@@ -16,28 +17,15 @@
 #include "renderer/vulkan/pass/azgaar_props/VulkanAzgaarPropsPass.h"
 #include "renderer/vulkan/resources/VulkanFrameResources.h"
 
-static void added(void);
-static void preUpdate(void);
-static void update(void);
-static void postUpdate(void);
-static void removed(void);
+namespace engine {
 static void recreatePipelines(void);
 
 static double elapsedCPU;
 static double elapsedGPU;
 
-System vulkanDepthPass = {
-    .name                = "depth",
-    .added               = added,
-    .removed             = removed,
-    .preUpdate           = preUpdate,
-    .update              = update,
-    .postUpdate          = postUpdate,
-    .cpuElapsedLastFrame = 0.0,
-    .cpuElapsed          = 0.0,
-    .gpuElapsed          = 0.0,
-    .priority            = 0,
-};
+VulkanDepthPass vulkanDepthPass;
+
+VulkanDepthPass::VulkanDepthPass() : System("depth") {}
 
 static VulkanPipe depthPipe;
 static VulkanPipe depthPipeDoubleSided;
@@ -136,12 +124,12 @@ static void recreatePipelines(void) {
         .vertexBindingCount = 1);
 }
 
-static void added(void) {
-    signalSubscribe("swapchainCreated", swapchainCreated);
+void VulkanDepthPass::added() {
+    utils::signalSubscribe("swapchainCreated", swapchainCreated);
     recreatePipelines();
 }
 
-static void preUpdate(void) {
+void VulkanDepthPass::preUpdate() {
     if (vulkan.skipFrame) return;
 
     VulkanImage* depthImage      = vulkanFrameResourcesGetDepth();
@@ -161,7 +149,7 @@ static void preUpdate(void) {
     vulkanResetProfile(vulkan.currentCmd, &depthPipe.profile, 0);
 }
 
-static void update(void) {
+void VulkanDepthPass::update() {
     VulkanImage* depthImage      = vulkanFrameResourcesGetDepth();
     VulkanImage* velocityImage   = vulkanFrameResourcesGetVelocity();
     VulkanImage* viewNormalImage = vulkanFrameResourcesGetViewNormal();
@@ -174,7 +162,7 @@ static void update(void) {
     vulkanBeginProfile(cmd, &depthPipe.profile, 0);
 
     u32 visibleSceneCount = 0;
-    Scene** visibleScenes = vulkanGetVisibleScenes(&visibleSceneCount);
+    const Scene** visibleScenes = vulkanGetVisibleScenes(&visibleSceneCount);
 
     vulkanBeginRender(.cmd = cmd, .pipe = &depthPipe,
                       .color1 = velocityImage,
@@ -185,7 +173,7 @@ static void update(void) {
     vulkanScissor(cmd, 0, 0, depthImage->extent.width, depthImage->extent.height);
 
     for (u32 si = 0; si < visibleSceneCount; si++) {
-        Scene* scene = visibleScenes[si];
+        const Scene* scene = visibleScenes[si];
         if (!scene->backendScene) continue;
         VulkanScene* vs  = static_cast<VulkanScene*>(scene->backendScene);
         if (!vs->totalDraws) continue;
@@ -325,6 +313,7 @@ Entity* camEntity = cameraGetEntity();
     VkMemoryBarrier2 barriers[2] = {
         {
             .sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
+            .pNext         = nullptr,
             .srcStageMask  = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT |
                              VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
             .srcAccessMask = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
@@ -336,6 +325,7 @@ Entity* camEntity = cameraGetEntity();
         },
         {
             .sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
+            .pNext         = nullptr,
             .srcStageMask  = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
             .srcAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
             .dstStageMask  = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT |
@@ -353,13 +343,14 @@ Entity* camEntity = cameraGetEntity();
     elapsedGPU = depthPipe.profile.elapsed;
 }
 
-static void postUpdate(void) {
+void VulkanDepthPass::postUpdate() {
     vulkanDepthPass.cpuElapsed = elapsedCPU;
     vulkanDepthPass.gpuElapsed = elapsedGPU;
 }
 
-static void removed(void) {
+void VulkanDepthPass::removed() {
     vulkanDestroyPipe(&depthPipe);
     vulkanDestroyPipe(&depthPipeDoubleSided);
     vulkanDestroyPipe(&waterDepthPipe);
 }
+}  // namespace engine

@@ -8,68 +8,68 @@
 #include "renderer/vulkan/resources/VulkanBuffer.h"
 #include "renderer/vulkan/resources/VulkanResourceManager.h"
 
+namespace engine {
 struct VulkanDesc r_vulkanCreateDesc(struct VulkanDescInfo info) {
     assert(info.name);
     struct VulkanDesc desc = {};
 
-    Array(VkDescriptorPoolSize) poolSizes = {};
+    std::vector<VkDescriptorPoolSize> poolSizes = {};
     // VkDescriptorPoolSize poolSize         = {VK_DESCRIPTOR_TYPE_INLINE_UNIFORM_BLOCK, 256};  //
-    // min inline uniform size, similar to min push constant being 128 arrayPut(poolSizes,
+    // min inline uniform size, similar to min push constant being 128 poolSizes.push_back(
     // poolSize);
 
     if (info.samplers) {
         VkDescriptorPoolSize poolSize = {VK_DESCRIPTOR_TYPE_SAMPLER, static_cast<uint32_t>(info.samplers)};
-        arrayPut(poolSizes, poolSize);
+        poolSizes.push_back(poolSize);
     }
 
     if (info.sampledImages) {
         VkDescriptorPoolSize poolSize = {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, static_cast<uint32_t>(info.sampledImages)};
-        arrayPut(poolSizes, poolSize);
+        poolSizes.push_back(poolSize);
     }
 
     if (info.sampledCubeImages) {
         VkDescriptorPoolSize poolSize = {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, static_cast<uint32_t>(info.sampledCubeImages)};
-        arrayPut(poolSizes, poolSize);
+        poolSizes.push_back(poolSize);
     }
 
     if (info.sampledImageLayered) {
         VkDescriptorPoolSize poolSize = {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
                                          static_cast<uint32_t>(info.sampledImageLayered)};
-        arrayPut(poolSizes, poolSize);
+        poolSizes.push_back(poolSize);
     }
 
     if (info.combinedImageSamplers) {
         VkDescriptorPoolSize poolSize = {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
                                          static_cast<uint32_t>(info.combinedImageSamplers)};
-        arrayPut(poolSizes, poolSize);
+        poolSizes.push_back(poolSize);
     }
 
     if (info.storageImages) {
         VkDescriptorPoolSize poolSize = {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, static_cast<uint32_t>(info.storageImages)};
-        arrayPut(poolSizes, poolSize);
+        poolSizes.push_back(poolSize);
     }
 
     if (info.ssbos) {
         VkDescriptorPoolSize poolSize = {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, static_cast<uint32_t>(info.ssbos)};
-        arrayPut(poolSizes, poolSize);
+        poolSizes.push_back(poolSize);
     }
 
     if (info.ubos) {
         VkDescriptorPoolSize poolSize = {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, static_cast<uint32_t>(info.ubos)};
-        arrayPut(poolSizes, poolSize);
+        poolSizes.push_back(poolSize);
     }
 
     VkDescriptorPoolCreateInfo poolCreateInfo = {};
     poolCreateInfo.sType                      = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     poolCreateInfo.flags                      = VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT;
     poolCreateInfo.maxSets                    = 1;
-    poolCreateInfo.pPoolSizes                 = poolSizes;
-    poolCreateInfo.poolSizeCount              = arraySize(poolSizes);
+    poolCreateInfo.pPoolSizes                 = poolSizes.data();
+    poolCreateInfo.poolSizeCount              = static_cast<i32>(poolSizes.size());
     vkCreateDescriptorPool(vulkan.device, &poolCreateInfo, nullptr, &desc.pool);
-    arrayFree(poolSizes);
 
-    Array(VkDescriptorSetLayoutBinding) bindings = {};
-    Array(VkDescriptorBindingFlags) bindingFlags = {};
+    std::vector<VkDescriptorSetLayoutBinding> bindings = {};
+    std::vector<VkDescriptorBindingFlags> bindingFlags = {};
     VkDescriptorBindingFlags flags =
         VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT  // empty/unbound slots in the array
         | VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT;  // allowed to call
@@ -79,128 +79,126 @@ struct VulkanDesc r_vulkanCreateDesc(struct VulkanDescInfo info) {
 
     // | VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT             // change what's in the slots on
     // the fly first binding is always inline uniform block VkDescriptorSetLayoutBinding binding =
-    // {0}; binding.binding                      = arraySize(bindings); binding.descriptorCount =
+    // {0}; binding.binding                      = static_cast<i32>(bindings.size()); binding.descriptorCount =
     // 256; binding.descriptorType               = VK_DESCRIPTOR_TYPE_INLINE_UNIFORM_BLOCK;
     // binding.stageFlags                   = VK_SHADER_STAGE_ALL_GRAPHICS |
-    // VK_SHADER_STAGE_COMPUTE_BIT; arrayPut(bindings, binding); arrayPut(bindingFlags, flags);
+    // VK_SHADER_STAGE_COMPUTE_BIT; bindings.push_back(binding); bindingFlags.push_back(flags);
 
     if (info.samplers) {
         VkDescriptorSetLayoutBinding binding = {};
-        binding.binding                      = arraySize(bindings);
+        binding.binding                      = static_cast<i32>(bindings.size());
         binding.descriptorCount              = info.samplers;
         binding.descriptorType               = VK_DESCRIPTOR_TYPE_SAMPLER;
         binding.stageFlags = VK_SHADER_STAGE_ALL_GRAPHICS | VK_SHADER_STAGE_COMPUTE_BIT;
 
-        arrayPut(bindings, binding);
-        arrayPut(bindingFlags, flags);
+        bindings.push_back(binding);
+        bindingFlags.push_back(flags);
     }
 
     if (info.sampledImages) {  // array of textures;  layout(set = 0, binding = SLOT_IMAGE) uniform
                                // texture2D textures[MAX_IMAGES];
         VkDescriptorSetLayoutBinding binding = {};
-        binding.binding                      = arraySize(bindings);
+        binding.binding                      = static_cast<i32>(bindings.size());
         binding.descriptorCount              = info.sampledImages;
         binding.descriptorType               = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
         binding.stageFlags = VK_SHADER_STAGE_ALL_GRAPHICS | VK_SHADER_STAGE_COMPUTE_BIT;
-        arrayPut(bindings, binding);
-        arrayPut(bindingFlags, flags);
+        bindings.push_back(binding);
+        bindingFlags.push_back(flags);
     }
 
     if (info.sampledCubeImages) {  // layout(set = 0, binding = SLOT_CUBE_IMAGE) uniform textureCube
                                    // cubeTextures[MAX_IMAGES];
         VkDescriptorSetLayoutBinding binding = {};
-        binding.binding                      = arraySize(bindings);
+        binding.binding                      = static_cast<i32>(bindings.size());
         binding.descriptorCount              = info.sampledCubeImages;
         binding.descriptorType               = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
         binding.stageFlags = VK_SHADER_STAGE_ALL_GRAPHICS | VK_SHADER_STAGE_COMPUTE_BIT;
-        arrayPut(bindings, binding);
-        arrayPut(bindingFlags, flags);
+        bindings.push_back(binding);
+        bindingFlags.push_back(flags);
     }
 
     if (info.sampledImageLayered) {  // texture array
-        int firstBinding = arraySize(bindings);
+        int firstBinding = static_cast<i32>(bindings.size());
         for (i32 i = 0, si = info.sampledImageLayered; i < si; i++) {
             VkDescriptorSetLayoutBinding binding = {};
             binding.binding                      = firstBinding + i;
             binding.descriptorCount              = 1;
             binding.descriptorType               = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
             binding.stageFlags = VK_SHADER_STAGE_ALL_GRAPHICS | VK_SHADER_STAGE_COMPUTE_BIT;
-            arrayPut(bindings, binding);
-            arrayPut(bindingFlags, flags);
+            bindings.push_back(binding);
+            bindingFlags.push_back(flags);
         }
     }
 
     if (info.combinedImageSamplers) {
         VkDescriptorSetLayoutBinding binding = {};
-        binding.binding                      = arraySize(bindings);
+        binding.binding                      = static_cast<i32>(bindings.size());
         binding.descriptorCount              = info.combinedImageSamplers;
         binding.descriptorType               = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         binding.stageFlags = VK_SHADER_STAGE_ALL_GRAPHICS | VK_SHADER_STAGE_COMPUTE_BIT;
-        arrayPut(bindings, binding);
-        arrayPut(bindingFlags, flags);
+        bindings.push_back(binding);
+        bindingFlags.push_back(flags);
     }
 
     if (info.storageImages) {
         VkDescriptorSetLayoutBinding binding = {};
-        binding.binding                      = arraySize(bindings);
+        binding.binding                      = static_cast<i32>(bindings.size());
         binding.descriptorCount              = info.storageImages;
         binding.descriptorType               = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
         binding.stageFlags = VK_SHADER_STAGE_ALL_GRAPHICS | VK_SHADER_STAGE_COMPUTE_BIT;
-        arrayPut(bindings, binding);
-        arrayPut(bindingFlags, flags);
+        bindings.push_back(binding);
+        bindingFlags.push_back(flags);
 
-        // int firstBinding = arraySize(bindings);
+        // int firstBinding = static_cast<i32>(bindings.size());
         // for (i32 i = 0, si = info.storageImages; i < si; i++) {
         //     VkDescriptorSetLayoutBinding binding = {};
         //     binding.binding                      = firstBinding + i;
         //     binding.descriptorCount              = 1;
         //     binding.descriptorType               = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
         //     binding.stageFlags                   = VK_SHADER_STAGE_ALL_GRAPHICS |
-        //     VK_SHADER_STAGE_COMPUTE_BIT; arrayPut(bindings, binding); arrayPut(bindingFlags,
+        //     VK_SHADER_STAGE_COMPUTE_BIT; bindings.push_back(binding); bindingFlags.push_back(
         //     flags);
         // }
     }
 
     if (info.ssbos) {
-        int firstBinding = arraySize(bindings);
+        int firstBinding = static_cast<i32>(bindings.size());
         for (i32 i = 0, si = info.ssbos; i < si; i++) {
             VkDescriptorSetLayoutBinding binding = {};
             binding.binding                      = firstBinding + i;
             binding.descriptorCount              = 1;
             binding.descriptorType               = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
             binding.stageFlags = VK_SHADER_STAGE_ALL_GRAPHICS | VK_SHADER_STAGE_COMPUTE_BIT;
-            arrayPut(bindings, binding);
-            arrayPut(bindingFlags, flags);
+            bindings.push_back(binding);
+            bindingFlags.push_back(flags);
         }
     }
 
     if (info.ubos) {
-        int firstBinding = arraySize(bindings);
+        int firstBinding = static_cast<i32>(bindings.size());
         for (i32 i = 0, si = info.ubos; i < si; i++) {
             VkDescriptorSetLayoutBinding binding = {};
             binding.binding                      = firstBinding + i;
             binding.descriptorCount              = 1;
             binding.descriptorType               = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
             binding.stageFlags = VK_SHADER_STAGE_ALL_GRAPHICS | VK_SHADER_STAGE_COMPUTE_BIT;
-            arrayPut(bindings, binding);
-            arrayPut(bindingFlags, flags);
+            bindings.push_back(binding);
+            bindingFlags.push_back(flags);
         }
     }
 
     VkDescriptorSetLayoutBindingFlagsCreateInfo layoutBindingFlags = {};
     layoutBindingFlags.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO;
-    layoutBindingFlags.bindingCount  = arraySize(bindingFlags);
-    layoutBindingFlags.pBindingFlags = bindingFlags;
+    layoutBindingFlags.bindingCount  = static_cast<i32>(bindingFlags.size());
+    layoutBindingFlags.pBindingFlags = bindingFlags.data();
 
     VkDescriptorSetLayoutCreateInfo layoutInfo = {};
     layoutInfo.flags        = VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT;
     layoutInfo.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
     layoutInfo.pNext        = &layoutBindingFlags;
-    layoutInfo.pBindings    = bindings;
-    layoutInfo.bindingCount = arraySize(bindings);
+    layoutInfo.pBindings    = bindings.data();
+    layoutInfo.bindingCount = static_cast<i32>(bindings.size());
     vkCreateDescriptorSetLayout(vulkan.device, &layoutInfo, nullptr, &desc.layout);
-    arrayFree(bindings);
-    arrayFree(bindingFlags);
 
     VkDescriptorSetAllocateInfo descAllocInfo = {};
     descAllocInfo.sType                       = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
@@ -209,16 +207,16 @@ struct VulkanDesc r_vulkanCreateDesc(struct VulkanDescInfo info) {
     descAllocInfo.descriptorSetCount          = 1;
     vkAllocateDescriptorSets(vulkan.device, &descAllocInfo, &desc.set);
 
-    if (isDebug()) {
+    if (utils::isDebug()) {
         vulkanUtilsSetName((uint64_t)desc.pool,
                            VK_OBJECT_TYPE_DESCRIPTOR_POOL,
-                           strtmp("%s%s", "descPool ", info.name));
+                           utils::strtmp("%s%s", "descPool ", info.name));
         vulkanUtilsSetName((uint64_t)desc.set,
                            VK_OBJECT_TYPE_DESCRIPTOR_SET,
-                           strtmp("%s%s", "descSet ", info.name));
+                           utils::strtmp("%s%s", "descSet ", info.name));
         vulkanUtilsSetName((uint64_t)desc.layout,
                            VK_OBJECT_TYPE_DESCRIPTOR_SET_LAYOUT,
-                           strtmp("%s%s", "descLayout ", info.name));
+                           utils::strtmp("%s%s", "descLayout ", info.name));
     }
 
     return desc;
@@ -235,7 +233,7 @@ void vulkanUpdateDesc(struct VulkanDesc* desc,
                       void* resource,
                       int dstBinding,
                       int dstArrayElement) {
-    threadLock(&desc->lock);
+    utils::threadLock(&desc->lock);
     VkDescriptorImageInfo descriptorImageInfo                 = {};
     VkDescriptorBufferInfo descriptorBufferInfo               = {};
     VkWriteDescriptorSetInlineUniformBlock inlineUniformWrite = {};
@@ -284,7 +282,7 @@ void vulkanUpdateDesc(struct VulkanDesc* desc,
     writeDescriptor.dstBinding      = dstBinding;
     writeDescriptor.dstArrayElement = dstArrayElement;
     vkUpdateDescriptorSets(vulkan.device, 1, &writeDescriptor, 0, 0);
-    threadUnlock(&desc->lock);
+    utils::threadUnlock(&desc->lock);
 }
 
 void vulkanUpdateDescInline(struct VulkanDesc* desc, void* data, int size) {
@@ -321,3 +319,4 @@ void vulkanBindDesc(struct VulkanCommand* cmd,
         0,
         nullptr);
 }
+}  // namespace engine

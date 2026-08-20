@@ -1,5 +1,13 @@
+#include "ecs/system/System.h"  // IWYU pragma: keep
 #pragma once
 
-struct System;
+namespace game {
+class CreditsGui : public engine::System {
+public:
+    CreditsGui();
+    void added() override;
+    void removed() override;
+};
 
-extern System creditsGui;
+extern CreditsGui creditsGui;
+}  // namespace game

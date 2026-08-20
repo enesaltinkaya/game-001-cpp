@@ -4,11 +4,14 @@
 #include "Utils.h"
 #include "thread/Thread.h"
 
-static Thread queueLock = {.mutex = PTHREAD_MUTEX_INITIALIZER};
+namespace engine {
+static utils::Thread queueLock = {.mutex = PTHREAD_MUTEX_INITIALIZER};
 
 static const VkCommandBufferBeginInfo beginInfo = {
-    .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
-    .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+    .sType              = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+    .pNext              = nullptr,
+    .flags              = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+    .pInheritanceInfo   = nullptr,
 };
 
 void vulkanBegin(VulkanCommand *cmd) {
@@ -26,8 +29,8 @@ void vulkanFenceWait(VulkanCommand *cmd) {
 }
 
 void vulkanWaitManual(VulkanCommand *cmd) {
-  double start = millies();
-  while (millies() < start + 5000) {
+  double start = utils::millies();
+  while (utils::millies() < start + 5000) {
     VkResult status = vkGetFenceStatus(vulkan.device, cmd->fence);
     if (status == VK_SUCCESS) {
       break;
@@ -60,11 +63,11 @@ void r_vulkanSubmit(VulkanSubmitInfo info) {
     submitInfo.pSignalSemaphores = &info.signal;
   }
 
-  threadLock(&queueLock);
+  utils::threadLock(&queueLock);
   VkResult submitResult =
       vkQueueSubmit(vulkan.graphicsQueue, 1, &submitInfo, info.cmd->fence);
   info.cmd->submitted = true;
-  threadUnlock(&queueLock);
+  utils::threadUnlock(&queueLock);
 
   if (vulkanCheckQueueError(submitResult, "vkQueueSubmit")) {
     vulkan.skipFrame = 1;
@@ -75,6 +78,7 @@ void vulkanLabelBeginColor(VulkanCommand *cmd, const char *name, float r,
                            float g, float b, float a) {
   VkDebugUtilsLabelEXT param = {
       .sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_LABEL_EXT,
+      .pNext = nullptr,
       .pLabelName = name,
       .color = {r, g, b, a},
   };
@@ -98,19 +102,20 @@ void vulkanPresent(VkSwapchainKHR *swapchain, u32 *swapchainImageIndex,
   presentInfo.waitSemaphoreCount = 1;
   presentInfo.pImageIndices = swapchainImageIndex;
   presentInfo.pWaitSemaphores = semaphore;
-  threadLock(&queueLock);
+  utils::threadLock(&queueLock);
   VkResult result = vkQueuePresentKHR(vulkan.graphicsQueue, &presentInfo);
 
   if (vulkanCheckQueueError(result, "vkQueuePresentKHR")) {
     vulkan.skipFrame = 1;
   }
 
-  threadUnlock(&queueLock);
+  utils::threadUnlock(&queueLock);
 }
 
 void vulkanWaitIdle(const char *reason){
-  threadLock(&queueLock);
-  warn("vulkanCore: waitIdle! reason: %s", reason);
+  utils::threadLock(&queueLock);
+  utils::warn("vulkanCore: waitIdle! reason: %s", reason);
   vkDeviceWaitIdle(vulkan.device);
-  threadUnlock(&queueLock);
+  utils::threadUnlock(&queueLock);
 }
+}  // namespace engine

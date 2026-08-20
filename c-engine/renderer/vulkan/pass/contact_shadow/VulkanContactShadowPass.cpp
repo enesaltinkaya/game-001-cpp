@@ -1,4 +1,5 @@
 #include "VulkanContactShadowPass.h"
+#include "VulkanContactShadowPass.h"
 #include "BendDispatchList.h"
 #include "ecs/Ecs.h"
 #include "ecs/system/System.h"
@@ -15,23 +16,11 @@
 #include "renderer/vulkan/resources/VulkanIbl.h"
 #include "renderer/vulkan/resources/VulkanResourceManager.h"
 
-static void added(void);
-static void preUpdate(void);
-static void update(void);
-static void removed(void);
+namespace engine {
 
-System vulkanContactShadowPass = {
-    .name                = "contact_shadow",
-    .added               = added,
-    .removed             = removed,
-    .preUpdate           = preUpdate,
-    .update              = update,
-    .postUpdate          = nullptr,
-    .cpuElapsedLastFrame = 0.0,
-    .cpuElapsed          = 0.0,
-    .gpuElapsed          = 0.0,
-    .priority            = 0,
-};
+VulkanContactShadowPass vulkanContactShadowPass;
+
+VulkanContactShadowPass::VulkanContactShadowPass() : System("contact_shadow") {}
 
 /* ── Push constants (must match contact_shadow.comp) ───────────── */
 
@@ -114,7 +103,7 @@ static void destroyHistory(void) {
     for (int i = 0; i < 2; ++i) {
         if (historyImages[i].img) {
             vulkanDestroyImage(&historyImages[i], NULL);
-            historyImages[i] = VulkanImage{0};
+            historyImages[i] = VulkanImage{};
         }
     }
 
@@ -149,11 +138,11 @@ static void ensureHistory(u32 w, u32 h) {
 static void swapchainCreated(void*) {
     if (filteredImage.img) {
         vulkanDestroyImage(&filteredImage, NULL);
-        filteredImage = VulkanImage{0};
+        filteredImage = VulkanImage{};
     }
     if (rawImage.img) {
         vulkanDestroyImage(&rawImage, NULL);
-        rawImage = VulkanImage{0};
+        rawImage = VulkanImage{};
     }
     destroyHistory();
 }
@@ -182,6 +171,7 @@ static void ensureImages(void) {
 
 static const VkMemoryBarrier2 computeBarrier = {
     .sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
+    .pNext         = nullptr,
     .srcStageMask  = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
     .srcAccessMask = VK_ACCESS_2_SHADER_WRITE_BIT,
     .dstStageMask  = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
@@ -189,15 +179,21 @@ static const VkMemoryBarrier2 computeBarrier = {
 };
 
 static const VkDependencyInfo computeDepInfo = {
-    .sType              = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-    .memoryBarrierCount = 1,
-    .pMemoryBarriers    = &computeBarrier,
+    .sType                    = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+    .pNext                    = nullptr,
+    .dependencyFlags          = 0,
+    .memoryBarrierCount       = 1,
+    .pMemoryBarriers          = &computeBarrier,
+    .bufferMemoryBarrierCount = 0,
+    .pBufferMemoryBarriers    = nullptr,
+    .imageMemoryBarrierCount  = 0,
+    .pImageMemoryBarriers     = nullptr,
 };
 
 /* ── Pass callbacks ──────────────────────────────────────────────── */
 
-static void added(void) {
-    signalSubscribe("swapchainCreated", swapchainCreated);
+void VulkanContactShadowPass::added() {
+    utils::signalSubscribe("swapchainCreated", swapchainCreated);
 
     contactShadowPipe =
         vulkanCreatePipe(.name = "contact_shadow",
@@ -216,11 +212,11 @@ static void added(void) {
     }
 }
 
-static void preUpdate(void) {
+void VulkanContactShadowPass::preUpdate() {
     vulkanResetProfile(vulkan.currentCmd, &contactShadowPipe.profile, 0);
 }
 
-static void update(void) {
+void VulkanContactShadowPass::update() {
     if (vulkan.skipFrame) {
         return;
     }
@@ -260,7 +256,6 @@ static void update(void) {
     const u32 groupsX = (w + 7u) / 8u;
     const u32 groupsY = (h + 7u) / 8u;
 
-    char temporalAAActive    = rendererGetUpscalerMode() != RENDERER_UPSCALER_OFF;
     VulkanImage* velocityImg = vulkanFrameResourcesGetVelocity();
 
     /* Temporal accumulation is essential to smooth out sub-pixel jitter
@@ -458,14 +453,14 @@ static void update(void) {
     vulkanContactShadowPass.gpuElapsed = contactShadowPipe.profile.elapsed;
 }
 
-static void removed(void) {
+void VulkanContactShadowPass::removed() {
     if (filteredImage.img) {
         vulkanDestroyImage(&filteredImage, NULL);
-        filteredImage = VulkanImage{0};
+        filteredImage = VulkanImage{};
     }
     if (rawImage.img) {
         vulkanDestroyImage(&rawImage, NULL);
-        rawImage = VulkanImage{0};
+        rawImage = VulkanImage{};
     }
     destroyHistory();
 
@@ -481,7 +476,7 @@ void vulkanContactShadowPassSetDisabled(char disabled) {
     if (disabled) {
         historyValid = 0;
     }
-    info("Contact shadows: %s", disabled ? "disabled" : "enabled");
+    utils::info("Contact shadows: %s", disabled ? "disabled" : "enabled");
 }
 
 char vulkanContactShadowPassIsDisabled(void) {
@@ -490,7 +485,7 @@ char vulkanContactShadowPassIsDisabled(void) {
 
 void vulkanContactShadowPassSetLength(float length) {
     csRayLength = length;
-    info("Contact shadow ray length: %.2f", (double)length);
+    utils::info("Contact shadow ray length: %.2f", (double)length);
 }
 
 float vulkanContactShadowPassGetLength(void) {
@@ -499,9 +494,10 @@ float vulkanContactShadowPassGetLength(void) {
 
 void vulkanContactShadowPassSetThickness(float thickness) {
     csThickness = thickness;
-    info("Contact shadow thickness: %.4f", (double)thickness);
+    utils::info("Contact shadow thickness: %.4f", (double)thickness);
 }
 
 float vulkanContactShadowPassGetThickness(void) {
     return csThickness;
 }
+}  // namespace engine

@@ -13,7 +13,7 @@
     do {                                                                     \
         VkResult _r = (result);                                              \
         if (_r != VK_SUCCESS) {                                              \
-            error("VK_CHECK failed: %s → %d", desc, _r);                     \
+            utils::error("VK_CHECK failed: %s → %d", desc, _r);                     \
         }                                                                    \
     } while (0)
 #else
@@ -21,7 +21,7 @@
     do {                                                                     \
         VkResult _r = (result);                                              \
         if (_r != VK_SUCCESS) {                                              \
-            terminate("VK_CHECK failed: %s → %d", desc, _r);                     \
+            utils::terminate("VK_CHECK failed: %s → %d", desc, _r);                     \
         }                                                                    \
     } while (0)
 #endif
@@ -37,7 +37,7 @@
         VkResult _r = (result);                                              \
         if (_r != VK_SUCCESS && _r != VK_SUBOPTIMAL_KHR &&                   \
             _r != VK_TIMEOUT && _r != VK_NOT_READY) {                        \
-            warn("VK_CHECK_WARN: %s → %d", desc, _r);                        \
+            utils::warn("VK_CHECK_WARN: %s → %d", desc, _r);                        \
         }                                                                    \
     } while (0)
 
@@ -47,6 +47,7 @@
  * Returns 1 if the device is now lost (driver crashed), 0 otherwise.
  * On device loss, calls the deviceLost handler if registered.
  */
+namespace engine {
 typedef void (*VulkanDeviceLostHandler)(void);
 void vulkanSetDeviceLostHandler(VulkanDeviceLostHandler handler);
 
@@ -58,3 +59,4 @@ void vulkanSetDeviceLostHandler(VulkanDeviceLostHandler handler);
  * and trigger recovery).
  */
 int vulkanCheckQueueError(VkResult result, const char* op);
+}  // namespace engine

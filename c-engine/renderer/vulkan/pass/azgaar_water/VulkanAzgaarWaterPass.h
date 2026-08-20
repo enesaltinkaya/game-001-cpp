@@ -3,7 +3,17 @@
 #include "ecs/system/System.h"
 #include "renderer/vulkan/resources/VulkanBuffer.h"
 
-extern struct System vulkanAzgaarWaterPass;
+namespace engine {
+class VulkanAzgaarWaterPass : public System {
+public:
+    VulkanAzgaarWaterPass();
+    void added() override;
+    void removed() override;
+    void preUpdate() override;
+    void update() override;
+};
+
+extern VulkanAzgaarWaterPass vulkanAzgaarWaterPass;
 
 // Upload (or clear) the water grid mesh.  Called from the CPU water side
 // (AzgaarWater.c) on the game thread; uploaded to the GPU on the render
@@ -33,3 +43,4 @@ bool vulkanAzgaarWaterGetGpuMesh(VulkanBuffer** outVertexBuffer,
 // so both the water color pass and the depth/velocity pre-pass draw can
 // be skipped entirely.
 bool vulkanAzgaarWaterIsVisible(void);
+}  // namespace engine

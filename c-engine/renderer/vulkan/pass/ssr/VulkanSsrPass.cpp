@@ -1,4 +1,5 @@
 #include "VulkanSsrPass.h"
+#include "VulkanSsrPass.h"
 #include "ecs/system/System.h"
 #include "renderer/vulkan/Vulkan.h"
 #include "renderer/vulkan/command/VulkanCommand.h"
@@ -6,11 +7,7 @@
 #include "renderer/vulkan/pipeline/VulkanPipe.h"
 #include "renderer/vulkan/resources/VulkanFrameResources.h"
 
-static void added(void);
-static void preUpdate(void);
-static void update(void);
-static void postUpdate(void);
-static void removed(void);
+namespace engine {
 
 static VulkanPipe pipeline;
 static double     elapsedCPU;
@@ -40,18 +37,9 @@ static void clearReflectionColor(VulkanCommand *cmd, VulkanImage *reflColor) {
     vulkanTransition(cmd, reflColor, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
 }
 
-System vulkanSsrPass = {
-    .name                = "ssr",
-    .added               = added,
-    .removed             = removed,
-    .preUpdate           = preUpdate,
-    .update              = update,
-    .postUpdate          = postUpdate,
-    .cpuElapsedLastFrame = 0.0,
-    .cpuElapsed          = 0.0,
-    .gpuElapsed          = 0.0,
-    .priority            = 0,
-};
+VulkanSsrPass vulkanSsrPass;
+
+VulkanSsrPass::VulkanSsrPass() : System("ssr") {}
 
 typedef struct SsrPushConstants {
     u32 sceneColorIndex;
@@ -65,7 +53,7 @@ typedef struct SsrPushConstants {
     u32 hizMipCount;
 } SsrPushConstants;
 
-static void added(void) {
+void VulkanSsrPass::added() {
     const char *env = getenv("ENGINE_SSR_DISABLED");
     if (env && *env && atoi(env)) ssrDisabled = 1;
 
@@ -74,15 +62,15 @@ static void added(void) {
         .comp = "shaders/pass/ssr/spv/ssr.comp.spv");
 }
 
-static void preUpdate(void) {
+void VulkanSsrPass::preUpdate() {
     vulkanResetProfile(vulkan.currentCmd, &pipeline.profile, 0);
 }
 
-static void update(void) {
-    elapsedCPU = nanos();
+void VulkanSsrPass::update() {
+    elapsedCPU = utils::nanos();
 
     if (vulkan.skipFrame) {
-        elapsedCPU = nanos() - elapsedCPU;
+        elapsedCPU = utils::nanos() - elapsedCPU;
         return;
     }
 
@@ -94,13 +82,13 @@ static void update(void) {
     VulkanImage   *reflColor  = vulkanFrameResourcesGetReflectionColor();
 
     if (!reflColor) {
-        elapsedCPU = nanos() - elapsedCPU;
+        elapsedCPU = utils::nanos() - elapsedCPU;
         return;
     }
 
     if (ssrDisabled || !sceneColor || !depth || !normals || !material) {
         clearReflectionColor(cmd, reflColor);
-        elapsedCPU = nanos() - elapsedCPU;
+        elapsedCPU = utils::nanos() - elapsedCPU;
         return;
     }
 
@@ -141,23 +129,24 @@ static void update(void) {
     vulkanTransition(cmd, reflColor, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
 
     elapsedGPU = pipeline.profile.elapsed;
-    elapsedCPU = nanos() - elapsedCPU;
+    elapsedCPU = utils::nanos() - elapsedCPU;
 }
 
-static void postUpdate(void) {
+void VulkanSsrPass::postUpdate() {
     vulkanSsrPass.cpuElapsed = elapsedCPU;
     vulkanSsrPass.gpuElapsed = elapsedGPU;
 }
 
-static void removed(void) {
+void VulkanSsrPass::removed() {
     vulkanDestroyPipe(&pipeline);
 }
 
 void vulkanSsrPassSetDisabled(char disabled) {
     ssrDisabled = disabled;
-    info("SSR: %s", ssrDisabled ? "disabled" : "enabled");
+    utils::info("SSR: %s", ssrDisabled ? "disabled" : "enabled");
 }
 
 char vulkanSsrPassIsDisabled(void) {
     return ssrDisabled;
 }
+}  // namespace engine

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "renderer/vulkan/resources/VulkanImage.h"
+namespace engine {
 struct VulkanImage;
 
 struct VulkanSwapchain {
@@ -24,3 +25,4 @@ void vulkanSwapchainEnd(void);
 // synchronously consume readbacks recorded into that frame's command buffer.
 void vulkanSwapchainWaitCurrentFlight(void);
 void vulkanSwapchainRecreate(void);
+}  // namespace engine

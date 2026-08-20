@@ -1,6 +1,7 @@
 #include "renderer/vulkan/command/VulkanCommand.h"
 #include "renderer/vulkan/pipeline/VulkanPipe.h"
 
+namespace engine {
 static VulkanPipe pipelineBlur, pipelineBlurBilateral;
 static void initPipe(void);
 
@@ -108,3 +109,4 @@ void vulkanBlurCleanup(void) {
     vulkanDestroyPipe(&pipelineBlur);
     vulkanDestroyPipe(&pipelineBlurBilateral);
 }
+}  // namespace engine

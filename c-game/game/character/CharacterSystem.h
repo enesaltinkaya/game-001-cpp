@@ -1,12 +1,21 @@
 #pragma once
 
 #include "ecs/system/System.h"
+#include "ecs/system/scene/Scene.h"  // IWYU pragma: keep
 
-struct Entity;
+namespace game {
+class CharacterSystem : public engine::System {
+public:
+    CharacterSystem();
+    void added() override;
+    void removed() override;
+    void update() override;
+};
 
-extern struct System characterSystem;
+extern CharacterSystem characterSystem;
 
-void applyDamage(Entity* target, float amount, u32 damageType);
-void applyHeal(Entity* target, float amount);
-void gainXP(Entity* target, float amount);
-void triggerDeath(Entity* target);
+void applyDamage(engine::Entity* target, float amount, u32 damageType);
+void applyHeal(engine::Entity* target, float amount);
+void gainXP(engine::Entity* target, float amount);
+void triggerDeath(engine::Entity* target);
+}  // namespace game

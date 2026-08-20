@@ -20,6 +20,7 @@
 #include "ecs/system/window/X11Backend.h"
 
 // Vulkan Xlib surface — declared manually to avoid needing VK_USE_PLATFORM_XLIB_KHR globally
+namespace engine {
 typedef VkFlags VkXlibSurfaceCreateFlagsKHR;
 struct VkXlibSurfaceCreateInfoKHR {
     VkStructureType              sType;
@@ -446,10 +447,13 @@ bool x11BackendCreateVulkanSurface(X11Backend* b, void* vkInstance, void* vkSurf
 
     VkXlibSurfaceCreateInfoKHR createInfo = {
         .sType  = MY_VK_STRUCTURE_TYPE_XLIB_SURFACE_CREATE_INFO_KHR,
+        .pNext  = nullptr,
+        .flags  = 0,
         .dpy    = b->dpy,
         .window = b->win,
     };
     return fn(static_cast<VkInstance>(vkInstance), &createInfo, nullptr, static_cast<VkSurfaceKHR*>(vkSurface)) == VK_SUCCESS;
 }
 
+}  // namespace engine
 #endif // __linux__

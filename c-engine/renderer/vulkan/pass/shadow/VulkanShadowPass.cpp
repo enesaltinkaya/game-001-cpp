@@ -1,3 +1,4 @@
+#include "VulkanShadowPass.h"
 #include "ecs/system/camera/CameraComponent.h"
 #include "ecs/system/camera/CameraSystem.h"
 #include "ecs/system/light/LightComponent.h"
@@ -24,23 +25,11 @@
 
 /* ── Forward declarations ─────────────────────────────────────────────── */
 
-static void added(void);
-static void preUpdate(void);
-static void update(void);
-static void removed(void);
+namespace engine {
 
-System vulkanShadowPass = {
-    .name                = "shadow",
-    .added               = added,
-    .removed             = removed,
-    .preUpdate           = preUpdate,
-    .update              = update,
-    .postUpdate          = nullptr,
-    .cpuElapsedLastFrame = 0.0,
-    .cpuElapsed          = 0.0,
-    .gpuElapsed          = 0.0,
-    .priority            = 0,
-};
+VulkanShadowPass vulkanShadowPass;
+
+VulkanShadowPass::VulkanShadowPass() : System("shadow") {}
 
 /* ── Pipeline + push constants ────────────────────────────────────────── */
 
@@ -304,13 +293,13 @@ static void destroyShadowMap(void) {
             /* Don't vkDestroyImage — the underlying VkImage belongs to
              * shadowMapImage.  Only destroy the per-layer view. */
             vkDestroyImageView(vulkan.device, shadowMapLayerImages[i].view, NULL);
-            shadowMapLayerImages[i] = VulkanImage{0};
+            shadowMapLayerImages[i] = VulkanImage{};
         }
     }
 
     if (shadowMapImage.img) {
         vulkanDestroyImage(&shadowMapImage, NULL);
-        shadowMapImage = VulkanImage{0};
+        shadowMapImage = VulkanImage{};
     }
 
     shadowMapReady = 0;
@@ -335,7 +324,7 @@ static void ensureShadowMap(void) {
         /* Build a "fake" VulkanImage that shares the same VkImage but
          * has its own VkImageView (single layer). */
         VulkanImage* layer = &shadowMapLayerImages[i];
-        *layer             = VulkanImage{0};
+        *layer             = VulkanImage{};
         layer->img         = shadowMapImage.img;
         layer->format      = VK_FORMAT_D32_SFLOAT;
         layer->aspect      = VK_IMAGE_ASPECT_DEPTH_BIT;
@@ -348,6 +337,8 @@ static void ensureShadowMap(void) {
 
         VkImageViewCreateInfo viewInfo = {
             .sType      = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+            .flags      = 0,
+            .pNext      = nullptr,
             .image      = shadowMapImage.img,
             .viewType   = VK_IMAGE_VIEW_TYPE_2D,
             .format     = VK_FORMAT_D32_SFLOAT,
@@ -364,7 +355,7 @@ static void ensureShadowMap(void) {
                     .layerCount     = 1,
                 },
         };
-        vkCreateImageView(vulkan.device, &viewInfo, NULL, &layer->view);
+        vkCreateImageView(vulkan.device, &viewInfo, nullptr, &layer->view);
         vulkanAddImageToPool(layer);
     }
 
@@ -420,15 +411,15 @@ static void swapchainCreated(void*) {
     recreatePipelines();
 }
 
-static void added(void) {
-    signalSubscribe("swapchainCreated", swapchainCreated);
+void VulkanShadowPass::added() {
+    utils::signalSubscribe("swapchainCreated", swapchainCreated);
     recreatePipelines();
 
     const char* env = getenv("ENGINE_SHADOW_DISABLED");
     if (env && *env && atoi(env)) shadowDisabled = 1;
 }
 
-static void preUpdate(void) {
+void VulkanShadowPass::preUpdate() {
     vulkanResetProfile(vulkan.currentCmd, &shadowPipe.profile, 0);
 }
 
@@ -445,9 +436,9 @@ static void renderCascade(VulkanCommand* cmd, int cascade, u32 fi) {
     vulkanScissor(cmd, 0, 0, SHADOW_MAP_SIZE, SHADOW_MAP_SIZE);
 
     u32 visibleSceneCount = 0;
-    Scene** visibleScenes = vulkanGetVisibleScenes(&visibleSceneCount);
+    const Scene** visibleScenes = vulkanGetVisibleScenes(&visibleSceneCount);
     for (u32 si = 0; si < visibleSceneCount; si++) {
-        Scene* scene = visibleScenes[si];
+        const Scene* scene = visibleScenes[si];
         if (!scene->backendScene) continue;
         VulkanScene* vs  = static_cast<VulkanScene*>(scene->backendScene);
         if (!vs->totalDraws) continue;
@@ -518,7 +509,7 @@ static void uploadEmptyShadow(void) {
     vulkanShadowPass.gpuElapsed = 0;
 }
 
-static void update(void) {
+void VulkanShadowPass::update() {
     if (vulkan.skipFrame) return;
 
     if (shadowDisabled) {
@@ -610,7 +601,7 @@ static void update(void) {
     vulkanShadowPass.gpuElapsed = shadowPipe.profile.elapsed;
 }
 
-static void removed(void) {
+void VulkanShadowPass::removed() {
     destroyShadowMap();
     if (shadowPipe.pipe) {
         vulkanDestroyPipe(&shadowPipe);
@@ -639,3 +630,4 @@ char vulkanShadowPassIsPCSS(void) {
 void vulkanShadowPassSetFocusDistance(float distance) {
     focusDistance = distance;
 }
+}  // namespace engine

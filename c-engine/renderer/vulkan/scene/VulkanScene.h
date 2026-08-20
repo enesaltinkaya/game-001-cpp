@@ -4,6 +4,7 @@
 #include "ecs/system/transform/TransformComponent.h"
 #include "renderer/Renderer.h"
 
+namespace engine {
 struct TransformUpload {
     Transform transform;
     u32 entity;
@@ -56,7 +57,7 @@ struct VulkanScene {
     // Transform buffers (per-frame, CPU-mapped)
     VulkanBuffer transformBuffer[FRAMES_IN_FLIGHT];
     VulkanBuffer prevTransformBuffer[FRAMES_IN_FLIGHT];
-    Array(TransformUpload) transformUploads[FRAMES_IN_FLIGHT];
+    std::vector<TransformUpload> transformUploads[FRAMES_IN_FLIGHT];
 
     // GPU culling output: opaque single-sided
     VulkanBuffer indirectBuffer[FRAMES_IN_FLIGHT];
@@ -109,3 +110,4 @@ void vulkanSceneUploadTransform(struct Scene* scene,
 void vulkanSceneFlushTransforms(struct VulkanScene* vs);
 void vulkanSceneInitSkinning(struct Scene* scene);
 void vulkanSceneFlushJoints(struct Scene* scene);
+}  // namespace engine

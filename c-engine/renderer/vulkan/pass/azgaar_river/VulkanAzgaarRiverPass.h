@@ -3,7 +3,17 @@
 #include "ecs/system/System.h"
 #include "renderer/vulkan/resources/VulkanBuffer.h"
 
-extern struct System vulkanAzgaarRiverPass;
+namespace engine {
+class VulkanAzgaarRiverPass : public System {
+public:
+    VulkanAzgaarRiverPass();
+    void added() override;
+    void removed() override;
+    void preUpdate() override;
+    void update() override;
+};
+
+extern VulkanAzgaarRiverPass vulkanAzgaarRiverPass;
 
 // Upload (or clear) the river ribbon mesh.  Called from the CPU river side
 // (AzgaarRivers.c) on the game thread; uploaded to the GPU on the render
@@ -21,3 +31,4 @@ bool vulkanAzgaarRiverGetGpuMesh(VulkanBuffer** outVertexBuffer,
                                   VulkanBuffer** outIndexBuffer,
                                   u32* outVertexCount,
                                   u32* outIndexCount);
+}  // namespace engine

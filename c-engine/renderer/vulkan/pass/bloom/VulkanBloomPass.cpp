@@ -1,4 +1,5 @@
 #include "VulkanBloomPass.h"
+#include "VulkanBloomPass.h"
 #include "events/Events.h"
 #include "renderer/vulkan/Vulkan.h"
 #include "renderer/vulkan/command/VulkanCommand.h"
@@ -9,28 +10,15 @@
 #include "renderer/vulkan/resources/VulkanImage.h"
 #include "renderer/vulkan/resources/VulkanResourceManager.h"
 
-static void added(void);
-static void preUpdate(void);
-static void update(void);
-static void postUpdate(void);
-static void removed(void);
+namespace engine {
 
 static double elapsedCPU;
 static double elapsedGPU;
 static char   bloomDisabled;
 
-System vulkanBloomPass = {
-    .name                = "bloom",
-    .added               = added,
-    .removed             = removed,
-    .preUpdate           = preUpdate,
-    .update              = update,
-    .postUpdate          = postUpdate,
-    .cpuElapsedLastFrame = 0.0,
-    .cpuElapsed          = 0.0,
-    .gpuElapsed          = 0.0,
-    .priority            = 0,
-};
+VulkanBloomPass vulkanBloomPass;
+
+VulkanBloomPass::VulkanBloomPass() : System("bloom") {}
 
 #define BLOOM_MIP_COUNT 6
 
@@ -85,6 +73,8 @@ static void createMipViews(void) {
     for (int i = 0; i < BLOOM_MIP_COUNT; i++) {
         VkImageViewCreateInfo viewInfo = {
             .sType    = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+            .flags    = 0,
+            .pNext    = nullptr,
             .image    = bloomImage.img,
             .viewType = VK_IMAGE_VIEW_TYPE_2D,
             .format   = (VkFormat)bloomImage.format,
@@ -100,7 +90,7 @@ static void createMipViews(void) {
                 .layerCount     = 1,
             },
         };
-        vkCreateImageView(vulkan.device, &viewInfo, NULL, &mipViews[i]);
+        vkCreateImageView(vulkan.device, &viewInfo, nullptr, &mipViews[i]);
 
         /* Register a sampled-only fake image for this mip view */
         mipSampledImages[i] = VulkanImage{
@@ -141,8 +131,8 @@ static void destroyMipViews(void) {
             vulkanRemoveImageFromPool(&mipStorageImages[i]);
             vkDestroyImageView(vulkan.device, mipViews[i], NULL);
             mipViews[i]          = VK_NULL_HANDLE;
-            mipSampledImages[i]  = VulkanImage{0};
-            mipStorageImages[i]  = VulkanImage{0};
+            mipSampledImages[i]  = VulkanImage{};
+            mipStorageImages[i]  = VulkanImage{};
         }
     }
 }
@@ -151,7 +141,7 @@ static void destroyBloom(void) {
     destroyMipViews();
     if (bloomImage.img) {
         vulkanDestroyImage(&bloomImage, NULL);
-        bloomImage = VulkanImage{0};
+        bloomImage = VulkanImage{};
     }
     cachedWidth  = 0;
     cachedHeight = 0;
@@ -184,10 +174,7 @@ static void transitionMip(VulkanCommand* cmd, int mip,
                            VkPipelineStageFlags dstStage) {
     VkImageMemoryBarrier barrier = {
         .sType         = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-        .srcAccessMask = srcAccess,
-        .dstAccessMask = dstAccess,
-        .oldLayout     = oldLayout,
-        .newLayout     = newLayout,
+        .pNext         = nullptr,
         .image         = bloomImage.img,
         .subresourceRange = {
             .aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT,
@@ -196,6 +183,12 @@ static void transitionMip(VulkanCommand* cmd, int mip,
             .baseArrayLayer = 0,
             .layerCount     = 1,
         },
+        .oldLayout             = oldLayout,
+        .newLayout             = newLayout,
+        .srcQueueFamilyIndex   = VK_QUEUE_FAMILY_IGNORED,
+        .dstQueueFamilyIndex   = VK_QUEUE_FAMILY_IGNORED,
+        .srcAccessMask         = srcAccess,
+        .dstAccessMask         = dstAccess,
     };
     vkCmdPipelineBarrier(cmd->cmd, srcStage, dstStage,
                          0, 0, NULL, 0, NULL, 1, &barrier);
@@ -209,8 +202,8 @@ static void swapchainCreated(void*) {
     destroyBloom();
 }
 
-static void added(void) {
-    signalSubscribe("swapchainCreated", swapchainCreated);
+void VulkanBloomPass::added() {
+    utils::signalSubscribe("swapchainCreated", swapchainCreated);
 
     downsamplePipe = vulkanCreatePipe(
         .name = "bloom_downsample",
@@ -220,7 +213,7 @@ static void added(void) {
         .comp = "shaders/pass/bloom/spv/bloom_upsample.comp.spv");
 }
 
-static void preUpdate(void) {
+void VulkanBloomPass::preUpdate() {
     if (vulkan.skipFrame) return;
 
     VulkanImage* resolved = vulkanTaaPassGetOutput();
@@ -245,7 +238,7 @@ static void preUpdate(void) {
     vulkanResetProfile(vulkan.currentCmd, &upsamplePipe.profile, 0);
 }
 
-static void update(void) {
+void VulkanBloomPass::update() {
     if (vulkan.skipFrame) return;
     if (bloomDisabled) {
         vulkanBloomPass.gpuElapsed = 0;
@@ -275,7 +268,7 @@ static void update(void) {
 
     vulkanBeginProfile(cmd, &downsamplePipe.profile, 0);
 
-    if (isDebug()) {
+    if (utils::isDebug()) {
         vulkanLabelBeginColor(cmd, "bloom downsample", 1.0f, 0.8f, 0.2f, 1.0f);
     }
 
@@ -370,7 +363,7 @@ static void update(void) {
                   VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                   VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT);
 
-    if (isDebug()) {
+    if (utils::isDebug()) {
         vulkanLabelEnd(cmd);
     }
 
@@ -379,7 +372,7 @@ static void update(void) {
     /* ── Upsample chain (mips 4→0) ─────────────────────────────────── */
     vulkanBeginProfile(cmd, &upsamplePipe.profile, 0);
 
-    if (isDebug()) {
+    if (utils::isDebug()) {
         vulkanLabelBeginColor(cmd, "bloom upsample", 0.2f, 1.0f, 0.8f, 1.0f);
     }
 
@@ -422,7 +415,7 @@ static void update(void) {
                       VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT);
     }
 
-    if (isDebug()) {
+    if (utils::isDebug()) {
         vulkanLabelEnd(cmd);
     }
 
@@ -434,14 +427,14 @@ static void update(void) {
     elapsedGPU = downsamplePipe.profile.elapsed + upsamplePipe.profile.elapsed;
 }
 
-static void postUpdate(void) {
+void VulkanBloomPass::postUpdate() {
     vulkanBloomPass.cpuElapsed = elapsedCPU;
     vulkanBloomPass.gpuElapsed = elapsedGPU;
-    elapsedCPU                 = nanos();
-    elapsedCPU                 = nanos() - elapsedCPU;
+    elapsedCPU                 = utils::nanos();
+    elapsedCPU                 = utils::nanos() - elapsedCPU;
 }
 
-static void removed(void) {
+void VulkanBloomPass::removed() {
     destroyBloom();
     vulkanDestroyPipe(&downsamplePipe);
     vulkanDestroyPipe(&upsamplePipe);
@@ -463,9 +456,10 @@ float vulkanBloomPassGetStrength(void) {
 
 void vulkanBloomPassSetDisabled(char disabled) {
     bloomDisabled = disabled;
-    info("Bloom: %s", bloomDisabled ? "disabled" : "enabled");
+    utils::info("Bloom: %s", bloomDisabled ? "disabled" : "enabled");
 }
 
 char vulkanBloomPassIsDisabled(void) {
     return bloomDisabled;
 }
+}  // namespace engine

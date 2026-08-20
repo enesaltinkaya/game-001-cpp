@@ -1,9 +1,10 @@
 #include "FutureTask.h"
 #include "Utils.h"
-#include "container/Map.h"
+#include <unordered_map>
 #include "thread/Thread.h"
-#include "container/Array.h"
+#include <vector>
 
+namespace utils {
 struct TaskEntry {
     double date;
     void (*fn)(void*);
@@ -11,9 +12,9 @@ struct TaskEntry {
     void* userData;
 };
 
-static Map(int, TaskEntry) tasks;
+static std::unordered_map<int, TaskEntry> tasks;
 static int taskCounter;
-static Array(int) removeList = {};
+static std::vector<int> removeList = {};
 
 int futureTaskAdd(double millis, FnPtr fn, void* userData) {
     THREAD_LOCK;
@@ -24,7 +25,7 @@ int futureTaskAdd(double millis, FnPtr fn, void* userData) {
 
     int taskKey = taskCounter;
     taskCounter++;
-    mapPut(tasks, taskKey, task);
+    tasks[taskKey] = task;
     THREAD_UNLOCK;
     return taskKey;
 }
@@ -38,32 +39,31 @@ int futureTaskAddNoParam(double millis, FnVoid fn) {
 
     int taskKey = taskCounter;
     taskCounter++;
-    mapPut(tasks, taskKey, task);
+    tasks[taskKey] = task;
     THREAD_UNLOCK;
     return taskKey;
 }
 
 void futureTaskRemove(int taskKey) {
-    mapRemove(tasks, taskKey);
+    tasks.erase(taskKey);
 }
 
 void futureTaskRun(void) {
-    for (i32 i = 0, si = mapSize(tasks); i < si; i++) {
-        TaskEntry* task = &tasks[i].value;
-        if (nanos() > task->date) {
-            if (task->fn) {
-                task->fn(task->userData);
+    for (auto& [key, task] : tasks) {
+        if (nanos() > task.date) {
+            if (task.fn) {
+                task.fn(task.userData);
             } else {
-                task->fnVoid();
+                task.fnVoid();
             }
-            arrayPut(removeList, tasks[i].key);
+            removeList.push_back(key);
         }
     }
 
-    for (i32 i = 0, si = arraySize(removeList); i < si; i++) {
-        mapRemove(tasks, removeList[i]);
+    for (i32 i = 0, si = static_cast<i32>(removeList.size()); i < si; i++) {
+        tasks.erase(removeList[i]);
     }
-    arrayClear(removeList);
+    removeList.clear();
 }
 
 void futureTaskFinish(void) {
@@ -72,21 +72,20 @@ void futureTaskFinish(void) {
     // the window system's SDL_Quit closes the X11 display the AMD driver needs
     // for vkDestroySwapchainKHR. Hash-map order is not insertion order, so pick
     // the smallest (earliest-scheduled) key each iteration.
-    while (mapSize(tasks) > 0) {
+    while (static_cast<i32>(tasks.size()) > 0) {
         int minKey = -1;
-        for (i32 i = 0, si = mapSize(tasks); i < si; i++) {
-            int key = tasks[i].key;
-            if (minKey == -1 || key < minKey) minKey = key;
+        for (const auto& entry : tasks) {
+            if (minKey == -1 || entry.first < minKey) minKey = entry.first;
         }
-        TaskEntry task = mapGet(tasks, minKey);
+        auto it = tasks.find(minKey);
+        TaskEntry task = it != tasks.end() ? it->second : TaskEntry{};
         if (task.fn) {
             task.fn(task.userData);
         } else {
             task.fnVoid();
         }
-        (void)mapRemove(tasks, minKey);
+        (void)tasks.erase(minKey);
     }
 
-    mapFree(tasks);
-    arrayFree(removeList);
 }
+}  // namespace utils

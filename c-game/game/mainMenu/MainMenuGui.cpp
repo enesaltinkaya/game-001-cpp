@@ -1,4 +1,5 @@
 #include "MainMenuGui.h"
+#include "MainMenuGui.h"
 #include "credits/Credits.h"
 #include "../settingsGui/SettingsGui.h"
 #include "gameState/GameState.h"
@@ -7,21 +8,11 @@
 #include "renderer/gui/rmlui/GuiManagerRmlUi.h"
 #include "rmlui/wrapper/src/crmlui.h"
 
-static void added(void);
-static void removed(void);
+namespace game {
 
-System mainMenuGui = {
-    .name                = "mainMenu",
-    .added               = added,
-    .removed             = removed,
-    .preUpdate           = nullptr,
-    .update              = nullptr,
-    .postUpdate          = nullptr,
-    .cpuElapsedLastFrame = 0.0,
-    .cpuElapsed          = 0.0,
-    .gpuElapsed          = 0.0,
-    .priority            = 0,
-};
+MainMenuGui mainMenuGui;
+
+MainMenuGui::MainMenuGui() : engine::System("mainMenu") {}
 
 static void* document;
 static void* model;
@@ -29,10 +20,10 @@ static void* model;
 static int creditsOpen(void* _);
 static int luaPlayGame(void* _);
 
-void added(void) {
-    luaRegisterFunction("settingsOpen", settingsOpen);
-    luaRegisterFunction("creditsOpen", creditsOpen);
-    luaRegisterFunction("playGame", luaPlayGame);
+void MainMenuGui::added() {
+    engine::luaRegisterFunction("settingsOpen", settingsOpen);
+    engine::luaRegisterFunction("creditsOpen", creditsOpen);
+    engine::luaRegisterFunction("playGame", luaPlayGame);
 
     document = rmlNewDocument("gui/mainMenu/mainMenu.html");
     model    = rmlCreateModel("mainMenu");
@@ -41,8 +32,8 @@ void added(void) {
     rmlShowDocument(document);
 }
 
-void removed(void) {
-    warn("remove main menu gui");
+void MainMenuGui::removed() {
+    utils::warn("remove main menu gui");
     rmlUnloadDocument(document);
     document = nullptr;
     rmlUnloadModel(model);
@@ -51,13 +42,13 @@ void removed(void) {
 
 int settingsOpen(void* _) {
     if (!settingsGuiIsShowing()) {
-        guiManagerAddGuiNextFrame(&settingsGui);
+        engine::guiManagerAddGuiNextFrame(&settingsGui);
     }
     return 0;
 }
 
 int creditsOpen(void* _) {
-    guiManagerAddGuiNextFrame(&creditsGui);
+    engine::guiManagerAddGuiNextFrame(&creditsGui);
     return 0;
 }
 
@@ -70,3 +61,4 @@ int luaPlayGame(void* _) {
 void playGame(void) {
     gameStateTransition(STATE_LOADING_AZGAAR);
 }
+}  // namespace game

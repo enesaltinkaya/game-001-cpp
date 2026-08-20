@@ -1,3 +1,4 @@
+#include "Hud.h"
 #include "Utils.h"
 #include "ecs/Ecs.h"
 #include "ecs/system/System.h"
@@ -16,22 +17,11 @@
 #define DMG_NUM_LIFETIME 1200.0f  // ms
 #define ENEMY_HP_POOL_SIZE 16
 
-static void added(void);
-static void update(void);
-static void removed(void);
+namespace game {
 
-System hud = {
-    .name                = "hud",
-    .added               = added,
-    .removed             = removed,
-    .preUpdate           = nullptr,
-    .update              = update,
-    .postUpdate          = nullptr,
-    .cpuElapsedLastFrame = 0.0,
-    .cpuElapsed          = 0.0,
-    .gpuElapsed          = 0.0,
-    .priority            = 0,
-};
+Hud hud;
+
+Hud::Hud() : engine::System("hud") {}
 
 // ── RMLUI ──────────────────────────────────────────
 
@@ -57,7 +47,7 @@ static char hudDmgColorBuf[DMG_NUM_POOL_SIZE][32];
 // ── Enemy health bar pool ──────────────────────────
 
 struct EnemyHpBar {
-    Scene* scene;
+    engine::Scene* scene;
     u32    entityId;
     float  screenX, screenY;
     float  hpPercent;
@@ -90,7 +80,7 @@ static DamageNumber dmgPool[DMG_NUM_POOL_SIZE];
 static DamageNumber* dmgPoolPush(float wx, float wy, float wz, float value) {
     // Find oldest inactive slot, or evict oldest active
     int slot = -1;
-    double oldest = millies();
+    double oldest = utils::millies();
     for (int i = 0; i < DMG_NUM_POOL_SIZE; i++) {
         if (!dmgPool[i].active) {
             slot = i;
@@ -109,8 +99,8 @@ static DamageNumber* dmgPoolPush(float wx, float wy, float wz, float value) {
         .worldY  = wy,
         .worldZ  = wz,
         .value   = value,
-        .vy      = 80.0f + static_cast<float>(randomU32() % 40),  // 80-120 px/s rise
-        .spawnTime = millies(),
+        .vy      = 80.0f + static_cast<float>(utils::randomU32() % 40),  // 80-120 px/s rise
+        .spawnTime = utils::millies(),
         .active  = 1,
         .screenX = 0.0f,
         .screenY = 0.0f,
@@ -121,10 +111,10 @@ static DamageNumber* dmgPoolPush(float wx, float wy, float wz, float value) {
 // ── World to screen projection ─────────────────────
 
 static bool worldToScreen(float wx, float wy, float wz, float* outX, float* outY) {
-    Entity* cam = cameraGetEntity();
+    engine::Entity* cam = engine::cameraGetEntity();
     if (!cam || !cam->scene) return false;
 
-    Camera* camera = getComponent(cam->scene, Camera, cam->id);
+    engine::Camera* camera = getComponent(cam->scene, engine::Camera, cam->id);
     if (!camera) return false;
 
     vec4 pos = {wx, wy, wz, 1.0f};
@@ -137,11 +127,11 @@ static bool worldToScreen(float wx, float wy, float wz, float* outX, float* outY
     ndc[1] /= ndc[3];
     ndc[2] /= ndc[3];
 
-    float sx = (ndc[0] * 0.5f + 0.5f) * static_cast<float>(window.width);
-    float sy = (1.0f - (ndc[1] * 0.5f + 0.5f)) * static_cast<float>(window.height);
+    float sx = (ndc[0] * 0.5f + 0.5f) * static_cast<float>(engine::window.width);
+    float sy = (1.0f - (ndc[1] * 0.5f + 0.5f)) * static_cast<float>(engine::window.height);
 
-    if (sx < -50 || sx > static_cast<float>(window.width) + 50 ||
-        sy < -50 || sy > static_cast<float>(window.height) + 50) {
+    if (sx < -50 || sx > static_cast<float>(engine::window.width) + 50 ||
+        sy < -50 || sy > static_cast<float>(engine::window.height) + 50) {
         return false;
     }
 
@@ -158,7 +148,7 @@ void hudDamageNumber(float x, float y, float z, float value) {
 
 // ── System lifecycle ───────────────────────────────
 
-static void added(void) {
+void Hud::added() {
     document = rmlNewDocument("gui/hud/hud.html");
     model    = rmlCreateModel("hud");
 
@@ -233,20 +223,20 @@ static void added(void) {
     rmlShowDocumentWithoutFocus(document);
 }
 
-static void removed(void) {
+void Hud::removed() {
     rmlUnloadDocument(document);
     rmlUnloadModel(model);
     document = nullptr;
     model = nullptr;
 }
 
-static void update(void) {
+void Hud::update() {
     // ── Update player stats ─────────────────────────
-    Scene* playerScene = getPlayerScene();
+    engine::Scene* playerScene = getPlayerScene();
     if (playerScene) {
-        SparseSet* players = getComponents(playerScene, Player);
+        utils::SparseSet* players = getComponents(playerScene, Player);
         if (players->size > 0) {
-            u32 playerId = ssGetValueByIndex(players, 0);
+            u32 playerId = utils::ssGetValueByIndex(players, 0);
             CharacterStats* stats = getComponent(playerScene, CharacterStats, playerId);
             if (stats) {
                 hudHp     = stats->hp;
@@ -262,7 +252,7 @@ static void update(void) {
     }
 
     // ── Update damage numbers ───────────────────────
-    double now = millies();
+    double now = utils::millies();
     for (int i = 0; i < DMG_NUM_POOL_SIZE; i++) {
         DamageNumber* dn = &dmgPool[i];
         if (!dn->active) {
@@ -316,19 +306,19 @@ static void update(void) {
 
     // ── Update enemy health bars ────────────────────
     int hpSlot = 0;
-    u32 numScenes = arraySize(ecs.scenes);
+    u32 numScenes = static_cast<i32>(engine::ecs.scenes.size());
     for (u32 si = 0; si < numScenes && hpSlot < ENEMY_HP_POOL_SIZE; si++) {
-        Scene* scene = ecs.scenes[si];
+        engine::Scene* scene = engine::ecs.scenes[si];
         if (!scene || !scene->ready) continue;
-        SparseSet* enemies = getComponents(scene, Enemy);
+        utils::SparseSet* enemies = getComponents(scene, Enemy);
         if (!enemies || enemies->size == 0) continue;
         for (u32 ei = 0; ei < enemies->size && hpSlot < ENEMY_HP_POOL_SIZE; ei++) {
-            u32 eId = ssGetValueByIndex(enemies, ei);
-            Enemy* enemy = (Enemy*)ssGetDataByIndex(enemies, ei);
+            u32 eId = utils::ssGetValueByIndex(enemies, ei);
+            Enemy* enemy = (Enemy*)utils::ssGetDataByIndex(enemies, ei);
             if (!enemy || enemy->state == ENEMY_STATE_DEAD) continue;
             CharacterStats* stats = getComponent(scene, CharacterStats, eId);
             if (!stats || stats->isDead) continue;
-            Transform* eT = getComponent(scene, Transform, eId);
+            engine::Transform* eT = getComponent(scene, engine::Transform, eId);
             if (!eT) continue;
 
             // Place bar above the enemy's head based on capsule height
@@ -363,3 +353,4 @@ static void update(void) {
 
     rmlUpdateDirtyAll(model);
 }
+}  // namespace game

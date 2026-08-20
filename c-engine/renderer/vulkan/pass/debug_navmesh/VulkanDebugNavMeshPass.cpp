@@ -1,4 +1,5 @@
 #include "VulkanDebugNavMeshPass.h"
+#include "VulkanDebugNavMeshPass.h"
 #include "ecs/Ecs.h"
 #include "ecs/system/System.h"
 #include "ecs/system/camera/CameraComponent.h"
@@ -15,6 +16,7 @@
 // Forward declarations from recast C API
 typedef struct RcNavMesh RcNavMesh;
 
+namespace engine {
 typedef struct RcDebugTriangle {
     float v0[3];
     float v1[3];
@@ -29,22 +31,10 @@ unsigned int rcNavMeshGetDebugTriangles(const RcNavMesh* mesh,
                                         RcDebugTriangle* outTris,
                                         unsigned int maxTriangles);
 
-static void added(void);
-static void update(void);
-static void removed(void);
 
-System vulkanDebugNavMeshPass = {
-    .name                = "debug_navmesh",
-    .added               = added,
-    .removed             = removed,
-    .preUpdate           = nullptr,
-    .update              = update,
-    .postUpdate          = nullptr,
-    .cpuElapsedLastFrame = 0.0,
-    .cpuElapsed          = 0.0,
-    .gpuElapsed          = 0.0,
-    .priority            = 0,
-};
+VulkanDebugNavMeshPass vulkanDebugNavMeshPass;
+
+VulkanDebugNavMeshPass::VulkanDebugNavMeshPass() : System("debug_navmesh") {}
 
 static VulkanPipe fillPipeline;
 static VulkanBuffer vertexBuffer;
@@ -104,23 +94,23 @@ static void recreatePipelines(void) {
                                         .offset   = 16,
                                     }, );
 
-    info("debug_navmesh: fill + wire pipelines recreated");
+    utils::info("debug_navmesh: fill + wire pipelines recreated");
 }
 
 static void swapchainCreated(void*) {
     recreatePipelines();
 }
 
-static void added(void) {
+void VulkanDebugNavMeshPass::added() {
     if (getenv("ENGINE_DEBUG_NAVMESH")) {
         enabled = 1;
-        info("debug_navmesh: enabled via ENGINE_DEBUG_NAVMESH env var");
+        utils::info("debug_navmesh: enabled via ENGINE_DEBUG_NAVMESH env var");
     }
     const char* offsetEnv = getenv("ENGINE_DEBUG_NAVMESH_Y_OFFSET");
     if (offsetEnv) yOffset = (float)atof(offsetEnv);
-    info("debug_navmesh: y offset %.3f", yOffset);
+    utils::info("debug_navmesh: y offset %.3f", yOffset);
 
-    signalSubscribe("swapchainCreated", swapchainCreated);
+    utils::signalSubscribe("swapchainCreated", swapchainCreated);
     recreatePipelines();
 
     vertexBuffer =
@@ -128,10 +118,10 @@ static void added(void) {
                               MAX_DEBUG_VERTICES * sizeof(DebugVertex),
                               VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
 
-    info("debug_navmesh: vertex buffer created");
+    utils::info("debug_navmesh: vertex buffer created");
 }
 
-static void update(void) {
+void VulkanDebugNavMeshPass::update() {
     if (vulkan.skipFrame || !enabled || !registeredMesh) return;
     if (!fillPipeline.pipe) return;
 
@@ -152,13 +142,13 @@ static void update(void) {
     {
         static bool _l = false;
         if (!_l) {
-            info("debug_navmesh: %u triangles (cap=%u)", triCount, MAX_DEBUG_TRIANGLES);
+            utils::info("debug_navmesh: %u triangles (cap=%u)", triCount, MAX_DEBUG_TRIANGLES);
             _l = true;
         }
     }
     if (triCount == 0) return;
     if (triCount >= MAX_DEBUG_TRIANGLES) {
-        warn("debug_navmesh: hit triangle cap (%u), increase MAX_DEBUG_TRIANGLES", triCount);
+        utils::warn("debug_navmesh: hit triangle cap (%u), increase MAX_DEBUG_TRIANGLES", triCount);
     }
     static DebugVertex cpuVerts[MAX_DEBUG_VERTICES];
     uint32_t vertIndex = 0;
@@ -222,7 +212,8 @@ static void update(void) {
     vulkanEndRender(cmd);
 }
 
-static void removed(void) {
+void VulkanDebugNavMeshPass::removed() {
     vulkanDestroyPipe(&fillPipeline);
     vulkanDestroyBuffer(&vertexBuffer, VK_NULL_HANDLE);
 }
+}  // namespace engine

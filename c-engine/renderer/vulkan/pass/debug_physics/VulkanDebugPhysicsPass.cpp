@@ -1,4 +1,5 @@
 #include "VulkanDebugPhysicsPass.h"
+#include "VulkanDebugPhysicsPass.h"
 #include "ecs/Ecs.h"
 #include "ecs/system/System.h"
 #include "ecs/system/camera/CameraComponent.h"
@@ -11,22 +12,11 @@
 #include "renderer/vulkan/resources/VulkanFrameResources.h"
 #include "renderer/vulkan/swapchain/VulkanSwapchain.h"
 
-static void added(void);
-static void update(void);
-static void removed(void);
+namespace engine {
 
-System vulkanDebugPhysicsPass = {
-    .name                = "debug_physics",
-    .added               = added,
-    .removed             = removed,
-    .preUpdate           = nullptr,
-    .update              = update,
-    .postUpdate          = nullptr,
-    .cpuElapsedLastFrame = 0.0,
-    .cpuElapsed          = 0.0,
-    .gpuElapsed          = 0.0,
-    .priority            = 0,
-};
+VulkanDebugPhysicsPass vulkanDebugPhysicsPass;
+
+VulkanDebugPhysicsPass::VulkanDebugPhysicsPass() : System("debug_physics") {}
 
 static VulkanPipe pipeline;
 static VulkanBuffer vertexBuffer;
@@ -87,10 +77,10 @@ char vulkanDebugPhysicsIsEnabled(void) {
     return enabled;
 }
 
-static void added(void) {
+void VulkanDebugPhysicsPass::added() {
     if (getenv("ENGINE_DEBUG_PHYSICS")) {
         enabled = 1;
-        info("debug_physics: enabled via ENGINE_DEBUG_PHYSICS env var");
+        utils::info("debug_physics: enabled via ENGINE_DEBUG_PHYSICS env var");
     }
 
     pipeline = vulkanCreatePipe(.name = "debug_physics",
@@ -126,10 +116,10 @@ static void added(void) {
                               MAX_DEBUG_VERTICES * sizeof(DebugVertex),
                               VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
 
-    info("debug_physics: pipeline and vertex buffer created");
+    utils::info("debug_physics: pipeline and vertex buffer created");
 }
 
-static void update(void) {
+void VulkanDebugPhysicsPass::update() {
     if (vulkan.skipFrame || !enabled) return;
 
     VulkanCommand* cmd     = vulkan.currentCmd;
@@ -228,7 +218,8 @@ static void update(void) {
     vulkanEndRender(cmd);
 }
 
-static void removed(void) {
+void VulkanDebugPhysicsPass::removed() {
     vulkanDestroyPipe(&pipeline);
     vulkanDestroyBuffer(&vertexBuffer, VK_NULL_HANDLE);
 }
+}  // namespace engine

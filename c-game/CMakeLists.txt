@@ -53,7 +53,6 @@ target_link_libraries(c-game PRIVATE
     ${thirdparty}/jansson/git/${platform_dir}/lib/libjansson.a
     ${thirdparty}/thpool/${platform_dir}/libthpool.a
     ${thirdparty}/sqlite/git/${platform_dir}/libsqlite3.a
-    ${thirdparty}/buddy_alloc/git/${platform_dir}/libbuddy_alloc.a
     ${thirdparty}/freetype/git/${platform_dir}/libfreetype.a
     ${thirdparty}/harfbuzz/git/${platform_dir}/libharfbuzz.a
     ${thirdparty}/png/git/${platform_dir}/libpng.a

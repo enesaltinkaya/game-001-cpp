@@ -6,6 +6,7 @@
 #include "logger/Logger.h"
 #include "string/String.h"
 
+namespace utils {
 char* R_relativePath(const char* path, char* in) {
     snprintf(in, 1024, "%s%s", platform.cwd, path);
     return in;
@@ -97,3 +98,4 @@ char* fileRead3(const char* path, u32* fileSize) {
     fclose(file);
     return out;
 }
+}  // namespace utils

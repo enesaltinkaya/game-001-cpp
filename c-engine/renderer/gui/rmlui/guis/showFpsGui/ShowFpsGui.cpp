@@ -1,49 +1,40 @@
+#include "ShowFpsGui.h"
 #include "ecs/system/System.h"
 #include "renderer/Renderer.h"
 #include "rmlui/wrapper/src/crmlui.h"
 
-static void added(void);
-static void update(void);
-static void removed(void);
+namespace engine {
 
-System rmluiShowFpsGui = {
-    .name                = "showFpsGui",
-    .added               = added,
-    .removed             = removed,
-    .preUpdate           = nullptr,
-    .update              = update,
-    .postUpdate          = nullptr,
-    .cpuElapsedLastFrame = 0.0,
-    .cpuElapsed          = 0.0,
-    .gpuElapsed          = 0.0,
-    .priority            = 0,
-};
+RmluiShowFpsGui rmluiShowFpsGui;
+
+RmluiShowFpsGui::RmluiShowFpsGui() : System("showFpsGui") {}
 
 static void* document;
 static void* model;
 
-void added(void) {
+void RmluiShowFpsGui::added() {
     document = rmlNewDocument("gui/showFps/showFps.html");
     model    = rmlCreateModel("showFps");
-    rmlBindDouble(model, "fps", &timer.fps);
-    rmlBindDouble(model, "elapsedCpu", &timer.elapsed);
+    rmlBindDouble(model, "fps", &utils::timer.fps);
+    rmlBindDouble(model, "elapsedCpu", &utils::timer.elapsed);
     rmlBindDouble(model, "elapsedGpu", &renderer.rendererElapsedGpu);
-    rmlBindDouble(model, "elapsedCpuTotal", &timer.elapsedFull);
+    rmlBindDouble(model, "elapsedCpuTotal", &utils::timer.elapsedFull);
 
     rmlLoadDocument(document);
     rmlShowDocumentWithoutFocus(document);
 }
 
-void removed(void) {
+void RmluiShowFpsGui::removed() {
     rmlUnloadModel(model);
     rmlUnloadDocument(document);
 }
 
-void update(void) {
+void RmluiShowFpsGui::update() {
     static double lastShown;
-    double now = nanos();
+    double now = utils::nanos();
     if (now > lastShown + BILLION / 2.) {  // twice per second
         lastShown = now;
         rmlUpdateDirtyAll(model);
     }
 }
+}  // namespace engine

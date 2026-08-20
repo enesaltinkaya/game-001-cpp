@@ -2,6 +2,7 @@
 
 #include "renderer/Renderer.h"
 
+namespace engine {
 struct VulkanCommand;
 
 // Pipeline statistics counters (matches VkPipelineStatisticFlags)
@@ -43,3 +44,4 @@ void vulkanEndProfile(struct VulkanCommand* cmd, struct VulkanProfile* profile, 
 void vulkanResetProfileStats(struct VulkanCommand* cmd, struct VulkanProfile* profile, bool force);
 void vulkanBeginProfileStats(struct VulkanCommand* cmd, struct VulkanProfile* profile, bool force);
 void vulkanEndProfileStats(struct VulkanCommand* cmd, struct VulkanProfile* profile, bool force);
+}  // namespace engine

@@ -4,32 +4,33 @@
 #include "Utils.h"
 #include "image/Image.h"
 
+namespace engine {
 struct WindowBackendApi {
-    const char* name;
-    void (*added)(void);
-    void (*removed)(void);
-    void (*preUpdate)(void);
-    void (*postUpdate)(void);
-    void (*hide)(void);
-    void (*show)(void);
-    void (*toggleFullscreen)(char fullScreen);
-    void (*reloadCursors)(void);
-    void* (*getPointerCursor)(void);
-    void* (*getArrowCursor)(void);
-    void* (*getTextCursor)(void);
-    void (*updateDimensions)(void);
-    void (*warpCenter)(void);
-    void (*warp)(float x, float y);
-    void (*hideCursor)(void);
-    void (*showCursor)(void);
-    bool (*isCursorVisible)(void);
-    void (*getRelativeMouseDelta)(float* dx, float* dy);
-    bool (*isLeftMouseDown)(void);
-    bool (*isRightMouseDown)(void);
-    bool (*isMiddleMouseDown)(void);
-    char const* const* (*getRequiredVulkanExtensions)(u32* extensionCount);
-    bool (*createVulkanSurface)(VkInstance instance, VkSurfaceKHR* surface);
-    SetCursorFn (*getSetCursorFn)(void);
+    const char* name = nullptr;
+    void (*added)(void) = nullptr;
+    void (*removed)(void) = nullptr;
+    void (*preUpdate)(void) = nullptr;
+    void (*postUpdate)(void) = nullptr;
+    void (*hide)(void) = nullptr;
+    void (*show)(void) = nullptr;
+    void (*toggleFullscreen)(char fullScreen) = nullptr;
+    void (*reloadCursors)(void) = nullptr;
+    void* (*getPointerCursor)(void) = nullptr;
+    void* (*getArrowCursor)(void) = nullptr;
+    void* (*getTextCursor)(void) = nullptr;
+    void (*updateDimensions)(void) = nullptr;
+    void (*warpCenter)(void) = nullptr;
+    void (*warp)(float x, float y) = nullptr;
+    void (*hideCursor)(void) = nullptr;
+    void (*showCursor)(void) = nullptr;
+    bool (*isCursorVisible)(void) = nullptr;
+    void (*getRelativeMouseDelta)(float* dx, float* dy) = nullptr;
+    bool (*isLeftMouseDown)(void) = nullptr;
+    bool (*isRightMouseDown)(void) = nullptr;
+    bool (*isMiddleMouseDown)(void) = nullptr;
+    char const* const* (*getRequiredVulkanExtensions)(u32* extensionCount) = nullptr;
+    bool (*createVulkanSurface)(VkInstance instance, VkSurfaceKHR* surface) = nullptr;
+    SetCursorFn (*getSetCursorFn)(void) = nullptr;
 };
 
 static void initGLFW(void);
@@ -113,7 +114,7 @@ static void glfwWindowSizeCallback(GLFWwindow* glfwWindow, int width, int height
     event.data.resize.width  = width;
     event.data.resize.height = height;
     windowSystemPushInputEvent(event);
-    signalEmit("windowResized", nullptr);
+    utils::signalEmit("windowResized", nullptr);
 }
 
 static void glfwKeyCallback(GLFWwindow* glfwWindow, int key, int scancode, int action, int mods) {
@@ -227,7 +228,8 @@ static void glfwWindowFocusCallback(GLFWwindow* glfwWindow, int focused) {
 
 static void glfwWindowCloseCallback(GLFWwindow* glfwWindow) {
     (void)glfwWindow;
-    InputEvent event = {.type = INPUT_EVENT_QUIT};
+    InputEvent event         = {};
+    event.type               = INPUT_EVENT_QUIT;
     windowSystemPushInputEvent(event);
     engineStop();
 }
@@ -237,13 +239,12 @@ void glfwWindowSystemAdded(void) {
     setDimensions();
     createWindow();
     loadCursors();
-    info("windowSystem: initialized GLFW backend");
-    debug("windowSystem: dimensions    %dx%d", window.width, window.height);
+    utils::info("windowSystem: initialized GLFW backend");
+    utils::debug("windowSystem: dimensions    %dx%d", window.width, window.height);
 }
 
 static void windowRemovedDelayed(void* _) {
     (void)_;
-    arrayFree(input.events);
     if (cursorArrow) glfwDestroyCursor(cursorArrow);
     if (cursorHand) glfwDestroyCursor(cursorHand);
     if (cursorText) glfwDestroyCursor(cursorText);
@@ -252,16 +253,16 @@ static void windowRemovedDelayed(void* _) {
 }
 
 void glfwWindowSystemRemoved(void) {
-    futureTaskAdd(0, windowRemovedDelayed, nullptr);
+    utils::futureTaskAdd(0, windowRemovedDelayed, nullptr);
 }
 
 void initGLFW(void) {
     if (!glfwInit()) {
-        terminate("windowSystem: failed to initialize GLFW");
+        utils::terminate("windowSystem: failed to initialize GLFW");
     }
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
     glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
-    if (settingsGetBool("fullScreen")) {
+    if (utils::settingsGetBool("fullScreen")) {
         glfwWindowHint(GLFW_DECORATED, GLFW_FALSE);
     }
 }
@@ -270,7 +271,7 @@ void setDimensions(void) {
     GLFWmonitor* primaryMonitor = glfwGetPrimaryMonitor();
     const GLFWvidmode* mode     = glfwGetVideoMode(primaryMonitor);
 
-    if (settingsGetBool("fullScreen")) {
+    if (utils::settingsGetBool("fullScreen")) {
         window.width  = mode->width;
         window.height = mode->height;
     } else {
@@ -282,14 +283,14 @@ void setDimensions(void) {
 }
 
 void createWindow(void) {
-    double elapsed          = elapsedBegin();
-    GLFWmonitor* monitor    = settingsGetBool("fullScreen") ? glfwGetPrimaryMonitor() : nullptr;
+    double elapsed          = utils::elapsedBegin();
+    GLFWmonitor* monitor    = utils::settingsGetBool("fullScreen") ? glfwGetPrimaryMonitor() : nullptr;
     window.glfwWindowHandle = glfwCreateWindow(window.width, window.height, title, monitor, nullptr);
-    elapsed                 = elapsedEnd(elapsed);
+    elapsed                 = utils::elapsedEnd(elapsed);
     if (!window.glfwWindowHandle) {
-        terminate("windowSystem: failed to create GLFW window");
+        utils::terminate("windowSystem: failed to create GLFW window");
     }
-    info("windowSystem: initialized in %.02f ms", elapsed);
+    utils::info("windowSystem: initialized in %.02f ms", elapsed);
 
     glfwSetWindowSizeCallback(window.glfwWindowHandle, glfwWindowSizeCallback);
     glfwSetKeyCallback(window.glfwWindowHandle, glfwKeyCallback);
@@ -310,15 +311,15 @@ void createWindow(void) {
     window.xscale = xscale;
     window.yscale = yscale;
 
-    if (settingsGetDouble("uiScale") == 0) {
-        settingsSetDouble("uiScale", window.xscale);
-        settingsSetDouble("cursorScale", window.xscale);
-        settingsWrite();
+    if (utils::settingsGetDouble("uiScale") == 0) {
+        utils::settingsSetDouble("uiScale", window.xscale);
+        utils::settingsSetDouble("cursorScale", window.xscale);
+        utils::settingsWrite();
     }
 }
 
 void centerWindow(void) {
-    if (settingsGetBool("fullScreen")) return;
+    if (utils::settingsGetBool("fullScreen")) return;
 
     GLFWmonitor* monitor    = glfwGetPrimaryMonitor();
     const GLFWvidmode* mode = glfwGetVideoMode(monitor);
@@ -331,14 +332,14 @@ void centerWindow(void) {
 }
 
 GLFWcursor* loadCursor(const char* path, float xHot, float yHot) {
-    Image image = imageLoadKtx(path, KTX_FORMAT_RGBA32);
+    utils::Image image = utils::imageLoadKtx(path, utils::KTX_FORMAT_RGBA32);
 
-    u64 resizedWidth  = static_cast<int>(image.width / 2.5F * settingsGetDouble("cursorScale"));
-    u64 resizedHeight = static_cast<int>(image.height / 2.5F * settingsGetDouble("cursorScale"));
-    u64 resizedHotX   = static_cast<int>(xHot / 2.5F * settingsGetDouble("cursorScale"));
-    u64 resizedHotY   = static_cast<int>(yHot / 2.5F * settingsGetDouble("cursorScale"));
+    u64 resizedWidth  = static_cast<int>(image.width / 2.5F * utils::settingsGetDouble("cursorScale"));
+    u64 resizedHeight = static_cast<int>(image.height / 2.5F * utils::settingsGetDouble("cursorScale"));
+    u64 resizedHotX   = static_cast<int>(xHot / 2.5F * utils::settingsGetDouble("cursorScale"));
+    u64 resizedHotY   = static_cast<int>(yHot / 2.5F * utils::settingsGetDouble("cursorScale"));
 
-    Image resizedImage  = imageResize(&image, resizedWidth, resizedHeight);
+    utils::Image resizedImage  = utils::imageResize(&image, resizedWidth, resizedHeight);
     GLFWimage glfwImage = {
         .width  = static_cast<int>(resizedWidth),
         .height = static_cast<int>(resizedHeight),
@@ -346,8 +347,8 @@ GLFWcursor* loadCursor(const char* path, float xHot, float yHot) {
     };
     GLFWcursor* cursor = glfwCreateCursor(&glfwImage, static_cast<int>(resizedHotX), static_cast<int>(resizedHotY));
 
-    imageDestory(&image);
-    imageDestory(&resizedImage);
+    utils::imageDestory(&image);
+    utils::imageDestory(&resizedImage);
     return cursor;
 }
 
@@ -444,8 +445,6 @@ void glfwWindowSystemHideCursor(void) {
     }
     glfwSetInputMode(window.glfwWindowHandle, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 }
-
-static void showCursorDelayed(void*) {}
 
 void glfwWindowSystemShowCursor(void) {
     cursorVisible = true;
@@ -564,7 +563,7 @@ static MouseButton windowSystemMapGLFWMouseButton(int button) {
 }
 
 static void windowSystemPushInputEvent(InputEvent event) {
-    arrayPut(input.events, event);
+    input.events.push_back(event);
 }
 
 void glfwWindowSystemGetRelativeMouseDelta(float* dx, float* dy) {
@@ -596,16 +595,16 @@ bool glfwWindowSystemCreateVulkanSurface(VkInstance instance, VkSurfaceKHR* surf
 
 void glfwWindowSystemPreUpdate(void) {
     glfwInputReset();
-    arrayClear(input.events);
+    input.events.clear();
     input.focused = glfwGetWindowAttrib(window.glfwWindowHandle, GLFW_FOCUSED) != 0;
 
     glfwPollEvents();
 
     if (input.alt && (input.pressed == KEY_RETURN || input.pressed == KEY_KP_ENTER)) {
         input.skip      = 1;
-        char fullScreen = settingsGetBool("fullScreen");
-        settingsSetBool("fullScreen", !fullScreen);
-        settingsWrite();
+        char fullScreen = utils::settingsGetBool("fullScreen");
+        utils::settingsSetBool("fullScreen", !fullScreen);
+        utils::settingsWrite();
         glfwWindowSystemToggleFullscreen(!fullScreen);
     }
 
@@ -643,3 +642,4 @@ void glfwInputReset(void) {
 char glfwInputShouldProcess(void) {
     return input.focused && !input.skip;
 }
+}  // namespace engine

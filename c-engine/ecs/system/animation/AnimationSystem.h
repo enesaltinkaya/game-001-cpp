@@ -9,7 +9,16 @@
  * Updates joint transforms for all animated entities.
  */
 
-extern System animationSystem;
+namespace engine {
+class AnimationSystem : public System {
+public:
+    AnimationSystem();
+    void added() override;
+    void removed() override;
+    void update() override;
+};
+
+extern AnimationSystem animationSystem;
 
 /*
  * Initialize the animation system
@@ -21,3 +30,4 @@ void animationSystemInit(void);
  * Destroy the animation system and free all resources
  */
 void animationSystemDestroy(void);
+}  // namespace engine

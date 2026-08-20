@@ -2,6 +2,7 @@
 
 #include "ecs/system/scene/SceneSystem.h"
 
+namespace engine {
 typedef struct Transform {
     vec4 rot;
     vec4 pos; // last element is scale
@@ -177,3 +178,4 @@ static inline void transformIdentity(Transform* out) {
     glm_vec4_zero(out->pos);
     out->pos[3] = 1.0f;
 }
+}  // namespace engine

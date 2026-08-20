@@ -8,6 +8,7 @@
 #include "Utils.h"
 #include <math.h>
 
+namespace game {
 static bool waterInitialized = false;
 static float lastCamX = 0.0f;
 static float lastCamZ = 0.0f;
@@ -16,7 +17,7 @@ static float cellSize = 0.0f;
 // Build a grid mesh: AZGAAR_WATER_GRID_DIVS x AZGAAR_WATER_GRID_DIVS quads.
 // Vertices span [-0.5, +0.5] in X/Z (local space), Y=0.
 // The vertex shader recenters on the camera.
-static void buildGridMesh(SceneVertex* vertices, u32* indices,
+static void buildGridMesh(engine::SceneVertex* vertices, u32* indices,
                            u32* outVertexCount, u32* outIndexCount) {
     u32 divs = AZGAAR_WATER_GRID_DIVS;
     u32 vertsX = divs + 1;
@@ -97,7 +98,7 @@ void azgaarWaterInit(const AzgaarWorld* world) {
                         : 0.5f;
 
     // Upload initial water params
-    VulkanWaterData params = {
+    engine::VulkanWaterData params = {
         .surfaceY              = {seaLevel,
                                   AZGAAR_WATER_GRID_SIZE,
                                   static_cast<float>(AZGAAR_WATER_GRID_DIVS),
@@ -128,7 +129,7 @@ void azgaarWaterInit(const AzgaarWorld* world) {
         .sunSpecularIntensity = 1.5f,
         .enabled              = 1.0f,
     };
-    vulkanResourceSetWaterParams(&params);
+    engine::vulkanResourceSetWaterParams(&params);
 
     // Build and upload the grid mesh
     u32 divs = AZGAAR_WATER_GRID_DIVS;
@@ -136,16 +137,13 @@ void azgaarWaterInit(const AzgaarWorld* world) {
     u32 vertexCount = vertsX * (divs + 1);
     u32 indexCount = divs * divs * 6;
 
-    SceneVertex* vertices = static_cast<SceneVertex*>(memoryAlloc(sizeof(SceneVertex) * vertexCount));
-    u32* indices = static_cast<u32*>(memoryAlloc(sizeof(u32) * indexCount));
+    std::vector<engine::SceneVertex> vertices(vertexCount);
+    std::vector<u32> indices(indexCount);
 
     u32 vCount = 0, iCount = 0;
-    buildGridMesh(vertices, indices, &vCount, &iCount);
+    buildGridMesh(vertices.data(), indices.data(), &vCount, &iCount);
 
-    vulkanAzgaarWaterSetMesh(vertices, vCount, indices, iCount);
-
-    memoryFree(vertices);
-    memoryFree(indices);
+    vulkanAzgaarWaterSetMesh(vertices.data(), vCount, indices.data(), iCount);
 
     waterInitialized = true;
     cellSize = AZGAAR_WATER_GRID_SIZE / static_cast<float>(divs);
@@ -167,17 +165,18 @@ void azgaarWaterUpdate(float camX, float camZ) {
     // sway — one source so flakes, grass and waves stay coherent.
     float dirX, dirZ, speed;
     if (azgaarWeatherGetWind(&dirX, &dirZ, &speed)) {
-        VulkanWaterData params = vulkanResourceGetWaterData();
+        engine::VulkanWaterData params = engine::vulkanResourceGetWaterData();
         float angle            = atan2f(dirZ, dirX);
         if (angle != params.windAngle) {
             params.windAngle = angle;
-            vulkanResourceSetWaterParams(&params);
+            engine::vulkanResourceSetWaterParams(&params);
         }
     }
 }
 
 void azgaarWaterDestroy(void) {
     if (!waterInitialized) return;
-    vulkanAzgaarWaterClear();
+    engine::vulkanAzgaarWaterClear();
     waterInitialized = false;
 }
+}  // namespace game

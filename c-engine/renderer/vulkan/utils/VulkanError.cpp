@@ -5,6 +5,7 @@
 #include "Utils.h"
 #include "logger/Logger.h"
 
+namespace engine {
 static VulkanDeviceLostHandler deviceLostHandler = nullptr;
 static std::atomic<char> deviceLostFlag{0};
 
@@ -19,7 +20,7 @@ int vulkanCheckQueueError(VkResult result, const char* op) {
 
     // Normal cases that don't require recovery
     if (result == VK_SUBOPTIMAL_KHR) {
-        warn("vulkanCheckQueueError: %s → %d (suboptimal, continuing)", op, result);
+        utils::warn("vulkanCheckQueueError: %s → %d (suboptimal, continuing)", op, result);
         return 0;
     }
     if (result == VK_TIMEOUT) {
@@ -29,7 +30,7 @@ int vulkanCheckQueueError(VkResult result, const char* op) {
         return 0; // Will retry next frame
     }
     if (result == VK_ERROR_OUT_OF_DATE_KHR) {
-        warn("vulkanCheckQueueError: %s → %d (swapchain out of date)", op, result);
+        utils::warn("vulkanCheckQueueError: %s → %d (swapchain out of date)", op, result);
         vulkan.skipFrame = 1;
         vulkanSwapchainRecreate();
         return 0;
@@ -41,8 +42,8 @@ int vulkanCheckQueueError(VkResult result, const char* op) {
             // Already handled once
             return 1;
         }
-        error("VK_ERROR_DEVICE_LOST detected during %s!", op);
-        error("GPU driver has crashed. Attempting graceful shutdown.");
+        utils::error("VK_ERROR_DEVICE_LOST detected during %s!", op);
+        utils::error("GPU driver has crashed. Attempting graceful shutdown.");
         if (deviceLostHandler) {
             deviceLostHandler();
         }
@@ -53,6 +54,7 @@ int vulkanCheckQueueError(VkResult result, const char* op) {
     }
 
     // Other errors — may indicate driver instability
-    error("vulkanCheckQueueError: %s → %d (unexpected)", op, result);
+    utils::error("vulkanCheckQueueError: %s → %d (unexpected)", op, result);
     return 1;
 }
+}  // namespace engine

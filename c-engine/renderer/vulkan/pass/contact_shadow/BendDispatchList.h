@@ -15,6 +15,7 @@
 #include <stdbool.h>
 #include <string.h>
 
+namespace engine {
 typedef struct BendDispatchData {
     int WaveCount[3];
     int WaveOffset_Shader[2];
@@ -145,3 +146,4 @@ static inline BendDispatchList bendBuildDispatchList(const float inLightProjecti
 }
 
 #endif /* BEND_DISPATCH_LIST_H */
+}  // namespace engine

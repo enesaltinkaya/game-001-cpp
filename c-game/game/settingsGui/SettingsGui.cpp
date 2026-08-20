@@ -1,3 +1,4 @@
+#include "SettingsGui.h"
 #include "ecs/system/System.h"
 #include "ecs/system/lua/LuaSystem.h"
 #include "futuretask/FutureTask.h"
@@ -7,21 +8,11 @@
 #include "audio/SettingsAudioGui.h"
 #include "graphics/SettingsGraphicsGui.h"
 
-static void added(void);
-static void removed(void);
+namespace game {
 
-System settingsGui = {
-    .name                = "settingsGui",
-    .added               = added,
-    .removed             = removed,
-    .preUpdate           = nullptr,
-    .update              = nullptr,
-    .postUpdate          = nullptr,
-    .cpuElapsedLastFrame = 0.0,
-    .cpuElapsed          = 0.0,
-    .gpuElapsed          = 0.0,
-    .priority            = 0,
-};
+SettingsGui settingsGui;
+
+SettingsGui::SettingsGui() : engine::System("settingsGui") {}
 
 static void* document;
 
@@ -30,18 +21,18 @@ static int showAudioSettings(void* _);
 static int showVideoSettings(void* _);
 static int showGraphicsSettings(void* _);
 
-void added(void) {
+void SettingsGui::added() {
     document = rmlNewDocument("gui/settings/settings.html");
     rmlLoadDocument(document);
     rmlShowDocument(document);
 
-    luaRegisterFunction("settingsClose", settingsClose);
-    luaRegisterFunction("showAudioSettings", showAudioSettings);
-    luaRegisterFunction("showVideoSettings", showVideoSettings);
-    luaRegisterFunction("showGraphicsSettings", showGraphicsSettings);
+    engine::luaRegisterFunction("settingsClose", settingsClose);
+    engine::luaRegisterFunction("showAudioSettings", showAudioSettings);
+    engine::luaRegisterFunction("showVideoSettings", showVideoSettings);
+    engine::luaRegisterFunction("showGraphicsSettings", showGraphicsSettings);
 }
 
-void removed(void) {
+void SettingsGui::removed() {
     rmlUnloadDocument(document);
     document = nullptr;
 }
@@ -55,28 +46,29 @@ void settingsGuiShow(void) {
 }
 
 int settingsClose(void* _) {
-    guiManagerRemoveGuiNextFrame(&settingsGui);
+    engine::guiManagerRemoveGuiNextFrame(&settingsGui);
     return 0;
 }
 
 int showAudioSettings(void* _) {
-    futureTaskAddNoParam(0, settingsGuiHide);
-    guiManagerAddGuiNextFrame(&settingsAudioGui);
+    utils::futureTaskAddNoParam(0, settingsGuiHide);
+    engine::guiManagerAddGuiNextFrame(&settingsAudioGui);
     return 0;
 }
 
 int showVideoSettings(void* _) {
-    futureTaskAddNoParam(0, settingsGuiHide);
-    guiManagerAddGuiNextFrame(&settingsVideoGui);
+    utils::futureTaskAddNoParam(0, settingsGuiHide);
+    engine::guiManagerAddGuiNextFrame(&settingsVideoGui);
     return 0;
 }
 
 int showGraphicsSettings(void* _) {
-    futureTaskAddNoParam(0, settingsGuiHide);
-    guiManagerAddGuiNextFrame(&settingsGraphicsGui);
+    utils::futureTaskAddNoParam(0, settingsGuiHide);
+    engine::guiManagerAddGuiNextFrame(&settingsGraphicsGui);
     return 0;
 }
 
 char settingsGuiIsShowing(void) {
     return document != nullptr;
 }
+}  // namespace game

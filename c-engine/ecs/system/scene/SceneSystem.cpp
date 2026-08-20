@@ -1,4 +1,5 @@
 #include "SceneSystem.h"
+#include "SceneSystem.h"
 #include "ecs/Ecs.h"
 #include "ecs/components/Skin.h"
 #include "ecs/system/camera/CameraComponent.h"
@@ -7,8 +8,9 @@
 #include "renderer/Renderer.h"
 #include "thread/Thread.h"
 
+namespace engine {
 static int ComponentTypeCounter = 0;
-static Array(Scene*) visibleScenes;
+static std::vector<Scene*> visibleScenes;
 
 static bool aabbOutsideFrustum(const vec3 min, const vec3 max, vec4* planes) {
     for (i32 i = 0; i < 6; i++) {
@@ -25,22 +27,20 @@ static bool aabbOutsideFrustum(const vec3 min, const vec3 max, vec4* planes) {
     return false;
 }
 
-static void sceneSystemAdded(void) {}
+void SceneSystem::added() {}
 
-static void sceneSystemRemoved(void) {
-    arrayFree(visibleScenes);
+void SceneSystem::removed() {
 }
 
-static void sceneSystemPostUpdate(void) {
-    arrayClear(visibleScenes);
+void SceneSystem::postUpdate() {
+    visibleScenes.clear();
 
     Entity* cameraEntity = cameraGetEntity();
     Camera* camera      = cameraEntity ? getComponent(cameraEntity->scene, Camera, cameraEntity->id)
                                        : nullptr;
     vec4* frustumPlanes = camera ? (vec4*)camera->cameraUbo.frustumPlanes : nullptr;
 
-    int culledCount = 0;
-    foreach (Scene* scene, ecs.scenes) {
+    for (Scene* scene : ecs.scenes) {
         /* Scene bounds are currently static and computed once by SceneParser.
          * If a scene later needs dynamic or effectively unbounded contents,
          * revisit that policy instead of rebuilding bounds here every frame. */
@@ -51,27 +51,16 @@ static void sceneSystemPostUpdate(void) {
 
         scene->visible = visible;
         if (visible) {
-            arrayPut(visibleScenes, scene);
-        } else {
-            culledCount++;
+            visibleScenes.push_back(scene);
         }
     }
 
-    rendererSetVisibleScenes(visibleScenes, static_cast<u32>(arraySize(visibleScenes)));
+    rendererSetVisibleScenes(visibleScenes.data(), static_cast<u32>(static_cast<i32>(visibleScenes.size())));
 }
 
-System sceneSystem = {
-    .name                = "sceneSystem",
-    .added               = sceneSystemAdded,
-    .removed             = sceneSystemRemoved,
-    .preUpdate           = nullptr,
-    .update              = nullptr,
-    .postUpdate          = sceneSystemPostUpdate,
-    .cpuElapsedLastFrame = 0.0,
-    .cpuElapsed          = 0.0,
-    .gpuElapsed          = 0.0,
-    .priority            = 0,
-};
+SceneSystem sceneSystem;
+
+SceneSystem::SceneSystem() : System("sceneSystem") {}
 
 void* F_sceneCreateComponent(Scene* scene, u32 entity, u64* typeIdPtr, u64 size) {
     THREAD_LOCK;
@@ -79,15 +68,15 @@ void* F_sceneCreateComponent(Scene* scene, u32 entity, u64* typeIdPtr, u64 size)
     THREAD_UNLOCK;
 
     u64 id = *typeIdPtr;
-    if (id >= arraySize(scene->components)) {
-        arraySetSizeZeroed(scene->components, id + 1);
+    if (id >= scene->components.size()) {
+        scene->components.resize(id + 1);
     }
 
     if (!scene->components[id]) {
-        scene->components[id] = ssNew(size);
+        scene->components[id] = utils::ssNew(size);
     }
 
-    return ssNewItem(scene->components[id], entity);
+    return utils::ssNewItem(scene->components[id], entity);
 }
 
 void* F_sceneAddComponent(Scene* scene, u32 entity, u64* typeIdPtr, u64 size, void* data) {
@@ -99,15 +88,15 @@ void* F_sceneAddComponent(Scene* scene, u32 entity, u64* typeIdPtr, u64 size, vo
 void* F_sceneGetComponent(Scene* scene, u32 entity, u64* typeIdPtr) {
     if (*typeIdPtr == 0) return nullptr;
     u64 id = *typeIdPtr;
-    if (id >= arraySize(scene->components)) return nullptr;
+    if (id >= scene->components.size()) return nullptr;
     if (scene->components[id] == nullptr) return nullptr;
-    return ssGetDataByValue(scene->components[id], entity);
+    return utils::ssGetDataByValue(scene->components[id], entity);
 }
 
-SparseSet* F_sceneGetComponents(Scene* scene, u64* typeIdPtr) {
+utils::SparseSet* F_sceneGetComponents(Scene* scene, u64* typeIdPtr) {
     if (*typeIdPtr == 0) return nullptr;
     u64 id = *typeIdPtr;
-    if (id >= arraySize(scene->components)) return nullptr;
+    if (id >= scene->components.size()) return nullptr;
     if (scene->components[id] == nullptr) return nullptr;
     return scene->components[id];
 }
@@ -117,55 +106,55 @@ void F_sceneRemoveComponent(Scene* scene, u32 entity, u64* typeIdPtr) {
     int id = *typeIdPtr;
     if (scene->components[id] == nullptr) return;
 
-    ssRemoveByValue(scene->components[id], entity);
+    utils::ssRemoveByValue(scene->components[id], entity);
 }
 
 static u32 globalEntityCounter = 0;
 
 Entity* createEntity(Scene* scene, const char* name) {
     u32 newEntityId = 0;
-    if (arraySize(scene->entityFreeList)) {
-        newEntityId = arrayPop(scene->entityFreeList);
+    if (!scene->entityFreeList.empty()) {
+        newEntityId = scene->entityFreeList.back();
+        scene->entityFreeList.pop_back();
     } else {
         globalEntityCounter++;
         newEntityId = globalEntityCounter;
     }
 
-    Entity* entity = static_cast<Entity*>(memoryAlloc(sizeof(Entity)));
-    *entity        = Entity{
+    Entity* entity = new Entity{
         .id       = newEntityId,
         .scene    = scene,
         .parent   = nullptr,
-        .children = nullptr,
         .name     = nullptr,
     };
 
     if (name && name[0]) {
         size_t len = strlen(name);
-        char* copy = static_cast<char*>(memoryAlloc(len + 1));
+        char* copy = static_cast<char*>(malloc(len + 1));
         memcpy(copy, name, len + 1);
         entity->name = copy;
     }
 
-    arrayPut(scene->entities, entity);
-    mapPut(scene->entityMap, newEntityId, entity);
+    scene->entities.push_back(entity);
+    scene->entityMap[newEntityId] = entity;
     return entity;
 }
 
 Entity* getEntity(Scene* scene, u32 entityId) {
-    return mapGet(scene->entityMap, entityId);
+    auto it = scene->entityMap.find(entityId);
+    return it != scene->entityMap.end() ? it->second : nullptr;
 }
 
 Entity* sceneFindEntity(Scene* scene, const char* name) {
-    foreach (Entity* e, scene->entities) {
-        if (e->name && strequals(e->name, name)) return e;
+    for (Entity* e : scene->entities) {
+        if (e->name && utils::strequals(e->name, name)) return e;
     }
     return nullptr;
 }
 
 Entity* entityFindDescendant(Entity* root, const char* name) {
-    foreach (Entity* child, root->children) {
-        if (child->name && strequals(child->name, name)) return child;
+    for (Entity* child : root->children) {
+        if (child->name && utils::strequals(child->name, name)) return child;
         Entity* found = entityFindDescendant(child, name);
         if (found) return found;
     }
@@ -174,37 +163,36 @@ Entity* entityFindDescendant(Entity* root, const char* name) {
 
 void destroyEntity(Entity* entity) {
     Scene* scene = entity->scene;
-    foreach (struct SparseSet* item, scene->components) {
-        if (item && ssContainsValue(item, entity->id)) {
-            ssRemoveByValue(item, entity->id);
+    for (struct utils::SparseSet* item : scene->components) {
+        if (item && utils::ssContainsValue(item, entity->id)) {
+            utils::ssRemoveByValue(item, entity->id);
         }
     }
 
     if (entity->name) {
-        memoryFree(const_cast<char*>(entity->name));
+        free(const_cast<char*>(entity->name));
     }
 
     if (entity->parent) {
-        for (i32 i = 0, si = arraySize(entity->parent->children); i < si; i++) {
+        for (i32 i = 0, si = static_cast<i32>(entity->parent->children.size()); i < si; i++) {
             if (entity->parent->children[i] == entity) {
-                arrayDeleteSlow(entity->parent->children, i);
+                entity->parent->children.erase(entity->parent->children.begin() + i);
                 break;
             }
         }
     }
 
-    arrayFree(entity->children);
-    mapRemove(scene->entityMap, entity->id);
-    arrayPut(scene->entityFreeList, entity->id);
+    scene->entityMap.erase(entity->id);
+    scene->entityFreeList.push_back(entity->id);
 
-    for (i32 i = 0, si = arraySize(scene->entities); i < si; i++) {
+    for (i32 i = 0, si = static_cast<i32>(scene->entities.size()); i < si; i++) {
         if (scene->entities[i] == entity) {
-            arrayDeleteSlow(scene->entities, i);
+            scene->entities.erase(scene->entities.begin() + i);
             break;
         }
     }
 
-    memoryFree(entity);
+    delete entity;
 }
 
 void sceneDestroy(Scene* scene) {
@@ -217,76 +205,42 @@ void sceneDestroy(Scene* scene) {
     // main thread, so this check cannot race with load completion.
     if (scene->asyncLoadPending) {
         scene->destroyRequested = 1;
-        warn("sceneSystem: scene destroy deferred until the in-flight async load completes");
+        utils::warn("sceneSystem: scene destroy deferred until the in-flight async load completes");
         return;
     }
-    SparseSet* meshSet = getComponents(scene, Mesh);
-    if (meshSet) {
-        for (u32 i = 0; i < meshSet->size; i++) {
-            Mesh* m  = static_cast<Mesh*>(ssGetDataByIndex(meshSet, i));
-            for (i32 j = 0, sj = arraySize(m->primitives); j < sj; j++) {
-                Primitive* p = &m->primitives[j];
-                arrayFree(p->indices);
-                arrayFree(p->positions);
-                for (i32 k = 0; k < cgltf_attribute_type_max_enum; k++) {
-                    arrayFree(p->attributes[k]);
-                }
-            }
-            arrayFree(m->primitives);
-            arrayFree(m->instances);
-        }
+    for (utils::SparseSet* ss : scene->components) {
+        if (ss) utils::ssDestroy(ss);
     }
 
-    SparseSet* skinSet = getComponents(scene, Skin);
-    if (skinSet) {
-        for (u32 i = 0; i < skinSet->size; i++) {
-            Skin* s  = static_cast<Skin*>(ssGetDataByIndex(skinSet, i));
-            arrayFree(s->joints);
-            arrayFree(s->inverseBindMatrices);
-            arrayFree(s->jointTransforms);
-        }
+    for (Entity* e : scene->entities) {
+        if (e->name) free(const_cast<char*>(e->name));
+        delete e;
     }
 
-    foreach (SparseSet* ss, scene->components) {
-        if (ss) ssDestroy(ss);
+    for (const auto& entry : scene->extras) {
+        jsonFree(entry.second);
     }
-    arrayFree(scene->components);
-    arrayFree(scene->entityFreeList);
+    utils::stringDestroy(&scene->name);
 
-    foreach (Entity* e, scene->entities) {
-        if (e->name) memoryFree(const_cast<char*>(e->name));
-        arrayFree(e->children);
-        memoryFree(e);
-    }
-    arrayFree(scene->entities);
-    mapFree(scene->entityMap);
-
-    mapFree(scene->activeEntities);
-    arrayFree(scene->activeEntityRemoveList);
-    for (i32 i = 0, si = mapSize(scene->extras); i < si; i++) {
-        jsonFree(scene->extras[i].value);
-    }
-    mapFree(scene->extras);
-    stringDestroy(&scene->name);
-
-    for (i32 i = 0, si = static_cast<i32>(arraySize(ecs.scenes)); i < si; i++) {
+    for (i32 i = 0, si = static_cast<i32>(static_cast<i32>(ecs.scenes.size())); i < si; i++) {
         if (ecs.scenes[i] == scene) {
-            arrayDeleteSlow(ecs.scenes, i);
+            ecs.scenes.erase(ecs.scenes.begin() + i);
             break;
         }
     }
 
-    memoryFree(scene);
+    delete scene;
 }
 
 Entity* searchEntity(const char* name) {
-    foreach (auto item, ecs.scenes) {
+    for (auto item : ecs.scenes) {
         Entity* entity = sceneFindEntity(item, name);
         if (entity) return entity;
     }
     return nullptr;
 }
 
-Array(Scene*) sceneSystemGetVisibleScenes(void) {
+std::vector<Scene*> sceneSystemGetVisibleScenes(void) {
     return visibleScenes;
 }
+}  // namespace engine

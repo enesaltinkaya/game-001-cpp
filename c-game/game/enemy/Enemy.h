@@ -1,9 +1,9 @@
 #pragma once
 
 #include "ecs/system/scene/SceneSystem.h"
-
+#include "ecs/system/physics/PhysicsComponent.h"  // IWYU pragma: keep
 struct JoltCharacter;
-struct JoltBody;
+namespace game {
 
 enum EnemyState {
     ENEMY_STATE_IDLE,
@@ -30,7 +30,7 @@ struct Enemy {
 
     // Target tracking
     u32    targetEntityId;
-    Scene* targetScene;
+    engine::Scene* targetScene;
     float lastKnownTargetPos[3];
     float targetPosValidTimer;
 
@@ -78,3 +78,4 @@ struct Enemy {
 };
 
 REGISTER_COMPONENT(Enemy);
+}  // namespace game

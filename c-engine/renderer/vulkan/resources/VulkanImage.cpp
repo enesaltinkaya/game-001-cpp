@@ -9,6 +9,7 @@
 #include "renderer/vulkan/resources/VulkanResourceManager.h"
 #include "string/String.h"
 
+namespace engine {
 static bool hasStencilComponent(VkFormat format);
 static VkAccessFlags2 accessFlagsForLayout(VkImageLayout layout);
 static VkPipelineStageFlags2 stageFlagsForLayout(VkImageLayout layout);
@@ -72,7 +73,7 @@ VulkanImage r_vulkanCreateImg(VulkanImageInfo info) {
                     &image.vma,
                     nullptr);
     if (!image.img) {
-        warn("r_vulkanCreateImg: VMA image allocation failed (name=%s, format=%d)",
+        utils::warn("r_vulkanCreateImg: VMA image allocation failed (name=%s, format=%d)",
              info.name, static_cast<int>(info.format));
         return VulkanImage{};
     }
@@ -93,7 +94,7 @@ VulkanImage r_vulkanCreateImg(VulkanImageInfo info) {
     imageViewCreateInfo.subresourceRange.baseArrayLayer = 0;
     vkCreateImageView(vulkan.device, &imageViewCreateInfo, nullptr, &image.view);
 
-    arraySetSize(image.views, info.layers);
+    image.views.resize(info.layers);
     for (i32 i = 0, si = info.layers; i < si; i++) {
         VkImageViewCreateInfo perLayerViewCI = {};
         perLayerViewCI.sType                 = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
@@ -125,10 +126,10 @@ VulkanImage r_vulkanCreateImg(VulkanImageInfo info) {
             perLayerViewCI.subresourceRange.aspectMask     = info.aspect;
         }
         vkCreateImageView(vulkan.device, &perLayerViewCI, nullptr, &image.views[i]);
-        if (isDebug()) {
+        if (utils::isDebug()) {
             vulkanUtilsSetName(reinterpret_cast<uint64_t>(image.views[i]),
                                VK_OBJECT_TYPE_IMAGE_VIEW,
-                               strtmp("view %s arr: %d", info.name, i));
+                               utils::strtmp("view %s arr: %d", info.name, i));
         }
     }
 
@@ -136,16 +137,16 @@ VulkanImage r_vulkanCreateImg(VulkanImageInfo info) {
         vulkanAddImageToPool(&image);
     }
 
-    stringPrintf(&image.name, info.name);
+    utils::stringPrintf(&image.name, info.name);
 
-    if (isDebug()) {
+    if (utils::isDebug()) {
         vulkanUtilsSetName(reinterpret_cast<uint64_t>(image.view),
                            VK_OBJECT_TYPE_IMAGE_VIEW,
-                           strtmp("%s%s", "view ", info.name));
+                           utils::strtmp("%s%s", "view ", info.name));
         vulkanUtilsSetName(
             reinterpret_cast<uint64_t>(image.img),
             VK_OBJECT_TYPE_IMAGE,
-            strtmp("%s%s poolIndex: %d", "image ", info.name, image.sampledPoolIndex));
+            utils::strtmp("%s%s poolIndex: %d", "image ", info.name, image.sampledPoolIndex));
     }
 
     return image;
@@ -154,8 +155,8 @@ VulkanImage r_vulkanCreateImg(VulkanImageInfo info) {
 void vulkanDestroyImage(VulkanImage* image, VkFence fence) {
     vulkanRemoveImageFromPool(image);
     addImageGarbage(image, fence, nullptr);
-    stringDestroy(&image->name);
-    if (image->onHeap) memoryFree(image);
+    utils::stringDestroy(&image->name);
+    if (image->onHeap) delete image;
 }
 
 void vulkanTransition(VulkanCommand* cmd,
@@ -303,12 +304,14 @@ void vulkanImgGenerateMips(VulkanCommand* cmd, VulkanImage* img) {
 
         // Blit from (i-1) → i
         VkImageBlit blit = {
-            .srcOffsets[0] = {0, 0, 0},
-            .srcOffsets[1] = {mipWidth, mipHeight, 1},
-            .dstOffsets[0] = {0, 0, 0},
-            .dstOffsets[1] = {mipWidth > 1 ? mipWidth / 2 : 1,
-                              mipHeight > 1 ? mipHeight / 2 : 1,
-                              1},
+            .srcSubresource = {},
+            .srcOffsets[0]  = {0, 0, 0},
+            .srcOffsets[1]  = {mipWidth, mipHeight, 1},
+            .dstSubresource = {},
+            .dstOffsets[0]  = {0, 0, 0},
+            .dstOffsets[1]  = {mipWidth > 1 ? mipWidth / 2 : 1,
+                               mipHeight > 1 ? mipHeight / 2 : 1,
+                               1},
         };
         blit.srcSubresource.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
         blit.srcSubresource.mipLevel       = i - 1;
@@ -520,7 +523,7 @@ static void copyImage(VulkanCommand* cmd,
 // } Texture;
 
 void vulkanLoadTexture(Texture* texture, bool nonColor, bool genMips) {
-    VulkanImage* vulkanImage = static_cast<VulkanImage*>(memoryAlloc(sizeof(VulkanImage)));
+    VulkanImage* vulkanImage = new VulkanImage{};
 
     VkFormat format = VK_FORMAT_UNDEFINED;
     if (texture->image.vkFormat) {
@@ -582,7 +585,7 @@ void vulkanLoadTexture(Texture* texture, bool nonColor, bool genMips) {
         VulkanBuffer staging = vulkanCreateStagingBuffer(texture->image.size);
         memcpy(static_cast<char*>(staging.vmaInfo.pMappedData), texture->image.data, texture->image.size);
 
-        Array(VkBufferImageCopy) regions = {};
+        std::vector<VkBufferImageCopy> regions = {};
 
         for (i32 i = 0; i < texture->image.mips; i++) {
             i32 mipWidth  = texture->image.width >> i;
@@ -601,15 +604,14 @@ void vulkanLoadTexture(Texture* texture, bool nonColor, bool genMips) {
             region.imageExtent.height          = mipHeight;
             region.imageExtent.depth           = 1;
             region.bufferOffset                = texture->image.mipSizes[i];
-            arrayPut(regions, region);
+            regions.push_back(region);
         }
         vkCmdCopyBufferToImage(cmd->cmd,
                                staging.buf,
                                vulkanImage->img,
                                VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                               arraySize(regions),
-                               regions);
-        arrayFree(regions);
+                               static_cast<i32>(regions.size()),
+                               regions.data());
         addBufferGarbage(&staging, cmd->fence, &cmd->submitted);
         vulkanTransition(cmd, vulkanImage, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
     } else {
@@ -626,8 +628,9 @@ void vulkanLoadTexture(Texture* texture, bool nonColor, bool genMips) {
 
     vulkanTransientEnd(cmd, 1);
 
-    imageDestory(&texture->image);
+    utils::imageDestory(&texture->image);
 
     texture->backendImg = vulkanImage;
     texture->id         = vulkanImage->sampledPoolIndex;
 }
+}  // namespace engine

@@ -1,7 +1,9 @@
 #pragma once
 
 #include "string/String.h"
+#include "libzip/git/lib/zip.h"
 
+namespace utils {
 void dataManagerInit(void);
 void dataManagerDestroy(void);
 
@@ -21,12 +23,12 @@ struct ZipFile {
 };
 
 // Returns an array of Strings with all file paths in paks matching the given
-// extension (e.g. ".ktx2").  Caller must destroy each String and arrayFree the
-// result.
-Array(String) dataManagerListFiles(const char* extension);
+// extension (e.g. ".ktx2").  Caller must destroy each String.
+std::vector<String> dataManagerListFiles(const char* extension);
 
 void* dmRmlopen(const char* path);
 void dmRmlclose(void* file);
 unsigned long long dmRmlread(void* buffer, unsigned long long size, void* file);
 int dmRmlseek(void* file, unsigned long long offset, int origin);
 unsigned long long dmRmltell(void* file);
+}  // namespace utils

@@ -22,9 +22,7 @@
 #include "settings/Settings.h"
 #include "material/MaterialManager.h"
 
-static void added(void);
-static void removed(void);
-static void postUpdate(void);
+namespace engine {
 static AAMode sanitizeAAMode(AAMode mode);
 static RendererAASettings sanitizeAASettings(RendererAASettings settings);
 static RendererUpscalerMode sanitizeUpscalerMode(RendererUpscalerMode mode);
@@ -43,36 +41,27 @@ static RendererAASettings aaSettings     = {
 static TonemapMode tonemapMode = TONEMAP_AGX_PUNCHY;
 static float renderScale       = 1.0f;
 
-System renderSystem = {
-    .name                = "renderer",
-    .added               = added,
-    .removed             = removed,
-    .preUpdate           = nullptr,
-    .update              = nullptr,
-    .postUpdate          = postUpdate,
-    .cpuElapsedLastFrame = 0.0,
-    .cpuElapsed          = 0.0,
-    .gpuElapsed          = 0.0,
-    .priority            = 0,
-};
+RenderSystem renderSystem;
 
-void added(void) {
-    info("renderer: initializing null renderer stub");
-    float savedScale = (float)settingsGetDouble("renderScale");
+RenderSystem::RenderSystem() : System("renderer") {}
+
+void RenderSystem::added() {
+    utils::info("renderer: initializing null renderer stub");
+    float savedScale = (float)utils::settingsGetDouble("renderScale");
     if (savedScale < 0.25f) {
         savedScale = 1.0f;
     }
 
-    rendererSetUpscalerMode((RendererUpscalerMode)(int)settingsGetDouble("upscalerMode"));
+    rendererSetUpscalerMode((RendererUpscalerMode)(int)utils::settingsGetDouble("upscalerMode"));
     rendererSetRenderScale(savedScale);
     /* taaEnabled is authoritative for TAA; a stale aaMode value must not
      * re-enable it. */
-    rendererSetAAMode(settingsGetBool("taaEnabled") ? AA_TAA : AA_OFF);
+    rendererSetAAMode(utils::settingsGetBool("taaEnabled") ? AA_TAA : AA_OFF);
     rendererSetAASettings(RendererAASettings{
-        .casStrength = (float)(settingsGetDouble("aaCasStrength") / 100.0),
-        .taaWeight   = (float)settingsGetDouble("taaWeight"),
-        .taaGhost    = (float)settingsGetDouble("taaGhost"),
-        .taaDepth    = (float)settingsGetDouble("taaDepth"),
+        .casStrength = (float)(utils::settingsGetDouble("aaCasStrength") / 100.0),
+        .taaWeight   = (float)utils::settingsGetDouble("taaWeight"),
+        .taaGhost    = (float)utils::settingsGetDouble("taaGhost"),
+        .taaDepth    = (float)utils::settingsGetDouble("taaDepth"),
     });
 
     vulkanInit();
@@ -81,15 +70,15 @@ void added(void) {
     textureManagerInit();
 
     /* Restore per-effect enable/disable from saved settings. */
-    if (settingsGetBool("shadowsDisabled")) vulkanShadowPassSetDisabled(1);
-    if (settingsGetBool("gtaoDisabled")) vulkanGtaoPassSetDisabled(1);
-    if (settingsGetBool("ssrDisabled")) vulkanSsrPassSetDisabled(1);
-    if (settingsGetBool("bloomDisabled")) vulkanBloomPassSetDisabled(1);
-    if (settingsGetBool("contactShadowDisabled")) vulkanContactShadowPassSetDisabled(1);
+    if (utils::settingsGetBool("shadowsDisabled")) vulkanShadowPassSetDisabled(1);
+    if (utils::settingsGetBool("gtaoDisabled")) vulkanGtaoPassSetDisabled(1);
+    if (utils::settingsGetBool("ssrDisabled")) vulkanSsrPassSetDisabled(1);
+    if (utils::settingsGetBool("bloomDisabled")) vulkanBloomPassSetDisabled(1);
+    if (utils::settingsGetBool("contactShadowDisabled")) vulkanContactShadowPassSetDisabled(1);
 
     /* Apply fog mode from settings */
     {
-        int fogMode = (int)settingsGetDouble("fogMode");
+        int fogMode = (int)utils::settingsGetDouble("fogMode");
         if (fogMode < 0 || fogMode > 1) fogMode = 1;
         VulkanFogData fog = vulkanResourceGetFogData();
         switch (fogMode) {
@@ -105,12 +94,12 @@ void added(void) {
         vulkanResourceSetFogData(fog);
     }
 
-    debug("renderer: renderer bridge initialized");
-    signalEmit("rendererInitialized", nullptr);
+    utils::debug("renderer: renderer bridge initialized");
+    utils::signalEmit("rendererInitialized", nullptr);
 }
 
-void removed(void) {
-    for (i32 i = (i32)arraySize(ecs.scenes) - 1; i >= 0; i--) {
+void RenderSystem::removed() {
+    for (i32 i = (i32)static_cast<i32>(ecs.scenes.size()) - 1; i >= 0; i--) {
         rendererSceneDestroy(ecs.scenes[i]);
     }
     cleanupMaterials();
@@ -118,7 +107,7 @@ void removed(void) {
     vulkanDestroy();
 }
 
-void postUpdate(void) {
+void RenderSystem::postUpdate() {
     if (ecs.showStats) {
         renderSystem.cpuElapsed     = 0.0;
         renderer.rendererElapsedCpu = 0.0;
@@ -423,3 +412,4 @@ void rendererUpdateRenderDimensions(void) {
     window.renderWidth  = rw;
     window.renderHeight = rh;
 }
+}  // namespace engine

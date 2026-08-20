@@ -6,6 +6,7 @@
 #define AZGAAR_BIOME_MAX_ICONS 16
 #define AZGAAR_ICON_NAME_LEN   16
 
+namespace game {
 struct AzgaarCell {
     float x;
     float y;
@@ -19,10 +20,10 @@ struct AzgaarCell {
     float prec;     // 0..100
     float coast;    // cell units, see above
     u32   feature;  // waterbody / landmass id
-    u32*  vertices;
-    u32   vertexCount;
-    u32*  neighbors;
-    u32   neighborCount;
+    std::vector<u32>  vertices;
+    u32               vertexCount;
+    std::vector<u32>  neighbors;
+    u32               neighborCount;
 };
 
 struct AzgaarVertex {
@@ -37,8 +38,8 @@ struct AzgaarCellGrid {
     u32   rows;
     float bucketSize;
     float invBucketSize;
-    u32*  bucketStart;
-    u32*  bucketCells;
+    std::vector<u32>  bucketStart;
+    std::vector<u32>  bucketCells;
 };
 
 // A rendered pack cell used for political-zone lookups. Positions are in
@@ -101,8 +102,8 @@ struct AzgaarRoutePoint {
 struct AzgaarRoute {
     AzgaarRouteGroup group;
     char             name[64];
-    AzgaarRoutePoint* points;
-    u32              pointCount;
+    std::vector<AzgaarRoutePoint> points;
+    u32                           pointCount;
     float            length;
     u32              feature;
 };
@@ -126,7 +127,7 @@ struct AzgaarRiver {
     u32   parent;
     u32   basin;
     // Centerline polyline in map px (x,y pairs) from the SVG `d` attribute.
-    float*  pointsPx;
+    std::vector<float> pointsPx;
     u32     pointCount;
 };
 
@@ -194,11 +195,11 @@ struct AzgaarMarker {
 };
 
 struct AzgaarWorld {
-    String jsonData;
-    AzgaarCell* cells;
-    AzgaarVertex* vertices;
-    AzgaarCellGrid cellGrid;
-    float* heightGrid;
+    utils::String jsonData;
+    std::vector<AzgaarCell>   cells;
+    std::vector<AzgaarVertex> vertices;
+    AzgaarCellGrid            cellGrid;
+    std::vector<float>        heightGrid;
     u32    heightGridWidth;
     u32    heightGridHeight;
     // Smoothed biome-colour grid: RGB u8 triplets at the same dimensions as
@@ -206,7 +207,7 @@ struct AzgaarWorld {
     // low-passed (masked land/water) so biome transitions blend over roughly
     // one FMG cell spacing instead of switching at the pixel-hard Voronoi
     // border.  Sampled bilinearly by azgaarWorldSampleBiomeColorSmooth.
-    u8* biomeColorGrid;
+    std::vector<u8> biomeColorGrid;
     u32 biomeColorGridWidth;
     u32 biomeColorGridHeight;
     // Climate grids (workstream A of plans/azgaar-world-population.md).
@@ -215,10 +216,10 @@ struct AzgaarWorld {
     // a nearest-cell id field and is NOT blurred).  Sampled by
     // azgaarWorldSampleClimate and baked into the terrain pass' `climate`
     // texture.  `climateGridWidth == heightGridWidth` when hasClimate.
-    float* tempGrid;    // degrees C
-    float* precGrid;    // 0..100
-    float* coastGrid;   // cell units, + land / - water (see AzgaarCell.coast)
-    u8*    biomeGrid;   // biome id per texel
+    std::vector<float> tempGrid;    // degrees C
+    std::vector<float> precGrid;    // 0..100
+    std::vector<float> coastGrid;   // cell units, + land / - water (see AzgaarCell.coast)
+    std::vector<u8>    biomeGrid;   // biome id per texel
     u32    climateGridWidth;
     u32    climateGridHeight;
     // Peak land elevation in metres (azgaarHeightToMeters of the tallest
@@ -239,27 +240,27 @@ struct AzgaarWorld {
     u32    cellCount;
     u32    gridVertexCount;
     u32    vertexCount;
-    AzgaarSettlement* settlements; // section 15 (workstream D)
+    std::vector<AzgaarSettlement> settlements; // section 15 (workstream D)
     u32    settlementCount;
     u32    routeCount;
-    AzgaarRoute* routes;
-    AzgaarRiver* rivers;
+    std::vector<AzgaarRoute> routes;
+    std::vector<AzgaarRiver> rivers;
     u32    riverCount;
-    AzgaarMarker* markers; // section 35 (workstream E)
+    std::vector<AzgaarMarker> markers; // section 35 (workstream E)
     u32    markerCount;
 
     // Political zone data parsed from pack.cells / pack.states / pack.provinces.
-    AzgaarPackCell*    packCells;
+    std::vector<AzgaarPackCell>    packCells;
     u32                packCellCount;
-    AzgaarNamedRegion* states;
+    std::vector<AzgaarNamedRegion> states;
     u32                stateCount;
-    AzgaarNamedRegion* provinces;
+    std::vector<AzgaarNamedRegion> provinces;
     u32                provinceCount;
     // FMG biome table (section 3) + per-grid-cell biome id.  The biome id is
     // recomputed from each grid cell's height/temperature/moisture using FMG's
     // biome matrix (biome is only stored per *pack* cell in the .map, which we
     // do not reconstruct, but the grid inputs yield the same classification).
-    AzgaarBiome* biomes;
+    std::vector<AzgaarBiome> biomes;
     u32          biomeCount;
 };
 
@@ -347,13 +348,12 @@ void azgaarWorldSampleClimate(const AzgaarWorld* world,
 //   A = biome id
 // The bias keeps every channel monotonic across its sign change so bilinear
 // filtering cannot ring (a raw two's-complement Int8 byte would wrap 255<->1
-// at 0).  Returns a memoryAlloc'd W*H*4 buffer (caller frees); nullptr when the
-// climate grids are unavailable.
-u8* azgaarWorldPackClimateTexture(const AzgaarWorld* world, u32* outWidth, u32* outHeight);
+// at 0).  Returns an empty vector when the climate grids are unavailable.
+std::vector<u8> azgaarWorldPackClimateTexture(const AzgaarWorld* world, u32* outWidth, u32* outHeight);
 
 // Pack biomeColorGrid (RGB u8) into an RGBA8 buffer (A = 255) for GPU upload.
-// memoryAlloc'd W*H*4 buffer (caller frees); nullptr when the grid is absent.
-u8* azgaarWorldPackBiomeColorTexture(const AzgaarWorld* world, u32* outWidth, u32* outHeight);
+// Empty vector when the grid is absent.
+std::vector<u8> azgaarWorldPackBiomeColorTexture(const AzgaarWorld* world, u32* outWidth, u32* outHeight);
 
 // Samples the political zone (province + state) at a map-space position by
 // finding the nearest pack cell. out->provinceName / out->stateName point into
@@ -367,3 +367,4 @@ void azgaarWorldSampleZone(const AzgaarWorld* world,
 
 bool azgaarWorldLoad(AzgaarWorld* world, const char* path);
 void azgaarWorldDestroy(AzgaarWorld* world);
+}  // namespace game

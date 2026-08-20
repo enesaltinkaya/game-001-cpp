@@ -1,3 +1,4 @@
+#include "AnimationSystem.h"
 #include "AnimatorComponent.h"
 #include "AnimationSystem.h"
 #include "ecs/Ecs.h"
@@ -7,10 +8,21 @@
 #include "ecs/system/transform/TransformComponent.h"
 #include "ecs/system/transform/TransformSystem.h"
 #include "timer/Timer.h"
+#include <unordered_map>
 #include <string.h>
 #include <math.h>
 
+namespace engine {
 AnimationLibrary animationLibrary = {};
+
+// Bone name -> Entity* cache per animator, keyed by the animator's owning
+// entity. Lives outside the Animator component because SparseSet stores
+// components via memcpy, which would corrupt a std::unordered_map member.
+static std::unordered_map<Entity*, std::unordered_map<std::string, Entity*>> g_animatorBoneMaps;
+
+static std::unordered_map<std::string, Entity*>& animatorBoneMap(Entity* owner) {
+    return g_animatorBoneMaps[owner];
+}
 
 /*
  * =====================================================
@@ -88,7 +100,7 @@ static void cubicSplineRotation(const Keyframe* a, const Keyframe* b, float t, f
  * we interpolate between the last keyframe and the first keyframe
  * to produce a smooth wrap-around instead of holding the last pose.
  */
-static void findKeyframes(Array(Keyframe) keys,
+static void findKeyframes(std::vector<Keyframe> keys,
                           float time,
                           i32* outPrev,
                           i32* outNext,
@@ -96,7 +108,7 @@ static void findKeyframes(Array(Keyframe) keys,
                           i32* hint,
                           bool looping,
                           float clipDuration) {
-    size_t keyCount = arraySize(keys);
+    size_t keyCount = static_cast<i32>(keys.size());
     if (keyCount == 0) {
         *outPrev = -1;
         *outNext = -1;
@@ -197,7 +209,7 @@ static void findKeyframes(Array(Keyframe) keys,
  * Sample position at given time with interpolation type support
  */
 static void samplePosition(AnimationChannel* channel, float time, bool looping, float clipDuration, vec3 out) {
-    if (arraySize(channel->positionKeys) == 0) {
+    if (static_cast<i32>(channel->positionKeys.size()) == 0) {
         glm_vec3_zero(out);
         return;
     }
@@ -238,7 +250,7 @@ static void samplePosition(AnimationChannel* channel, float time, bool looping, 
  * Sample rotation at given time with interpolation type support
  */
 static void sampleRotation(AnimationChannel* channel, float time, bool looping, float clipDuration, versor out) {
-    if (arraySize(channel->rotationKeys) == 0) {
+    if (static_cast<i32>(channel->rotationKeys.size()) == 0) {
         glm_quat_identity(out);
         return;
     }
@@ -279,7 +291,7 @@ static void sampleRotation(AnimationChannel* channel, float time, bool looping, 
  * Sample scale at given time with interpolation type support
  */
 static void sampleScale(AnimationChannel* channel, float time, bool looping, float clipDuration, vec3 out) {
-    if (arraySize(channel->scaleKeys) == 0) {
+    if (static_cast<i32>(channel->scaleKeys.size()) == 0) {
         glm_vec3_one(out);
         return;
     }
@@ -321,19 +333,19 @@ static void sampleScale(AnimationChannel* channel, float time, bool looping, flo
  * Only updates components that have keyframes, preserving existing values for others.
  */
 static void sampleChannelToTransform(AnimationChannel* channel, float time, bool looping, float clipDuration, Transform* out) {
-    if (arraySize(channel->positionKeys) > 0) {
+    if (static_cast<i32>(channel->positionKeys.size()) > 0) {
         vec3 pos;
         samplePosition(channel, time, looping, clipDuration, pos);
         glm_vec3_copy(pos, out->pos);
     }
 
-    if (arraySize(channel->rotationKeys) > 0) {
+    if (static_cast<i32>(channel->rotationKeys.size()) > 0) {
         versor rot;
         sampleRotation(channel, time, looping, clipDuration, rot);
         glm_vec4_copy(rot, out->rot);
     }
 
-    if (arraySize(channel->scaleKeys) > 0) {
+    if (static_cast<i32>(channel->scaleKeys.size()) > 0) {
         vec3 scale;
         sampleScale(channel, time, looping, clipDuration, scale);
         out->pos[3] = scale[0];
@@ -347,20 +359,20 @@ static void updateEvents(AnimationInstance* instance, float oldTime, float newTi
     // Handle looping reset
     if (instance->loop && oldTime > newTime) {
         // Wrapped around, reset event tracking
-        for (size_t i = 0; i < arraySize(instance->eventCallbacks); i++) {
+        for (size_t i = 0; i < instance->eventCallbacks.size(); i++) {
             instance->eventCallbacks[i].lastFiredTime = 0.0f;
         }
         oldTime = 0.0f;
     }
 
     // Check each event
-    for (size_t i = 0; i < arraySize(instance->clip->events); i++) {
+    for (size_t i = 0; i < instance->clip->events.size(); i++) {
         AnimationEventDef* event = &instance->clip->events[i];
 
-        for (size_t j = 0; j < arraySize(instance->eventCallbacks); j++) {
+        for (size_t j = 0; j < instance->eventCallbacks.size(); j++) {
             EventCallback* cb = &instance->eventCallbacks[j];
 
-            if (strequals(cb->eventName.data, event->name.data)) {
+            if (utils::strequals(cb->eventName.data, event->name.data)) {
                 // Check if we crossed the event time
                 bool shouldFire = false;
 
@@ -409,9 +421,9 @@ static void updateBlending(AnimationInstance* instance, float deltaTime) {
 
 static void addEntitySubtreeToBoneMap(Animator* animator, Entity* entity) {
     if (entity->name) {
-        strmapPut(animator->boneMap, entity->name, entity);
+        animatorBoneMap(animator->entity)[entity->name] = entity;
     }
-    for (size_t i = 0; i < arraySize(entity->children); i++) {
+    for (size_t i = 0; i < entity->children.size(); i++) {
         addEntitySubtreeToBoneMap(animator, entity->children[i]);
     }
 }
@@ -420,10 +432,10 @@ static void buildBoneMap(Animator* animator, Scene* scene) {
     Skin* skin = getComponent(scene, Skin, animator->entity->id);
     if (skin) {
         // Skinned mesh: map from skin joints
-        foreach (u32 jointId, skin->joints) {
+        for (u32 jointId : skin->joints) {
             Entity* jointEntity = getEntity(scene, jointId);
             if (jointEntity && jointEntity->name) {
-                strmapPut(animator->boneMap, jointEntity->name, jointEntity);
+                animatorBoneMap(animator->entity)[jointEntity->name] = jointEntity;
             }
         }
     } else {
@@ -432,44 +444,32 @@ static void buildBoneMap(Animator* animator, Scene* scene) {
     }
 }
 
-static void added(void);
-static void update(void);
-static void removed(void);
 
-System animationSystem = {
-    .name                = "animation",
-    .added               = added,
-    .removed             = removed,
-    .preUpdate           = nullptr,
-    .update              = update,
-    .postUpdate          = nullptr,
-    .cpuElapsedLastFrame = 0.0,
-    .cpuElapsed          = 0.0,
-    .gpuElapsed          = 0.0,
-    .priority            = 0,
-};
+AnimationSystem animationSystem;
 
-static void added(void) {
-    debug("animationSystem: initialized");
+AnimationSystem::AnimationSystem() : System("animation") {}
+
+void AnimationSystem::added() {
+    utils::debug("animationSystem: initialized");
 }
 
-static void update(void) {
-    float deltaTime = timer.dt;
+void AnimationSystem::update() {
+    float deltaTime = utils::timer.dt;
 
     // Iterate through all scenes (for future multi-scene system)
-    for (size_t s = 0; s < arraySize(ecs.scenes); s++) {
+    for (size_t s = 0; s < ecs.scenes.size(); s++) {
         Scene* scene = ecs.scenes[s];
         if (!scene) continue;
 
         // 1. Update Animations and apply to local Transform components
-        SparseSet* animatorSet = getComponents(scene, Animator);
+        utils::SparseSet* animatorSet = getComponents(scene, Animator);
         if (animatorSet) {
             for (u32 i = 0; i < animatorSet->size; i++) {
-                Animator* animator  = static_cast<Animator*>(ssGetDataByIndex(animatorSet, i));
-                if (!animator || arraySize(animator->activeInstances) == 0) continue;
+                Animator* animator  = static_cast<Animator*>(utils::ssGetDataByIndex(animatorSet, i));
+                if (!animator || static_cast<i32>(animator->activeInstances.size()) == 0) continue;
 
                 // Build bone map lazily from Skin joints
-                if (!animator->boneMap && animator->entity) {
+                if (animator->entity && g_animatorBoneMaps[animator->entity].empty()) {
                     buildBoneMap(animator, scene);
                 }
 
@@ -487,7 +487,7 @@ static void update(void) {
                     if (!animator->skeletonRoot) {
                         Entity* subtreeRoot = animator->entity;
                         Skin* skin          = getComponent(scene, Skin, animator->entity->id);
-                        if (skin && arraySize(skin->joints) > 0) {
+                        if (skin && static_cast<i32>(skin->joints.size()) > 0) {
                             Entity* firstJoint = getEntity(scene, skin->joints[0]);
                             if (firstJoint) {
                                 // Walk up from the first joint to find the
@@ -512,7 +512,7 @@ static void update(void) {
                 }
 
                 // Process each active animation instance
-                for (size_t j = 0; j < arraySize(animator->activeInstances); j++) {
+                for (size_t j = 0; j < animator->activeInstances.size(); j++) {
                     AnimationInstance* instance = animator->activeInstances[j];
                     if (!instance || instance->markedForRemoval) continue;
 
@@ -541,7 +541,7 @@ static void update(void) {
                         }
                         // Reset keyframe hints so the hint-based fast path
                         // doesn't stall after time wraps back to near zero.
-                        for (size_t k = 0; k < arraySize(instance->clip->channels); k++) {
+                        for (size_t k = 0; k < instance->clip->channels.size(); k++) {
                             AnimationChannel* ch = &instance->clip->channels[k];
                             ch->lastPosKeyIndex   = 0;
                             ch->lastRotKeyIndex   = 0;
@@ -575,9 +575,9 @@ static void update(void) {
                     bool initialized;
                 };
 
-                Array(ChannelAccum) accumulators = {};
+                std::vector<ChannelAccum> accumulators = {};
 
-                for (size_t j = 0; j < arraySize(animator->activeInstances); j++) {
+                for (size_t j = 0; j < animator->activeInstances.size(); j++) {
                     AnimationInstance* instance = animator->activeInstances[j];
                     if (!instance || instance->markedForRemoval || instance->weight < 0.001f) {
                         continue;
@@ -585,16 +585,18 @@ static void update(void) {
 
                     // Build/update channel entity resolution cache
                     if (animator->cachedClip != instance->clip) {
-                        arrayClear(animator->cachedChannelEntities);
-                        for (size_t k = 0; k < arraySize(instance->clip->channels); k++) {
+                        animator->cachedChannelEntities.clear();
+                        for (size_t k = 0; k < instance->clip->channels.size(); k++) {
                             AnimationChannel* ch = &instance->clip->channels[k];
-                            Entity* ent          = strmapGet(animator->boneMap, ch->jointName.data);
-                            arrayPut(animator->cachedChannelEntities, ent ? ent->id : 0);
+                            auto& boneMap = animatorBoneMap(animator->entity);
+                            auto boneIt   = boneMap.find(ch->jointName.data);
+                            Entity* ent   = (boneIt != boneMap.end()) ? boneIt->second : nullptr;
+                            animator->cachedChannelEntities.push_back(ent ? ent->id : 0);
                         }
                         animator->cachedClip = instance->clip;
                     }
 
-                    for (size_t k = 0; k < arraySize(instance->clip->channels); k++) {
+                    for (size_t k = 0; k < instance->clip->channels.size(); k++) {
                         AnimationChannel* channel = &instance->clip->channels[k];
                         u32 targetJointEntity     = animator->cachedChannelEntities[k];
                         if (targetJointEntity == 0) {
@@ -608,7 +610,7 @@ static void update(void) {
                         }
 
                         ChannelAccum* accum = nullptr;
-                        for (size_t a = 0; a < arraySize(accumulators); a++) {
+                        for (size_t a = 0; a < accumulators.size(); a++) {
                             if (accumulators[a].entityId == targetJointEntity) {
                                 accum = &accumulators[a];
                                 break;
@@ -621,15 +623,15 @@ static void update(void) {
                             transformCopy(&init.accumPosition, localTransform);
                             transformCopy(&init.accumRotation, localTransform);
                             transformCopy(&init.accumScale, localTransform);
-                            arrayPut(accumulators, init);
-                            accum = &accumulators[arraySize(accumulators) - 1];
+                            accumulators.push_back(init);
+                            accum = &accumulators[static_cast<i32>(accumulators.size()) - 1];
                         }
 
                         Transform sampledTransform;
                         transformCopy(&sampledTransform, &accum->baseTransform);
                         sampleChannelToTransform(channel, instance->currentTime, instance->loop, instance->clip->duration, &sampledTransform);
 
-                        if (arraySize(channel->positionKeys) > 0) {
+                        if (static_cast<i32>(channel->positionKeys.size()) > 0) {
                             float totalWeight = accum->positionWeight + instance->weight;
                             float mixWeight = totalWeight > 0.0f ? (instance->weight / totalWeight)
                                                                  : 0.0f;
@@ -641,7 +643,7 @@ static void update(void) {
                             accum->initialized    = true;
                         }
 
-                        if (arraySize(channel->rotationKeys) > 0) {
+                        if (static_cast<i32>(channel->rotationKeys.size()) > 0) {
                             float totalWeight = accum->rotationWeight + instance->weight;
                             float mixWeight = totalWeight > 0.0f ? (instance->weight / totalWeight)
                                                                  : 0.0f;
@@ -654,7 +656,7 @@ static void update(void) {
                             accum->initialized    = true;
                         }
 
-                        if (arraySize(channel->scaleKeys) > 0) {
+                        if (static_cast<i32>(channel->scaleKeys.size()) > 0) {
                             float totalWeight = accum->scaleWeight + instance->weight;
                             float mixWeight = totalWeight > 0.0f ? (instance->weight / totalWeight)
                                                                  : 0.0f;
@@ -667,7 +669,7 @@ static void update(void) {
                     }
                 }
 
-                for (size_t a = 0; a < arraySize(accumulators); a++) {
+                for (size_t a = 0; a < accumulators.size(); a++) {
                     ChannelAccum* accum = &accumulators[a];
                     if (!accum->initialized) {
                         continue;
@@ -692,14 +694,13 @@ static void update(void) {
                     }
                 }
 
-                arrayFree(accumulators);
 
                 // Remove marked instances
-                for (i32 j = arraySize(animator->activeInstances) - 1; j >= 0; j--) {
+                for (i32 j = static_cast<i32>(animator->activeInstances.size()) - 1; j >= 0; j--) {
                     AnimationInstance* instance = animator->activeInstances[j];
                     if (instance && instance->markedForRemoval) {
-                        arrayDeleteSlow(animator->activeInstances, j);
-                        memoryFree(instance);
+                        animator->activeInstances.erase(animator->activeInstances.begin() + j);
+                        delete instance;
                     }
                 }
             }
@@ -710,42 +711,33 @@ static void update(void) {
     }
 }
 
-static void removed(void) {
+void AnimationSystem::removed() {
     // Free all active animation instances in all scenes
-    foreach (auto scene, ecs.scenes) {
-        SparseSet* animators = getComponents(scene, Animator);
+    for (auto scene : ecs.scenes) {
+        utils::SparseSet* animators = getComponents(scene, Animator);
         if (!animators) continue;
         for (u32 i = 0, si = animators->size; i < si; i++) {
-            Animator* animator  = static_cast<Animator*>(ssGetDataByIndex(animators, i));
-            foreach (auto instance, animator->activeInstances) {
-                arrayFree(instance->eventCallbacks);
-                memoryFree(instance);
+            Animator* animator  = static_cast<Animator*>(utils::ssGetDataByIndex(animators, i));
+            for (auto instance : animator->activeInstances) {
+                delete instance;
             }
-            arrayFree(animator->activeInstances);
-            strmapFree(animator->boneMap);
-            arrayFree(animator->cachedChannelEntities);
+            g_animatorBoneMaps.erase(animator->entity);
         }
     }
 
     // Free animation library
-    foreach (auto clip, animationLibrary.clips) {
-        stringDestroy(&clip->name);
-        foreach (auto channel, clip->channels) {
-            stringDestroy(&channel.jointName);
-            arrayFree(channel.positionKeys);
-            arrayFree(channel.rotationKeys);
-            arrayFree(channel.scaleKeys);
+    for (auto clip : animationLibrary.clips) {
+        utils::stringDestroy(&clip->name);
+        for (auto channel : clip->channels) {
+            utils::stringDestroy(&channel.jointName);
         }
-        arrayFree(clip->channels);
-        foreach (auto event, clip->events) {
-            stringDestroy(&event.name);
+        for (auto event : clip->events) {
+            utils::stringDestroy(&event.name);
         }
-        arrayFree(clip->events);
-        memoryFree(clip);
+        delete clip;
     }
-    arrayFree(animationLibrary.clips);
 
-    info("animationSystem: shutdown");
+    utils::info("animationSystem: shutdown");
 }
 
 /*
@@ -756,26 +748,25 @@ static void removed(void) {
 
 AnimationClip* animationGetOrCreate(const char* name) {
     // Check if already exists
-    for (size_t i = 0; i < arraySize(animationLibrary.clips); i++) {
-        if (strequals(animationLibrary.clips[i]->name.data, name)) {
+    for (size_t i = 0; i < animationLibrary.clips.size(); i++) {
+        if (utils::strequals(animationLibrary.clips[i]->name.data, name)) {
             return animationLibrary.clips[i];
         }
     }
 
     // Create new clip
-    AnimationClip* clip = static_cast<AnimationClip*>(memoryAlloc(sizeof(AnimationClip)));
-    memset(clip, 0, sizeof(AnimationClip));
-    stringPrintf(&clip->name, name);
+        AnimationClip* clip = new AnimationClip{};
+    utils::stringPrintf(&clip->name, name);
     clip->duration = 0.0f;
 
-    arrayPut(animationLibrary.clips, clip);
+    animationLibrary.clips.push_back(clip);
 
     return clip;
 }
 
 AnimationClip* animationGet(const char* name) {
-    for (size_t i = 0; i < arraySize(animationLibrary.clips); i++) {
-        if (strequals(animationLibrary.clips[i]->name.data, name)) {
+    for (size_t i = 0; i < animationLibrary.clips.size(); i++) {
+        if (utils::strequals(animationLibrary.clips[i]->name.data, name)) {
             return animationLibrary.clips[i];
         }
     }
@@ -783,7 +774,7 @@ AnimationClip* animationGet(const char* name) {
 }
 
 AnimationClip* animationGetFirst(void) {
-    if (arraySize(animationLibrary.clips) == 0) {
+    if (static_cast<i32>(animationLibrary.clips.size()) == 0) {
         return nullptr;
     }
     return animationLibrary.clips[0];
@@ -803,7 +794,7 @@ void animationPlay(Entity* entity, const char* clipName, float speed, bool loop)
     // Get animation clip
     AnimationClip* clip = animationGet(clipName);
     if (!clip) {
-        warn("animationPlay: clip '%s' not found", clipName);
+        utils::warn("animationPlay: clip '%s' not found", clipName);
         return;
     }
 
@@ -811,8 +802,7 @@ void animationPlay(Entity* entity, const char* clipName, float speed, bool loop)
     animationStopAll(entity);
 
     // Create new instance
-    AnimationInstance* instance = static_cast<AnimationInstance*>(memoryAlloc(sizeof(AnimationInstance)));
-    memset(instance, 0, sizeof(AnimationInstance));
+        AnimationInstance* instance = new AnimationInstance{};
     instance->clip              = clip;
     instance->currentTime       = 0.0f;
     instance->speed             = speed;
@@ -824,7 +814,7 @@ void animationPlay(Entity* entity, const char* clipName, float speed, bool loop)
     instance->blendElapsed      = 0.0f;
     instance->markedForRemoval  = false;
 
-    arrayPut(animator->activeInstances, instance);
+    animator->activeInstances.push_back(instance);
 }
 
 void animationPlayBlended(Entity* entity,
@@ -843,12 +833,12 @@ void animationPlayBlended(Entity* entity,
 
     AnimationClip* clip = animationGet(clipName);
     if (!clip) {
-        warn("animationPlayBlended: clip '%s' not found", clipName);
+        utils::warn("animationPlayBlended: clip '%s' not found", clipName);
         return;
     }
 
     // Fade out existing animations
-    for (size_t i = 0; i < arraySize(animator->activeInstances); i++) {
+    for (size_t i = 0; i < animator->activeInstances.size(); i++) {
         AnimationInstance* instance = animator->activeInstances[i];
         if (instance) {
             instance->blendWeightStart  = instance->weight;
@@ -859,8 +849,7 @@ void animationPlayBlended(Entity* entity,
     }
 
     // Create and fade in new animation
-    AnimationInstance* instance = static_cast<AnimationInstance*>(memoryAlloc(sizeof(AnimationInstance)));
-    memset(instance, 0, sizeof(AnimationInstance));
+        AnimationInstance* instance = new AnimationInstance{};
     instance->clip              = clip;
     instance->currentTime       = 0.0f;
     instance->speed             = speed;
@@ -872,7 +861,7 @@ void animationPlayBlended(Entity* entity,
     instance->blendElapsed      = 0.0f;
     instance->markedForRemoval  = false;
 
-    arrayPut(animator->activeInstances, instance);
+    animator->activeInstances.push_back(instance);
 }
 
 void animationCrossFade(Entity* entity, const char* fromClip, const char* toClip, float duration) {
@@ -880,14 +869,14 @@ void animationCrossFade(Entity* entity, const char* fromClip, const char* toClip
 
     Animator* animator = getComponent(scene, Animator, entity->id);
     if (!animator) {
-        warn("animationCrossFade: entity has no animator");
+        utils::warn("animationCrossFade: entity has no animator");
         return;
     }
 
     // Find and fade out "from" animation
-    for (size_t i = 0; i < arraySize(animator->activeInstances); i++) {
+    for (size_t i = 0; i < animator->activeInstances.size(); i++) {
         AnimationInstance* instance = animator->activeInstances[i];
-        if (instance && strequals(instance->clip->name.data, fromClip)) {
+        if (instance && utils::strequals(instance->clip->name.data, fromClip)) {
             instance->blendWeightStart  = instance->weight;
             instance->blendWeightTarget = 0.0f;
             instance->blendDuration     = duration;
@@ -898,9 +887,9 @@ void animationCrossFade(Entity* entity, const char* fromClip, const char* toClip
 
     // Find or create "to" animation
     AnimationInstance* toInstance = nullptr;
-    for (size_t i = 0; i < arraySize(animator->activeInstances); i++) {
+    for (size_t i = 0; i < animator->activeInstances.size(); i++) {
         AnimationInstance* instance = animator->activeInstances[i];
-        if (instance && strequals(instance->clip->name.data, toClip)) {
+        if (instance && utils::strequals(instance->clip->name.data, toClip)) {
             toInstance = instance;
             break;
         }
@@ -909,12 +898,11 @@ void animationCrossFade(Entity* entity, const char* fromClip, const char* toClip
     if (!toInstance) {
         AnimationClip* clip = animationGet(toClip);
         if (!clip) {
-            warn("animationCrossFade: toClip '%s' not found", toClip);
+            utils::warn("animationCrossFade: toClip '%s' not found", toClip);
             return;
         }
 
-        toInstance  = static_cast<AnimationInstance*>(memoryAlloc(sizeof(AnimationInstance)));
-        memset(toInstance, 0, sizeof(AnimationInstance));
+                toInstance  = new AnimationInstance{};
         toInstance->clip             = clip;
         toInstance->currentTime      = 0.0f;
         toInstance->speed            = 1.0f;
@@ -924,7 +912,7 @@ void animationCrossFade(Entity* entity, const char* fromClip, const char* toClip
         toInstance->blendElapsed     = 0.0f;
         toInstance->markedForRemoval = false;
 
-        arrayPut(animator->activeInstances, toInstance);
+        animator->activeInstances.push_back(toInstance);
     }
 
     // Fade in "to" animation
@@ -938,11 +926,11 @@ void animationStop(Entity* entity, const char* clipName) {
     Animator* animator = getComponent(entity->scene, Animator, entity->id);
     if (!animator) return;
 
-    for (i32 i = arraySize(animator->activeInstances) - 1; i >= 0; i--) {
+    for (i32 i = static_cast<i32>(animator->activeInstances.size()) - 1; i >= 0; i--) {
         AnimationInstance* instance = animator->activeInstances[i];
-        if (instance && strequals(instance->clip->name.data, clipName)) {
-            arrayDeleteSlow(animator->activeInstances, i);
-            memoryFree(instance);
+        if (instance && utils::strequals(instance->clip->name.data, clipName)) {
+            animator->activeInstances.erase(animator->activeInstances.begin() + i);
+            delete instance;
             break;
         }
     }
@@ -953,23 +941,22 @@ void animationStopAll(Entity* entity) {
     if (!animator) return;
 
     // Free all animation instances before clearing the array
-    for (size_t i = 0; i < arraySize(animator->activeInstances); i++) {
+    for (size_t i = 0; i < animator->activeInstances.size(); i++) {
         AnimationInstance* instance = animator->activeInstances[i];
         if (instance) {
-            arrayFree(instance->eventCallbacks);
-            memoryFree(instance);
+            delete instance;
         }
     }
-    arrayClear(animator->activeInstances);
+    animator->activeInstances.clear();
 }
 
 void animationSetSpeed(Entity* entity, const char* clipName, float speed) {
     Animator* animator = getComponent(entity->scene, Animator, entity->id);
     if (!animator) return;
 
-    for (size_t i = 0; i < arraySize(animator->activeInstances); i++) {
+    for (size_t i = 0; i < animator->activeInstances.size(); i++) {
         AnimationInstance* instance = animator->activeInstances[i];
-        if (instance && strequals(instance->clip->name.data, clipName)) {
+        if (instance && utils::strequals(instance->clip->name.data, clipName)) {
             instance->speed = speed;
             break;
         }
@@ -980,10 +967,10 @@ bool animationIsPlaying(Entity* entity, const char* clipName) {
     Animator* animator = getComponent(entity->scene, Animator, entity->id);
     if (!animator) return false;
 
-    for (size_t i = 0; i < arraySize(animator->activeInstances); i++) {
+    for (size_t i = 0; i < animator->activeInstances.size(); i++) {
         AnimationInstance* instance = animator->activeInstances[i];
         if (instance && !instance->markedForRemoval &&
-            strequals(instance->clip->name.data, clipName)) {
+            utils::strequals(instance->clip->name.data, clipName)) {
             return true;
         }
     }
@@ -997,10 +984,10 @@ bool animationIsFinished(Entity* entity, const char* clipName) {
     // Search backwards — the most recently added instance is last in the array.
     // Skip instances that are fading out (blendWeightTarget == 0) since those
     // are leftovers from a previous play call.
-    for (i32 i = static_cast<i32>(arraySize(animator->activeInstances)) - 1; i >= 0; i--) {
+    for (i32 i = static_cast<i32>(static_cast<i32>(animator->activeInstances.size())) - 1; i >= 0; i--) {
         AnimationInstance* instance = animator->activeInstances[i];
         if (instance && !instance->markedForRemoval && instance->blendWeightTarget > 0.0f &&
-            strequals(instance->clip->name.data, clipName)) {
+            utils::strequals(instance->clip->name.data, clipName)) {
             return !instance->loop && instance->currentTime >= instance->clip->duration;
         }
     }
@@ -1011,10 +998,10 @@ void animationRestart(Entity* entity, const char* clipName, float speed) {
     Animator* animator = getComponent(entity->scene, Animator, entity->id);
     if (!animator) return;
 
-    for (i32 i = static_cast<i32>(arraySize(animator->activeInstances)) - 1; i >= 0; i--) {
+    for (i32 i = static_cast<i32>(static_cast<i32>(animator->activeInstances.size())) - 1; i >= 0; i--) {
         AnimationInstance* instance = animator->activeInstances[i];
         if (instance && !instance->markedForRemoval &&
-            strequals(instance->clip->name.data, clipName)) {
+            utils::strequals(instance->clip->name.data, clipName)) {
             instance->currentTime = 0.0f;
             instance->speed       = speed;
             // Reset any active blend so the instance stays at full weight
@@ -1032,10 +1019,10 @@ bool animationIsNearEnd(Entity* entity, const char* clipName, float thresholdSec
     Animator* animator = getComponent(entity->scene, Animator, entity->id);
     if (!animator) return false;
 
-    for (i32 i = static_cast<i32>(arraySize(animator->activeInstances)) - 1; i >= 0; i--) {
+    for (i32 i = static_cast<i32>(static_cast<i32>(animator->activeInstances.size())) - 1; i >= 0; i--) {
         AnimationInstance* instance = animator->activeInstances[i];
         if (instance && !instance->markedForRemoval && instance->blendWeightTarget > 0.0f &&
-            strequals(instance->clip->name.data, clipName)) {
+            utils::strequals(instance->clip->name.data, clipName)) {
             float remaining = instance->clip->duration - instance->currentTime;
             return remaining >= 0.0f && remaining < thresholdSeconds;
         }
@@ -1046,8 +1033,11 @@ bool animationIsNearEnd(Entity* entity, const char* clipName, float thresholdSec
 Entity* animationGetBoneEntity(Entity* entity, const char* boneName) {
     if (!entity || !boneName) return nullptr;
     Animator* animator = getComponent(entity->scene, Animator, entity->id);
-    if (!animator || !animator->boneMap) return nullptr;
-    return strmapGet(animator->boneMap, boneName);
+    if (!animator || !animator->entity) return nullptr;
+    auto it = g_animatorBoneMaps.find(animator->entity);
+    if (it == g_animatorBoneMaps.end()) return nullptr;
+    auto boneIt = it->second.find(boneName);
+    return boneIt != it->second.end() ? boneIt->second : nullptr;
 }
 
 void animationAddEventCallback(const char* clipName,
@@ -1059,7 +1049,7 @@ void animationAddEventCallback(const char* clipName,
     (void)userData;
     AnimationClip* clip = animationGet(clipName);
     if (!clip) {
-        warn("animationAddEventCallback: clip '%s' not found", clipName);
+        utils::warn("animationAddEventCallback: clip '%s' not found", clipName);
         return;
     }
 
@@ -1089,46 +1079,40 @@ JointMapping* animationCreateJointMapping(const char* sourceSkeleton, const char
     (void)targetSkeleton;
     // TODO: Implement joint name-based mapping
     // This would need access to skeleton joint names
-    warn("animationCreateJointMapping: not yet implemented");
+    utils::warn("animationCreateJointMapping: not yet implemented");
     return nullptr;
 }
 
 void animationFreeJointMapping(JointMapping* mapping) {
     if (mapping) {
-        memoryFree(mapping);
+        delete mapping;
     }
 }
 
 void animationSystemInit(void) {
-    arraySetSize(animationLibrary.clips, 0);
+    animationLibrary.clips.resize(0);
 }
 
 void animationSystemDestroy(void) {
     // Free all animation clips
-    for (size_t i = 0; i < arraySize(animationLibrary.clips); i++) {
+    for (size_t i = 0; i < animationLibrary.clips.size(); i++) {
         AnimationClip* clip = animationLibrary.clips[i];
         if (clip) {
             // Free channels
-            for (size_t j = 0; j < arraySize(clip->channels); j++) {
+            for (size_t j = 0; j < clip->channels.size(); j++) {
                 AnimationChannel* channel = &clip->channels[j];
-                stringDestroy(&channel->jointName);
-                arrayFree(channel->positionKeys);
-                arrayFree(channel->rotationKeys);
-                arrayFree(channel->scaleKeys);
+                utils::stringDestroy(&channel->jointName);
             }
-            arrayFree(clip->channels);
 
             // Free events
-            for (size_t j = 0; j < arraySize(clip->events); j++) {
-                stringDestroy(&clip->events[j].name);
+            for (size_t j = 0; j < clip->events.size(); j++) {
+                utils::stringDestroy(&clip->events[j].name);
             }
-            arrayFree(clip->events);
 
-            stringDestroy(&clip->name);
-            memoryFree(clip);
+            utils::stringDestroy(&clip->name);
+            delete clip;
         }
     }
-    arrayFree(animationLibrary.clips);
 }
 
 /*
@@ -1176,3 +1160,4 @@ bool animationIsFinishedByName(const char* entityName, const char* clipName) {
     Entity* entity = searchEntity(entityName);
     return entity ? animationIsFinished(entity, clipName) : false;
 }
+}  // namespace engine

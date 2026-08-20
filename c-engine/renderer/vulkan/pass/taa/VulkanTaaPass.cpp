@@ -1,4 +1,5 @@
 #include "VulkanTaaPass.h"
+#include "VulkanTaaPass.h"
 #include "ecs/Ecs.h"
 #include "ecs/system/window/WindowSystem.h"
 #include "events/Events.h"
@@ -12,11 +13,7 @@
 #include "renderer/vulkan/pipeline/VulkanPipe.h"
 #include "renderer/vulkan/pipeline/VulkanProfile.h"
 
-static void added(void);
-static void preUpdate(void);
-static void update(void);
-static void postUpdate(void);
-static void removed(void);
+namespace engine {
 static void swapchainCreated(void* _);
 static void createAccumulators(void);
 static void destroyAccumulators(void);
@@ -38,21 +35,12 @@ static VulkanPipe taaPipe;
 static char taaPipeReady;
 static char taaWasEnabled;
 
-System vulkanTaaPass = {
-    .name                = "taa",
-    .added               = added,
-    .removed             = removed,
-    .preUpdate           = preUpdate,
-    .update              = update,
-    .postUpdate          = postUpdate,
-    .cpuElapsedLastFrame = 0.0,
-    .cpuElapsed          = 0.0,
-    .gpuElapsed          = 0.0,
-    .priority            = 0,
-};
+VulkanTaaPass vulkanTaaPass;
 
-static void added(void) {
-    signalSubscribe("swapchainCreated", swapchainCreated);
+VulkanTaaPass::VulkanTaaPass() : System("taa") {}
+
+void VulkanTaaPass::added() {
+    utils::signalSubscribe("swapchainCreated", swapchainCreated);
     profile      = vulkanCreateProfile("taa");
     profileReady = 1;
     taaPipe      = vulkanCreatePipe(.name = "taa",
@@ -60,7 +48,7 @@ static void added(void) {
     taaPipeReady = 1;
 }
 
-static void preUpdate(void) {
+void VulkanTaaPass::preUpdate() {
     if (profileReady) {
         vulkanResetProfile(vulkan.currentCmd, &profile, 0);
     }
@@ -116,11 +104,11 @@ static void createAccumulators(void) {
 static void destroyAccumulators(void) {
     if (taaA.img) {
         vulkanDestroyImage(&taaA, NULL);
-        taaA = VulkanImage{0};
+        taaA = VulkanImage{};
     }
     if (taaB.img) {
         vulkanDestroyImage(&taaB, NULL);
-        taaB = VulkanImage{0};
+        taaB = VulkanImage{};
     }
     taaWidth  = 0;
     taaHeight = 0;
@@ -160,7 +148,7 @@ typedef struct TaaPushConstants {
     u32 maskPrevIndex;
 } TaaPushConstants;
 
-static void update(void) {
+void VulkanTaaPass::update() {
     if (vulkan.skipFrame || !rendererIsTAAEnabled()) {
         /* TAA disabled: drop the output pointer so the final pass falls
          * back to the live scene/composite color, and remember the state
@@ -258,11 +246,11 @@ static void update(void) {
     elapsedGPU = profile.elapsed;
 }
 
-static void postUpdate(void) {
+void VulkanTaaPass::postUpdate() {
     vulkanTaaPass.cpuElapsed = elapsedCPU;
     vulkanTaaPass.gpuElapsed = elapsedGPU;
-    elapsedCPU               = nanos();
-    elapsedCPU               = nanos() - elapsedCPU;
+    elapsedCPU               = utils::nanos();
+    elapsedCPU               = utils::nanos() - elapsedCPU;
 }
 
 /* Debug overrides for TAA tuning (no recompile needed). */
@@ -288,16 +276,16 @@ static float taaEnvDepth(void) {
     return v;
 }
 
-static void removed(void) {
+void VulkanTaaPass::removed() {
     destroyAccumulators();
     if (profileReady) {
         vulkanDestroyProfile(&profile);
-        profile      = VulkanProfile{0};
+        profile      = VulkanProfile{};
         profileReady = 0;
     }
     if (taaPipeReady) {
         vulkanDestroyPipe(&taaPipe);
-        taaPipe      = VulkanPipe{0};
+        taaPipe      = VulkanPipe{};
         taaPipeReady = 0;
     }
 }
@@ -315,3 +303,4 @@ VulkanImage* vulkanTaaPassGetOutput(void) {
 char vulkanTaaPassIsEnabled(void) {
     return rendererIsTAAEnabled() && taaA.img && taaB.img;
 }
+}  // namespace engine

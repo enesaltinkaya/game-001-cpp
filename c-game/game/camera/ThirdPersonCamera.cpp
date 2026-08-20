@@ -10,6 +10,7 @@
 #include "timer/Timer.h"
 
 // ── Orbit camera parameters (1 unit = 1 meter, character height 1.39m) ──────
+namespace game {
 static float tpCameraDistance    = 10.0f;  // default orbit distance (m)
 static float tpCameraHeight      = 1.0f;  // base height offset above look-at (m)
 static float tpCameraSensitivity = 0.15f;
@@ -22,10 +23,10 @@ static vec3 X_AXIS = {1.0f, 0.0f, 0.0f};
 
 static struct {
     u32 followEntityId;
-    Scene* followScene;
-    Entity* camEntity;
-    Camera* camera;
-    Transform* camTransform;
+    engine::Scene* followScene;
+    engine::Entity* camEntity;
+    engine::Camera* camera;
+    engine::Transform* camTransform;
     float yaw;
     float pitch;
     float distance;
@@ -51,20 +52,20 @@ void thirdPersonCameraInit(void) {
     tpCam.anyDrag        = false;
     tpCam.mouseY         = 0.0f;
 
-    tpCam.camEntity    = cameraGetEntity();
-    tpCam.camera       = getComponent(ecs.defaultScene, Camera, tpCam.camEntity->id);
-    tpCam.camTransform = getComponent(ecs.defaultScene, Transform, tpCam.camEntity->id);
+    tpCam.camEntity    = engine::cameraGetEntity();
+    tpCam.camera       = getComponent(engine::ecs.defaultScene, engine::Camera, tpCam.camEntity->id);
+    tpCam.camTransform = getComponent(engine::ecs.defaultScene, engine::Transform, tpCam.camEntity->id);
 }
 
-void thirdPersonCameraSetTarget(Scene* scene, u32 entityId) {
+void thirdPersonCameraSetTarget(engine::Scene* scene, u32 entityId) {
     tpCam.followScene    = scene;
     tpCam.followEntityId = entityId;
 }
 
 void thirdPersonCameraHandleInput(float dx, float dy) {
     if (dx != 0.0f || dy != 0.0f) {
-        tpCam.yaw   -= dx * tpCameraSensitivity * timer.dt;
-        tpCam.pitch += dy * tpCameraSensitivity * timer.dt;
+        tpCam.yaw   -= dx * tpCameraSensitivity * utils::timer.dt;
+        tpCam.pitch += dy * tpCameraSensitivity * utils::timer.dt;
         tpCam.pitch  = glm_clamp(tpCam.pitch, tpPitchMin, tpPitchMax);
         tpCam.mouseY = dy;
     }
@@ -119,7 +120,7 @@ static float tpGhostPan = 0.0f;
 static bool tpGhostPanInit = false;
 
 void thirdPersonCameraUpdate(void) {
-    vulkanResourceSetCameraOccluders(nullptr, nullptr, 0);
+    engine::vulkanResourceSetCameraOccluders(nullptr, nullptr, 0);
     if (!tpCam.camEntity || !tpCam.camera || !tpCam.camTransform) return;
     if (!tpCam.followScene || !tpCam.followEntityId) return;
 
@@ -129,10 +130,10 @@ void thirdPersonCameraUpdate(void) {
         if (env && *env) tpGhostPan = static_cast<float>(atof(env));
     }
     if (tpGhostPan != 0.0f) {
-        tpCam.yaw += tpGhostPan * GLM_PIf / 180.0f * timer.dt;
+        tpCam.yaw += tpGhostPan * GLM_PIf / 180.0f * utils::timer.dt;
     }
 
-    Transform* transform = getComponent(tpCam.followScene, Transform, tpCam.followEntityId);
+    engine::Transform* transform = getComponent(tpCam.followScene, engine::Transform, tpCam.followEntityId);
     if (!transform) return;
 
     // ── Position camera behind player (orbit on a sphere) ──────────────
@@ -230,7 +231,7 @@ void thirdPersonCameraUpdate(void) {
         if (wasClamped) {
             tpCam.smoothDist = clampedDist;
         } else {
-            float t          = glm_clamp(3.0f * timer.dt, 0.0f, 1.0f);
+            float t          = glm_clamp(3.0f * utils::timer.dt, 0.0f, 1.0f);
             tpCam.smoothDist = glm_lerp(tpCam.smoothDist, clampedDist, t);
         }
 
@@ -251,11 +252,11 @@ void thirdPersonCameraUpdate(void) {
         bool pushingUp      = (tpCam.mouseY > 0.0f);
 
         if (!tpCam.moving && cameraClipped && pitchAtMax && pushingUp && tpCam.anyDrag) {
-            tpCam.skyPitchOffset += tpCam.mouseY * tpCameraSensitivity * timer.dt;
+            tpCam.skyPitchOffset += tpCam.mouseY * tpCameraSensitivity * utils::timer.dt;
             tpCam.skyPitchOffset  = glm_clamp(tpCam.skyPitchOffset, 0.0f, GLM_PIf * 0.44f);
         } else {
             if (tpCam.moving || !cameraClipped || tpCam.pitch < tpPitchMax - 0.05f) {
-                float decay           = glm_clamp(5.0f * timer.dt, 0.0f, 1.0f);
+                float decay           = glm_clamp(5.0f * utils::timer.dt, 0.0f, 1.0f);
                 tpCam.skyPitchOffset  = glm_lerp(tpCam.skyPitchOffset, 0.0f, decay);
                 if (tpCam.skyPitchOffset < 0.001f) tpCam.skyPitchOffset = 0.0f;
             }
@@ -265,12 +266,12 @@ void thirdPersonCameraUpdate(void) {
     // Save previous camera pose BEFORE writing the new one so that
     // render-frame interpolation (LastTransform → WorldTransform)
     // has two distinct endpoints to lerp between.
-    transformSaveLast(ecs.defaultScene, tpCam.camEntity->id);
+    engine::transformSaveLast(engine::ecs.defaultScene, tpCam.camEntity->id);
 
     glm_vec3_copy(desiredCamPos, tpCam.camTransform->pos);
     tpCam.camTransform->pos[3] = 1.0f;
 
-    vulkanShadowPassSetFocusDistance(fullOrbitDist);
+    engine::vulkanShadowPassSetFocusDistance(fullOrbitDist);
 
     // Camera looks at the player's look-at point, tilted up by sky-look offset.
     vec3 lookTarget;
@@ -285,5 +286,6 @@ void thirdPersonCameraUpdate(void) {
     glm_mat4_quat(lookMat, tpCam.camTransform->rot);
     glm_quat_inv(tpCam.camTransform->rot, tpCam.camTransform->rot);
 
-    transformQuatToPitchYaw(tpCam.camTransform->rot, &tpCam.camera->pitch, &tpCam.camera->yaw);
+    engine::transformQuatToPitchYaw(tpCam.camTransform->rot, &tpCam.camera->pitch, &tpCam.camera->yaw);
 }
+}  // namespace game

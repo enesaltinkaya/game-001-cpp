@@ -9,6 +9,7 @@
 #define MAX_EVENT_NAME_LENGTH 64
 
 // Forward declarations
+namespace engine {
 struct AnimationClip;
 struct AnimationChannel;
 struct AnimationInstance;
@@ -39,7 +40,7 @@ struct Keyframe {
  * Event definition in an animation clip
  */
 struct AnimationEventDef {
-    String name;
+    utils::String name;
     float time;  // Time in seconds when event triggers
 };
 
@@ -47,7 +48,7 @@ struct AnimationEventDef {
  * Animation event callback data
  */
 struct EventCallback {
-    String eventName;
+    utils::String eventName;
     void (*callback)(void* userData);
     void* userData;
     float lastFiredTime;  // Track last fire time to avoid duplicates
@@ -58,13 +59,13 @@ struct EventCallback {
  * Each channel can have different interpolation types per property
  */
 struct AnimationChannel {
-    String jointName;  // Bone/node name (resolved to entity ID at playback time)
+    utils::String jointName;  // Bone/node name (resolved to entity ID at playback time)
     InterpolationType positionInterpolation;
     InterpolationType rotationInterpolation;
     InterpolationType scaleInterpolation;
-    Array(Keyframe) positionKeys;
-    Array(Keyframe) rotationKeys;
-    Array(Keyframe) scaleKeys;
+    std::vector<Keyframe> positionKeys;
+    std::vector<Keyframe> rotationKeys;
+    std::vector<Keyframe> scaleKeys;
     // Cached last keyframe indices for sequential playback optimization
     i32 lastPosKeyIndex;
     i32 lastRotKeyIndex;
@@ -75,10 +76,10 @@ struct AnimationChannel {
  * Complete animation clip loaded from glTF
  */
 struct AnimationClip {
-    String name;
+    utils::String name;
     float duration;
-    Array(AnimationChannel) channels;
-    Array(AnimationEventDef) events;
+    std::vector<AnimationChannel> channels;
+    std::vector<AnimationEventDef> events;
 };
 
 /*
@@ -94,7 +95,7 @@ struct AnimationInstance {
     float blendWeightTarget;  // Target weight for smooth transitions
     float blendDuration;      // Time to reach target weight
     float blendElapsed;       // Time elapsed since blend started
-    Array(EventCallback) eventCallbacks;
+    std::vector<EventCallback> eventCallbacks;
     bool markedForRemoval;
 };
 
@@ -114,14 +115,16 @@ struct JointMapping {
  */
 struct Animator {
     Entity* entity;  // Owning entity
-    Array(AnimationInstance*) activeInstances;
+    std::vector<AnimationInstance*> activeInstances;
     JointMapping* mapping;  // NULL if no remapping needed
-    StrMap(Entity*) boneMap; // bone name -> Entity* cache (built from entity subtree)
+    // NOTE: the bone name -> Entity* cache lives in AnimationSystem's
+    // g_animatorBoneMaps side table (keyed by animator->entity), not here:
+    // SparseSet stores components via memcpy, which corrupts std containers.
 
     // Per-clip channel resolution cache: clip pointer -> array of resolved entity IDs
     // Avoids strmapGet per channel per frame
     AnimationClip* cachedClip;
-    Array(u32) cachedChannelEntities;  // parallel to cachedClip->channels
+    std::vector<u32> cachedChannelEntities;  // parallel to cachedClip->channels
 
     // Cached skeleton root entity (common ancestor of the animator entity
     // and all joint entities).  Computed once, used every tick to activate
@@ -135,7 +138,7 @@ REGISTER_COMPONENT(Animator);
  * Animation Library - Global storage for all loaded animations
  */
 struct AnimationLibrary {
-    Array(AnimationClip*) clips;
+    std::vector<AnimationClip*> clips;
 };
 
 extern AnimationLibrary animationLibrary;
@@ -246,3 +249,4 @@ JointMapping* animationCreateJointMapping(const char* sourceSkeleton, const char
 void animationFreeJointMapping(JointMapping* mapping);
 
 
+}  // namespace engine

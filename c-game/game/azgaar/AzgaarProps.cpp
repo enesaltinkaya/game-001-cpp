@@ -32,47 +32,48 @@
 // the files by basename so they are found regardless of which subdirectory
 // they live in.
 
-static char* azgaarFindDatPath(const char* baseName) {
-    Array(String) dats = dataManagerListFiles(".dat");
-    char* found        = nullptr;
-    for (u32 i = 0; i < arraySize(dats); i++) {
-        String* p         = &dats[i];
+namespace game {
+static std::string azgaarFindDatPath(const char* baseName) {
+    std::vector<utils::String> dats = utils::dataManagerListFiles(".dat");
+    std::string found;
+    bool foundIt = false;
+    for (u32 i = 0; i < dats.size(); i++) {
+        utils::String* p         = &dats[i];
         const char* slash = strrchr(p->data, '/');
         const char* base  = slash ? slash + 1 : p->data;
         if (strcmp(base, baseName) == 0) {
-            found  = static_cast<char*>(memoryAlloc(p->size + 1));
-            strcpy(found, p->data);
+            found   = p->data;
+            foundIt = true;
             break;
         }
     }
-    for (u32 i = 0; i < arraySize(dats); i++) {
-        stringDestroy(&dats[i]);
+    for (u32 i = 0; i < dats.size(); i++) {
+        utils::stringDestroy(&dats[i]);
     }
-    arrayFree(dats);
-    return found;
+    return foundIt ? found : std::string();
 }
 
-static Scene* g_deciduousScene    = nullptr;
-static char* g_deciduousPath      = nullptr;  // kept alive for the async scene load
-static Scene* g_deciduousFarScene = nullptr;
-static char* g_deciduousFarPath   = nullptr;
+static engine::Scene* g_deciduousScene    = nullptr;
+static std::string g_deciduousPath;
+static engine::Scene* g_deciduousFarScene = nullptr;
+static std::string g_deciduousFarPath;
 static u32 g_variantCount[AZGAAR_PROP_COUNT];  // per-species variant count
 
 // Per-(species, variant) cull spheres in unit-height space, parallel to the
 // variant table rows (same order: row = base[species] + variant).  Built in
 // buildAllMeshes from each variant's local AABB (circumsphere); the cull
 // stage scales them by the instance's `scale`.
-static float* g_variantSphereC = nullptr;  // [3] per row
-static float* g_variantSphereR = nullptr;  // [1] per row
+static std::vector<float> g_variantSphereC;  // [3] per row
+static std::vector<float> g_variantSphereR;  // [1] per row
 static u32 g_variantSphereRows = 0;
 
 // Forward declaration (defined further down, in the mesh-builder section).
-static void buildAllMeshes(PropVariantRange** outVariants,
-                           u32* outVariantCount,
-                           u32* outVertCount,
-                           u32* outIdxCount,
-                           void** outVerts,
-                           void** outIdx);
+static void buildAllMeshes(std::vector<engine::PropVariantRange>& outVariants,
+                           u32& outVariantCount,
+                           u32& outVertCount,
+                           u32& outIdxCount,
+                           std::vector<engine::PropsVertex>& outVerts,
+                           std::vector<u32>& outIdx);
 
 // Bumped every time the variant table is rebuilt; each tile remembers the
 // version it was scattered with, so a rebuild forces a re-scatter with the
@@ -87,16 +88,13 @@ static void propsInvalidateTiles(void);
 // re-pushes it to the engine pass.  Runs on the main thread: at init (with
 // whatever scenes are ready) and once per authored-scene ready callback.
 static void propsRebuildAndPushMeshes(void) {
-    u32 vCount = 0, iCount = 0, variantCount = 0;
-    void* verts                = nullptr;
-    void* idx                  = nullptr;
-    PropVariantRange* variants = nullptr;
-    buildAllMeshes(&variants, &variantCount, &vCount, &iCount, &verts, &idx);
-    vulkanAzgaarPropsSetMeshes(verts, vCount, idx, iCount);
-    vulkanAzgaarPropsSetVariants(variants, variantCount);
-    memoryFree(verts);
-    memoryFree(idx);
-    memoryFree(variants);
+    std::vector<engine::PropsVertex> verts;
+    std::vector<u32> idx;
+    std::vector<engine::PropVariantRange> variants;
+    u32 variantCount = 0, vCount = 0, iCount = 0;
+    buildAllMeshes(variants, variantCount, vCount, iCount, verts, idx);
+    engine::vulkanAzgaarPropsSetMeshes(verts.data(), vCount, idx.data(), iCount);
+    engine::vulkanAzgaarPropsSetVariants(variants.data(), variantCount);
 
     // The variant table changed: drop all scattered tiles so the update loop
     // re-scatters them with the updated counts.
@@ -105,43 +103,41 @@ static void propsRebuildAndPushMeshes(void) {
 }
 
 // Runs on the main thread once the near deciduous scene is fully parsed.
-static void onDeciduousSceneReady(Scene* scene, void* userData) {
+static void onDeciduousSceneReady(engine::Scene* scene, void* userData) {
     static_cast<void>(userData);
     g_deciduousScene = scene;  // keep the global in sync with the ready scene
     propsRebuildAndPushMeshes();
-    info("azgaarProps: deciduous scene ready — variant table rebuilt: %u near variants",
+    utils::info("azgaarProps: deciduous scene ready — variant table rebuilt: %u near variants",
          g_variantCount[AZGAAR_PROP_DECIDUOUS]);
 }
 
 // Runs on the main thread once the far-LOD scene is fully parsed.
-static void onDeciduousFarSceneReady(Scene* scene, void* userData) {
+static void onDeciduousFarSceneReady(engine::Scene* scene, void* userData) {
     static_cast<void>(userData);
     g_deciduousFarScene = scene;
     propsRebuildAndPushMeshes();
-    info("azgaarProps: deciduous_far scene ready — variant table rebuilt: %u far variants",
+    utils::info("azgaarProps: deciduous_far scene ready — variant table rebuilt: %u far variants",
          g_variantCount[AZGAAR_PROP_DECIDUOUS_FAR]);
 }
 
 static void azgaarLoadDeciduousModel(void) {
-    char* path = azgaarFindDatPath("deciduous.dat");
-    if (!path) {
-        info(
+    std::string path = azgaarFindDatPath("deciduous.dat");
+    if (path.empty()) {
+        utils::info(
             "azgaarProps: deciduous.dat not found in any pak; deciduous species falls back to the "
             "procedural mesh");
     } else {
-        info("azgaarProps: found deciduous model at %s", path);
-        // sceneLoad is async: the worker thread reads req->path, so the buffer
-        // must outlive the load. Keep it in g_deciduousPath and free on destroy.
+        utils::info("azgaarProps: found deciduous model at %s", path.c_str());
         g_deciduousPath  = path;
-        g_deciduousScene = sceneLoadCb(path, onDeciduousSceneReady, nullptr);
+        g_deciduousScene = engine::sceneLoadCb(g_deciduousPath.c_str(), onDeciduousSceneReady, nullptr);
     }
-    char* farPath = azgaarFindDatPath("deciduous_far.dat");
-    if (!farPath) {
-        info("azgaarProps: deciduous_far.dat not found; the far LOD reuses the near geometry");
+    std::string farPath = azgaarFindDatPath("deciduous_far.dat");
+    if (farPath.empty()) {
+        utils::info("azgaarProps: deciduous_far.dat not found; the far LOD reuses the near geometry");
     } else {
-        info("azgaarProps: found deciduous far LOD at %s", farPath);
+        utils::info("azgaarProps: found deciduous far LOD at %s", farPath.c_str());
         g_deciduousFarPath  = farPath;
-        g_deciduousFarScene = sceneLoadCb(farPath, onDeciduousFarSceneReady, nullptr);
+        g_deciduousFarScene = engine::sceneLoadCb(g_deciduousFarPath.c_str(), onDeciduousFarSceneReady, nullptr);
     }
 }
 
@@ -211,26 +207,26 @@ static u32 propsLodRole(u32 species) {
 // ── Mesh builder (procedural placeholders, all in PropsVertex layout) ──────
 
 struct MeshBuilder {
-    PropsVertex* verts;
+    std::vector<engine::PropsVertex> verts;
     u32 vertCap, vertCount;
-    u32* idx;
+    std::vector<u32> idx;
     u32 idxCap, idxCount;
 };
 
 static void mbInit(MeshBuilder* mb, u32 vertCap, u32 idxCap) {
-    mb->verts      = static_cast<PropsVertex*>(memoryAlloc(sizeof(PropsVertex) * vertCap));
+    mb->verts.resize(vertCap);
     mb->vertCap   = vertCap;
     mb->vertCount = 0;
-    mb->idx        = static_cast<u32*>(memoryAlloc(sizeof(u32) * idxCap));
+    mb->idx.resize(idxCap);
     mb->idxCap    = idxCap;
     mb->idxCount  = 0;
 }
 
 static void mbFree(MeshBuilder* mb) {
-    memoryFree(mb->verts);
-    memoryFree(mb->idx);
-    mb->verts = nullptr;
-    mb->idx   = nullptr;
+    mb->verts.clear();
+    mb->idx.clear();
+    mb->verts.shrink_to_fit();
+    mb->idx.shrink_to_fit();
 }
 
 static u32 mbAddVert(MeshBuilder* mb,
@@ -244,7 +240,7 @@ static u32 mbAddVert(MeshBuilder* mb,
                      float v) {
     u32 i = mb->vertCount;
     if (i >= mb->vertCap) return (u32)-1;
-    PropsVertex* p = &mb->verts[i];
+    engine::PropsVertex* p = &mb->verts[i];
     p->position[0] = x;
     p->position[1] = y;
     p->position[2] = z;
@@ -271,7 +267,7 @@ static u32 mbAddVert(MeshBuilder* mb,
 // NOT tinted by the per-instance biome colour).  `color` is a 3-float array.
 static void mbVertColor(MeshBuilder* mb, u32 idx, const float color[3]) {
     if (idx == (u32)-1 || idx >= mb->vertCount) return;
-    PropsVertex* p = &mb->verts[idx];
+    engine::PropsVertex* p = &mb->verts[idx];
     p->color[0]    = color[0];
     p->color[1]    = color[1];
     p->color[2]    = color[2];
@@ -845,8 +841,8 @@ static void buildBridge(MeshBuilder* mb) {
 // (base y=0, top y=1, centred in x/z) — identical to the procedural
 // placeholders — so the same `scale` logic applies and the trees read at the
 // intended size instead of 5-12x oversized.
-static void appendSceneMesh(Mesh* mesh,
-                            PropsVertex* mergedVerts,
+static void appendSceneMesh(engine::Mesh* mesh,
+                            engine::PropsVertex* mergedVerts,
                             u32 vertOffset,
                             u32* mergedIdx,
                             u32 idxOffset,
@@ -857,8 +853,8 @@ static void appendSceneMesh(Mesh* mesh,
     // First pass: original AABB (drives the unit-height normalisation).
     float omin[3] = {1e9f, 1e9f, 1e9f};
     float omax[3] = {-1e9f, -1e9f, -1e9f};
-    for (u32 p = 0; p < arraySize(mesh->primitives); p++) {
-        Primitive* prim = &mesh->primitives[p];
+    for (u32 p = 0; p < mesh->primitives.size(); p++) {
+        engine::Primitive* prim = &mesh->primitives[p];
         for (u32 v = 0; v < prim->vertexCount; v++) {
             for (u32 c = 0; c < 3; c++) {
                 float val = prim->positions[v * 3 + c];
@@ -867,7 +863,7 @@ static void appendSceneMesh(Mesh* mesh,
             }
         }
     }
-    info(
+    utils::info(
         "azgaarProps: deciduous obj AABB min=(%.2f,%.2f,%.2f) max=(%.2f,%.2f,%.2f) "
         "extents=(%.2f,%.2f,%.2f)",
         static_cast<double>(omin[0]),
@@ -889,30 +885,30 @@ static void appendSceneMesh(Mesh* mesh,
     u32 iOff      = idxOffset;
     float bmin[3] = {1e9f, 1e9f, 1e9f};
     float bmax[3] = {-1e9f, -1e9f, -1e9f};
-    for (u32 p = 0; p < arraySize(mesh->primitives); p++) {
-        Primitive* prim = &mesh->primitives[p];
+    for (u32 p = 0; p < mesh->primitives.size(); p++) {
+        engine::Primitive* prim = &mesh->primitives[p];
         u32 primVertOff = vOff;
         // This primitive's material selects the base-color texture in the global
         // set 0 `textures` array.  Procedural species (no material) use
         // NO_PROPS_TEX so the shader keeps the plain per-instance tint.
-        Material* mat = getMaterialById(prim->materialId);
+        engine::Material* mat = engine::getMaterialById(prim->materialId);
         u32 texId     = (mat != nullptr) ? mat->colorTexture : NO_PROPS_TEX;
         for (u32 v = 0; v < prim->vertexCount; v++) {
-            PropsVertex sv = {};
+            engine::PropsVertex sv = {};
             sv.texId       = texId;
             sv.position[0] = (prim->positions[v * 3 + 0] - centerX) * invH;
             sv.position[1] = (prim->positions[v * 3 + 1] - omin[1]) * invH;
             sv.position[2] = (prim->positions[v * 3 + 2] - centerZ) * invH;
             if (prim->attributeMask & (1 << cgltf_attribute_type_normal)) {
                 const int16_t* n =
-                    reinterpret_cast<const int16_t*>(prim->attributes[cgltf_attribute_type_normal] + v * 8);
+                    reinterpret_cast<const int16_t*>(prim->attributes[cgltf_attribute_type_normal].data() + v * 8);
                 sv.normal[0] = static_cast<float>(n[0]) / 32767.0f;
                 sv.normal[1] = static_cast<float>(n[1]) / 32767.0f;
                 sv.normal[2] = static_cast<float>(n[2]) / 32767.0f;
             }
             if (prim->attributeMask & (1 << cgltf_attribute_type_tangent)) {
                 const int8_t* t =
-                    reinterpret_cast<const int8_t*>(prim->attributes[cgltf_attribute_type_tangent] + v * 4);
+                    reinterpret_cast<const int8_t*>(prim->attributes[cgltf_attribute_type_tangent].data() + v * 4);
                 sv.tangent[0] = static_cast<float>(t[0]) / 127.0f;
                 sv.tangent[1] = static_cast<float>(t[1]) / 127.0f;
                 sv.tangent[2] = static_cast<float>(t[2]) / 127.0f;
@@ -920,19 +916,19 @@ static void appendSceneMesh(Mesh* mesh,
             }
             if (prim->attributeMask & (1 << cgltf_attribute_type_texcoord)) {
                 const uint16_t* uv =
-                    reinterpret_cast<const uint16_t*>(prim->attributes[cgltf_attribute_type_texcoord] + v * 4);
+                    reinterpret_cast<const uint16_t*>(prim->attributes[cgltf_attribute_type_texcoord].data() + v * 4);
                 sv.uv[0] = static_cast<float>(uv[0]) / 65535.0f;
                 sv.uv[1] = static_cast<float>(uv[1]) / 65535.0f;
             }
             if (prim->attributeMask & (1 << cgltf_attribute_type_joints)) {
-                memcpy(&sv.joints, prim->attributes[cgltf_attribute_type_joints] + v * 4, 4);
+                memcpy(&sv.joints, prim->attributes[cgltf_attribute_type_joints].data() + v * 4, 4);
             }
             if (prim->attributeMask & (1 << cgltf_attribute_type_weights)) {
-                memcpy(&sv.weights, prim->attributes[cgltf_attribute_type_weights] + v * 4, 4);
+                memcpy(&sv.weights, prim->attributes[cgltf_attribute_type_weights].data() + v * 4, 4);
             }
             if (prim->attributeMask & (1 << cgltf_attribute_type_color)) {
                 // Per-part colour (white = tintable, brown trunk = not tinted).
-                u32 comps   = static_cast<u32>(arraySize(prim->colors) / prim->vertexCount);  // 3 or 4
+                u32 comps   = static_cast<u32>(static_cast<i32>(prim->colors.size()) / prim->vertexCount);  // 3 or 4
                 sv.color[0] = prim->colors[static_cast<size_t>(v) * comps + 0];
                 sv.color[1] = prim->colors[static_cast<size_t>(v) * comps + 1];
                 sv.color[2] = prim->colors[static_cast<size_t>(v) * comps + 2];
@@ -958,8 +954,8 @@ static void appendSceneMesh(Mesh* mesh,
 
 // Appends every mesh of a loaded scene (one per variant) to the merged
 // buffer, recording per-object index offsets / counts / local AABBs.
-static void appendSceneMeshes(SparseSet* meshes,
-                              PropsVertex* mergedVerts,
+static void appendSceneMeshes(utils::SparseSet* meshes,
+                              engine::PropsVertex* mergedVerts,
                               u32* vOff,
                               u32* mergedIdx,
                               u32* iOff,
@@ -969,7 +965,7 @@ static void appendSceneMeshes(SparseSet* meshes,
                               float* bMin,
                               float* bMax) {
     for (u32 i = 0; i < meshes->size; i++) {
-        Mesh* mesh     = static_cast<Mesh*>(ssGetDataByIndex(meshes, i));
+        engine::Mesh* mesh     = static_cast<engine::Mesh*>(utils::ssGetDataByIndex(meshes, i));
         idxOffsets[i] = *iOff;
         appendSceneMesh(mesh,
                         mergedVerts,
@@ -996,63 +992,62 @@ static void propsStoreVariantSphere(u32 row, const float bmin[3], const float bm
     g_variantSphereR[row] = sqrtf(hx * hx + hy * hy + hz * hz);
 }
 
-static void buildAllMeshes(PropVariantRange** outVariants,
-                           u32* outVariantCount,
-                           u32* outVertCount,
-                           u32* outIdxCount,
-                           void** outVerts,
-                           void** outIdx) {
+static void buildAllMeshes(std::vector<engine::PropVariantRange>& outVariants,
+                           u32& outVariantCount,
+                           u32& outVertCount,
+                           u32& outIdxCount,
+                           std::vector<engine::PropsVertex>& outVerts,
+                           std::vector<u32>& outIdx) {
     // Build each species into a temp builder, track the total, then concatenate.
     static const u32 kVertCap = 256;
     static const u32 kIdxCap  = 640;  // bridge deck + skirts + rails + posts
     u32 svCount[AZGAAR_PROP_COUNT];
     u32 siCount[AZGAAR_PROP_COUNT];
 
-    MeshBuilder* builders[AZGAAR_PROP_COUNT];
+    MeshBuilder builders[AZGAAR_PROP_COUNT];
     for (u32 s = 0; s < AZGAAR_PROP_COUNT; s++) {
-        builders[s]  = static_cast<MeshBuilder*>(memoryAlloc(sizeof(MeshBuilder)));
-        mbInit(builders[s], kVertCap, kIdxCap);
+        mbInit(&builders[s], kVertCap, kIdxCap);
     }
-    buildGrassTuft(builders[AZGAAR_PROP_GRASS_TUFT]);
-    buildConifer(builders[AZGAAR_PROP_CONIFER]);
-    buildConiferFar(builders[AZGAAR_PROP_CONIFER_FAR]);
-    buildDeciduous(builders[AZGAAR_PROP_DECIDUOUS]);
-    buildDeciduousFar(builders[AZGAAR_PROP_DECIDUOUS_FAR]);
-    buildAcacia(builders[AZGAAR_PROP_ACACIA]);
-    buildPalm(builders[AZGAAR_PROP_PALM]);
-    buildCactus(builders[AZGAAR_PROP_CACTUS]);
-    buildDeadTree(builders[AZGAAR_PROP_DEAD_TREE]);
-    buildReed(builders[AZGAAR_PROP_REED]);
-    buildShrub(builders[AZGAAR_PROP_SHRUB]);
-    buildRock(builders[AZGAAR_PROP_ROCK]);
-    buildFlower(builders[AZGAAR_PROP_FLOWER]);
-    buildHut(builders[AZGAAR_PROP_HUT]);
-    buildHouse(builders[AZGAAR_PROP_HOUSE]);
-    buildTower(builders[AZGAAR_PROP_TOWER]);
-    buildWall(builders[AZGAAR_PROP_WALL]);
-    buildTemple(builders[AZGAAR_PROP_TEMPLE]);
-    buildDock(builders[AZGAAR_PROP_DOCK]);
-    buildGate(builders[AZGAAR_PROP_GATE]);
-    buildVolcano(builders[AZGAAR_PROP_VOLCANO]);
-    buildLighthouse(builders[AZGAAR_PROP_LIGHTHOUSE]);
-    buildLighthouseCap(builders[AZGAAR_PROP_LIGHTHOUSE_CAP]);
-    buildRuinColumn(builders[AZGAAR_PROP_RUIN_COLUMN]);
-    buildRuinArch(builders[AZGAAR_PROP_RUIN_ARCH]);
-    buildMineFrame(builders[AZGAAR_PROP_MINE_FRAME]);
-    buildBridge(builders[AZGAAR_PROP_BRIDGE]);
+    buildGrassTuft(&builders[AZGAAR_PROP_GRASS_TUFT]);
+    buildConifer(&builders[AZGAAR_PROP_CONIFER]);
+    buildConiferFar(&builders[AZGAAR_PROP_CONIFER_FAR]);
+    buildDeciduous(&builders[AZGAAR_PROP_DECIDUOUS]);
+    buildDeciduousFar(&builders[AZGAAR_PROP_DECIDUOUS_FAR]);
+    buildAcacia(&builders[AZGAAR_PROP_ACACIA]);
+    buildPalm(&builders[AZGAAR_PROP_PALM]);
+    buildCactus(&builders[AZGAAR_PROP_CACTUS]);
+    buildDeadTree(&builders[AZGAAR_PROP_DEAD_TREE]);
+    buildReed(&builders[AZGAAR_PROP_REED]);
+    buildShrub(&builders[AZGAAR_PROP_SHRUB]);
+    buildRock(&builders[AZGAAR_PROP_ROCK]);
+    buildFlower(&builders[AZGAAR_PROP_FLOWER]);
+    buildHut(&builders[AZGAAR_PROP_HUT]);
+    buildHouse(&builders[AZGAAR_PROP_HOUSE]);
+    buildTower(&builders[AZGAAR_PROP_TOWER]);
+    buildWall(&builders[AZGAAR_PROP_WALL]);
+    buildTemple(&builders[AZGAAR_PROP_TEMPLE]);
+    buildDock(&builders[AZGAAR_PROP_DOCK]);
+    buildGate(&builders[AZGAAR_PROP_GATE]);
+    buildVolcano(&builders[AZGAAR_PROP_VOLCANO]);
+    buildLighthouse(&builders[AZGAAR_PROP_LIGHTHOUSE]);
+    buildLighthouseCap(&builders[AZGAAR_PROP_LIGHTHOUSE_CAP]);
+    buildRuinColumn(&builders[AZGAAR_PROP_RUIN_COLUMN]);
+    buildRuinArch(&builders[AZGAAR_PROP_RUIN_ARCH]);
+    buildMineFrame(&builders[AZGAAR_PROP_MINE_FRAME]);
+    buildBridge(&builders[AZGAAR_PROP_BRIDGE]);
 
     // Count the authored deciduous objects (one Mesh component per variant).
     // The scene load is async, so only extract once the scene is fully
     // parsed (ready); otherwise fall back to the procedural placeholder.
     u32 decVertTotal = 0, decIdxTotal = 0, decCount = 0;
-    SparseSet* decMeshes = nullptr;
+    utils::SparseSet* decMeshes = nullptr;
     if (g_deciduousScene && g_deciduousScene->ready) {
-        decMeshes = getComponents(g_deciduousScene, Mesh);
+        decMeshes = getComponents(g_deciduousScene, engine::Mesh);
         if (decMeshes) {
             decCount = decMeshes->size;
             for (u32 i = 0; i < decMeshes->size; i++) {
-                Mesh* mesh  = static_cast<Mesh*>(ssGetDataByIndex(decMeshes, i));
-                for (u32 p = 0; p < arraySize(mesh->primitives); p++) {
+                engine::Mesh* mesh  = static_cast<engine::Mesh*>(utils::ssGetDataByIndex(decMeshes, i));
+                for (u32 p = 0; p < mesh->primitives.size(); p++) {
                     decVertTotal += mesh->primitives[p].vertexCount;
                     decIdxTotal += mesh->primitives[p].indexCount;
                 }
@@ -1060,14 +1055,14 @@ static void buildAllMeshes(PropVariantRange** outVariants,
         }
     }
     u32 decFarVertTotal = 0, decFarIdxTotal = 0, decFarCount = 0;
-    SparseSet* decFarMeshes = nullptr;
+    utils::SparseSet* decFarMeshes = nullptr;
     if (g_deciduousFarScene && g_deciduousFarScene->ready) {
-        decFarMeshes = getComponents(g_deciduousFarScene, Mesh);
+        decFarMeshes = getComponents(g_deciduousFarScene, engine::Mesh);
         if (decFarMeshes) {
             decFarCount = decFarMeshes->size;
             for (u32 i = 0; i < decFarMeshes->size; i++) {
-                Mesh* mesh  = static_cast<Mesh*>(ssGetDataByIndex(decFarMeshes, i));
-                for (u32 p = 0; p < arraySize(mesh->primitives); p++) {
+                engine::Mesh* mesh  = static_cast<engine::Mesh*>(utils::ssGetDataByIndex(decFarMeshes, i));
+                for (u32 p = 0; p < mesh->primitives.size(); p++) {
                     decFarVertTotal += mesh->primitives[p].vertexCount;
                     decFarIdxTotal += mesh->primitives[p].indexCount;
                 }
@@ -1083,103 +1078,93 @@ static void buildAllMeshes(PropVariantRange** outVariants,
     // while the real model is still loading (avoids the placeholder→model
     // pop).  No model file → keep the placeholder (count 1).
     for (u32 s = 0; s < AZGAAR_PROP_COUNT; s++) g_variantCount[s] = 1;
-    if (g_deciduousPath) {
+    if (!g_deciduousPath.empty()) {
         g_variantCount[AZGAAR_PROP_DECIDUOUS] = (decCount > 0) ? decCount : 0;
     }
-    if (g_deciduousFarPath) {
+    if (!g_deciduousFarPath.empty()) {
         g_variantCount[AZGAAR_PROP_DECIDUOUS_FAR] = useFar ? decFarCount : 0;
     }
 
     u32 totalVerts = 0, totalIdx = 0;
     for (u32 s = 0; s < AZGAAR_PROP_COUNT; s++) {
         if (g_variantCount[s] == 0)
-            continue;  // awaiting its authored model: no placeholder geometry
-        svCount[s] = builders[s]->vertCount;
-        siCount[s] = builders[s]->idxCount;
+            continue;
+        svCount[s] = builders[s].vertCount;
+        siCount[s] = builders[s].idxCount;
         totalVerts += svCount[s];
         totalIdx += siCount[s];
     }
     totalVerts += decVertTotal + (useFar ? decFarVertTotal : 0);
     totalIdx += decIdxTotal + (useFar ? decFarIdxTotal : 0);
 
-    PropsVertex* mergedVerts = static_cast<PropsVertex*>(memoryAlloc(sizeof(PropsVertex) * totalVerts));
-    u32* mergedIdx = static_cast<u32*>(memoryAlloc(sizeof(u32) * totalIdx));
+    outVerts.resize(totalVerts);
+    outIdx.resize(totalIdx);
+    engine::PropsVertex* mergedVerts = outVerts.data();
+    u32* mergedIdx           = outIdx.data();
     u32 vOff = 0, iOff = 0;
     u32 spIdxOffset[AZGAAR_PROP_COUNT];
     for (u32 s = 0; s < AZGAAR_PROP_COUNT; s++) {
         if (g_variantCount[s] == 0)
-            continue;  // awaiting its authored model: no placeholder geometry
+            continue;
         spIdxOffset[s] = iOff;
-        memcpy(mergedVerts + vOff, builders[s]->verts, sizeof(PropsVertex) * svCount[s]);
-        // Remap this species' indices into the merged vertex space and append.
+        memcpy(mergedVerts + vOff, builders[s].verts.data(), sizeof(engine::PropsVertex) * svCount[s]);
         for (u32 i = 0; i < siCount[s]; i++) {
-            mergedIdx[iOff + i] = builders[s]->idx[i] + vOff;
+            mergedIdx[iOff + i] = builders[s].idx[i] + vOff;
         }
         vOff += svCount[s];
         iOff += siCount[s];
     }
 
-    // Append the authored objects (near scene, then the simplified far scene
-    // when present) after the procedural data.
-    u32* decIdxOffsets  = static_cast<u32*>((decCount > 0) ? memoryAlloc(sizeof(u32) * decCount) : nullptr);
-    u32* decVCounts     = static_cast<u32*>((decCount > 0) ? memoryAlloc(sizeof(u32) * decCount) : nullptr);
-    u32* decICounts     = static_cast<u32*>((decCount > 0) ? memoryAlloc(sizeof(u32) * decCount) : nullptr);
-    float* decBMin      = static_cast<float*>((decCount > 0) ? memoryAlloc(sizeof(float) * 3 * decCount) : nullptr);
-    float* decBMax      = static_cast<float*>((decCount > 0) ? memoryAlloc(sizeof(float) * 3 * decCount) : nullptr);
+    std::vector<u32> decIdxOffsets(decCount), decVCounts(decCount), decICounts(decCount);
+    std::vector<float> decBMin(3 * decCount), decBMax(3 * decCount);
     if (decMeshes && decCount > 0) {
         appendSceneMeshes(decMeshes,
                           mergedVerts,
                           &vOff,
                           mergedIdx,
                           &iOff,
-                          decIdxOffsets,
-                          decVCounts,
-                          decICounts,
-                          decBMin,
-                          decBMax);
+                          decIdxOffsets.data(),
+                          decVCounts.data(),
+                          decICounts.data(),
+                          decBMin.data(),
+                          decBMax.data());
     }
-    u32* decFarIdxOffsets  = static_cast<u32*>((useFar) ? memoryAlloc(sizeof(u32) * decFarCount) : nullptr);
-    u32* decFarVCounts     = static_cast<u32*>((useFar) ? memoryAlloc(sizeof(u32) * decFarCount) : nullptr);
-    u32* decFarICounts     = static_cast<u32*>((useFar) ? memoryAlloc(sizeof(u32) * decFarCount) : nullptr);
-    float* decFarBMin      = static_cast<float*>((useFar) ? memoryAlloc(sizeof(float) * 3 * decFarCount) : nullptr);
-    float* decFarBMax      = static_cast<float*>((useFar) ? memoryAlloc(sizeof(float) * 3 * decFarCount) : nullptr);
+    std::vector<u32> decFarIdxOffsets(decFarCount), decFarVCounts(decFarCount), decFarICounts(decFarCount);
+    std::vector<float> decFarBMin(3 * decFarCount), decFarBMax(3 * decFarCount);
     if (decFarMeshes && useFar) {
         appendSceneMeshes(decFarMeshes,
                           mergedVerts,
                           &vOff,
                           mergedIdx,
                           &iOff,
-                          decFarIdxOffsets,
-                          decFarVCounts,
-                          decFarICounts,
-                          decFarBMin,
-                          decFarBMax);
+                          decFarIdxOffsets.data(),
+                          decFarVCounts.data(),
+                          decFarICounts.data(),
+                          decFarBMin.data(),
+                          decFarBMax.data());
     }
 
     // Build the flat (species, variant) metadata table (+ cull spheres).
     u32 totalRows = 0;
     for (u32 s = 0; s < AZGAAR_PROP_COUNT; s++) totalRows += g_variantCount[s];
-    PropVariantRange* variants = static_cast<PropVariantRange*>(memoryAlloc(sizeof(PropVariantRange) * totalRows));
-    memoryFree(g_variantSphereC);
-    memoryFree(g_variantSphereR);
-    g_variantSphereC     = static_cast<float*>(memoryAlloc(sizeof(float) * 3 * totalRows));
-    g_variantSphereR     = static_cast<float*>(memoryAlloc(sizeof(float) * totalRows));
+    outVariants.resize(totalRows);
+    engine::PropVariantRange* variants = outVariants.data();
+    g_variantSphereC.assign(3 * totalRows, 0.0f);
+    g_variantSphereR.assign(totalRows, 0.0f);
     g_variantSphereRows = totalRows;
     u32 row             = 0;
     for (u32 s = 0; s < AZGAAR_PROP_COUNT; s++) {
         u32 vc = g_variantCount[s];
-        if (vc == 0) continue;  // species awaiting its authored model: no row, no placeholder
+        if (vc == 0) continue;
         bool isDeciduous = (s == AZGAAR_PROP_DECIDUOUS || s == AZGAAR_PROP_DECIDUOUS_FAR);
         if (isDeciduous && decCount > 0) {
-            // One row per authored object.  The far LOD uses the simplified
-            // _far scene when present, else reuses the near geometry.
             bool useFarData = (s == AZGAAR_PROP_DECIDUOUS_FAR) && useFar;
-            u32* off        = useFarData ? decFarIdxOffsets : decIdxOffsets;
-            u32* icnt       = useFarData ? decFarICounts : decICounts;
-            float* bmin     = useFarData ? decFarBMin : decBMin;
-            float* bmax     = useFarData ? decFarBMax : decBMax;
+            u32* off        = useFarData ? decFarIdxOffsets.data() : decIdxOffsets.data();
+            u32* icnt       = useFarData ? decFarICounts.data() : decICounts.data();
+            float* bmin     = useFarData ? decFarBMin.data() : decBMin.data();
+            float* bmax     = useFarData ? decFarBMax.data() : decBMax.data();
             for (u32 v = 0; v < vc; v++) {
-                PropVariantRange* vr = &variants[row];
+                engine::PropVariantRange* vr = &variants[row];
                 vr->species          = s;
                 vr->variant          = v;
                 vr->indexOffset      = off[v];
@@ -1195,9 +1180,7 @@ static void buildAllMeshes(PropVariantRange** outVariants,
                 row++;
             }
         } else {
-            // Single procedural variant (all non-deciduous species, or deciduous
-            // when the model is absent → placeholder fallback).
-            PropVariantRange* vr = &variants[row];
+            engine::PropVariantRange* vr = &variants[row];
             vr->species          = s;
             vr->variant          = 0;
             vr->indexOffset      = spIdxOffset[s];
@@ -1206,7 +1189,7 @@ static void buildAllMeshes(PropVariantRange** outVariants,
             float bmax[3]        = {-1e9f, -1e9f, -1e9f};
             for (u32 v = 0; v < svCount[s]; v++) {
                 for (u32 c = 0; c < 3; c++) {
-                    float val = builders[s]->verts[v].position[c];
+                    float val = builders[s].verts[v].position[c];
                     if (val < bmin[c]) bmin[c] = val;
                     if (val > bmax[c]) bmax[c] = val;
                 }
@@ -1223,27 +1206,12 @@ static void buildAllMeshes(PropVariantRange** outVariants,
         }
     }
 
-    *outVertCount    = totalVerts;
-    *outIdxCount     = totalIdx;
-    *outVerts        = mergedVerts;
-    *outIdx          = mergedIdx;
-    *outVariants     = variants;
-    *outVariantCount = totalRows;
-
-    memoryFree(decIdxOffsets);
-    memoryFree(decVCounts);
-    memoryFree(decICounts);
-    memoryFree(decBMin);
-    memoryFree(decBMax);
-    memoryFree(decFarIdxOffsets);
-    memoryFree(decFarVCounts);
-    memoryFree(decFarICounts);
-    memoryFree(decFarBMin);
-    memoryFree(decFarBMax);
+    outVertCount    = totalVerts;
+    outIdxCount     = totalIdx;
+    outVariantCount = totalRows;
 
     for (u32 s = 0; s < AZGAAR_PROP_COUNT; s++) {
-        mbFree(builders[s]);
-        memoryFree(builders[s]);
+        mbFree(&builders[s]);
     }
 }
 
@@ -1307,9 +1275,9 @@ struct RoadHash {
     float invBucket;   // 1 / bucket
     float minX, minZ;  // world-space origin of bucket (0,0)
     u32 gridW, gridH;  // bucket grid dimensions
-    u32* starts;       // bucket -> index into points (0 = empty)
+    std::vector<u32> starts;       // bucket -> index into points (0 = empty)
     u32 bucketCount;
-    float* pts;  // [x, z] pairs
+    std::vector<float> pts;  // [x, z] pairs
     u32 pointCount;
 };
 
@@ -1321,13 +1289,13 @@ static void roadHashBuild(RoadHash* rh, const AzgaarWorld* world, float bucket) 
     // Count land routes (roads + trails; searoutes have no ground clearance).
     u32 totalPoints = 0;
     for (u32 r = 0; r < world->routeCount; r++) {
-        AzgaarRoute* route = &world->routes[r];
+        const AzgaarRoute* route = &world->routes[r];
         if (route->group == AZGAAR_ROUTE_SEAROUTE) continue;
         totalPoints += route->pointCount;
     }
     if (totalPoints == 0) return;
     rh->pointCount = totalPoints;
-    rh->pts         = static_cast<float*>(memoryAlloc(sizeof(float) * 2 * totalPoints));
+    rh->pts.resize(2 * totalPoints);
 
     // World extent → bucket grid dimensions (map is metres; use a padded box).
     float halfW     = static_cast<float>(world->widthPx * 0.5) * static_cast<float>(world->metersPerPixel) + 512.0f;
@@ -1339,15 +1307,13 @@ static void roadHashBuild(RoadHash* rh, const AzgaarWorld* world, float bucket) 
     rh->gridW       = gridW;
     rh->gridH       = gridH;
     rh->bucketCount = gridW * gridH;
-    rh->starts       = static_cast<u32*>(memoryAlloc(sizeof(u32) * rh->bucketCount));
-    memset(rh->starts, 0, sizeof(u32) * rh->bucketCount);
+    rh->starts.assign(rh->bucketCount, 0);
 
     // Two passes: count points per bucket, prefix-sum to starts, then place.
-    u32* counts = static_cast<u32*>(memoryAlloc(sizeof(u32) * rh->bucketCount));
-    memset(counts, 0, sizeof(u32) * rh->bucketCount);
+    std::vector<u32> counts(rh->bucketCount, 0);
     u32 write = 0;
     for (u32 r = 0; r < world->routeCount; r++) {
-        AzgaarRoute* route = &world->routes[r];
+        const AzgaarRoute* route = &world->routes[r];
         if (route->group == AZGAAR_ROUTE_SEAROUTE) continue;
         for (u32 p = 0; p < route->pointCount; p++) {
             float wx, wz;
@@ -1371,11 +1337,10 @@ static void roadHashBuild(RoadHash* rh, const AzgaarWorld* world, float bucket) 
         acc += counts[b];
     }
     // Second pass: place each point into its bucket (stable order not required).
-    u32* cursor = static_cast<u32*>(memoryAlloc(sizeof(u32) * rh->bucketCount));
-    memcpy(cursor, rh->starts, sizeof(u32) * rh->bucketCount);
+    std::vector<u32> cursor(rh->starts.begin(), rh->starts.end());
     write = 0;
     for (u32 r = 0; r < world->routeCount; r++) {
-        AzgaarRoute* route = &world->routes[r];
+        const AzgaarRoute* route = &world->routes[r];
         if (route->group == AZGAAR_ROUTE_SEAROUTE) continue;
         for (u32 p = 0; p < route->pointCount; p++) {
             float wx, wz;
@@ -1392,8 +1357,6 @@ static void roadHashBuild(RoadHash* rh, const AzgaarWorld* world, float bucket) 
             cursor[b]++;
         }
     }
-    memoryFree(counts);
-    memoryFree(cursor);
 }
 
 // True when (wx, wz) is within `maxD` metres of any road centreline point.
@@ -1527,11 +1490,11 @@ struct PlacedHash {
     float minX, minZ;  // tile origin (world)
     u32 gridW, gridH;
     u32 bucketCount;
-    u32* head;     // bucket -> first point index (0xFFFFFFFF = empty)
-    float* pts;    // [x, z] pairs
-    u32* sp;       // species id per point
-    float* scale;  // instance height (m) per point (drives canopy radius)
-    i32* next;     // next point index within the same bucket
+    std::vector<u32> head;     // bucket -> first point index (0xFFFFFFFF = empty)
+    std::vector<float> pts;    // [x, z] pairs
+    std::vector<u32> sp;       // species id per point
+    std::vector<float> scale;  // instance height (m) per point (drives canopy radius)
+    std::vector<i32> next;     // next point index within the same bucket
     u32 count;
 };
 
@@ -1545,22 +1508,16 @@ static void placedHashBuild(PlacedHash* ph, float minX, float minZ, float sizeM)
     ph->gridW          = static_cast<u32>(sizeM / bucket) + 1u;
     ph->gridH          = static_cast<u32>(sizeM / bucket) + 1u;
     ph->bucketCount    = ph->gridW * ph->gridH;
-    ph->head            = static_cast<u32*>(memoryAlloc(sizeof(u32) * ph->bucketCount));
-    memset(ph->head, 0xFFFFFFFF, sizeof(u32) * ph->bucketCount);
+    ph->head.assign(ph->bucketCount, 0xFFFFFFFF);
     const u32 cap = AZGAAR_PROPS_TILE_CAP;
-    ph->pts        = static_cast<float*>(memoryAlloc(sizeof(float) * 2 * cap));
-    ph->sp         = static_cast<u32*>(memoryAlloc(sizeof(u32) * cap));
-    ph->scale      = static_cast<float*>(memoryAlloc(sizeof(float) * cap));
-    ph->next       = static_cast<i32*>(memoryAlloc(sizeof(i32) * cap));
+    ph->pts.resize(2 * cap);
+    ph->sp.resize(cap);
+    ph->scale.resize(cap);
+    ph->next.resize(cap);
     ph->count     = 0;
 }
 
 static void placedHashFree(PlacedHash* ph) {
-    memoryFree(ph->head);
-    memoryFree(ph->pts);
-    memoryFree(ph->sp);
-    memoryFree(ph->scale);
-    memoryFree(ph->next);
     *ph = PlacedHash{};
 }
 
@@ -1688,65 +1645,55 @@ static void precomputeBiomeSpecies(const AzgaarWorld* world, BiomeSpecies* out, 
 // ── Per-tile scatter state + job ───────────────────────────────────────────
 
 struct PropsTileState {
-    i32 tileX, tileZ;
-    u64 readyStamp;    // readyStamp this tile was built for
-    u32 propsVersion;  // propsVersion this tile was scattered with
-    float camX, camZ;  // build-time camera (bakes the near/far LOD; re-scatter when it moves)
-    bool inUse;
-    bool building;            // a scatter job is in flight for this tile
-    PropInstance* instances;  // grouped-by-species, persistent (uploaded)
-    u32 instanceCount;
-    PropTileRange* ranges;
-    u32 rangeCount;
-    u32 perSpecies[AZGAAR_PROP_COUNT];  // debug counts
-    // Per-instance culling (v2): the full set above is the source of truth;
-    // cullInstances is the compacted set currently uploaded to the pass
-    // (cullCount == instanceCount means the full set is uploaded).
-    PropInstance* cullInstances;
-    u32 cullCount;
-    PropTileRange* cullRanges;
-    u32 cullRangeCount;
-    bool needsCull;  // a cull is pending (fresh scatter)
-    bool culling;    // a cull job is in flight
-    // Camera the cullInstances upload was captured for (scatter-time compact
-    // or last cull job): within PROPS_CULL_MOVE / PROPS_CULL_ROT of it the
-    // uploaded set is still fresh and the cull pass skips re-culling.
-    float cullCamPos[3];
-    float cullYaw, cullPitch;
-    bool cullCamValid;
+    i32 tileX = 0, tileZ = 0;
+    u64 readyStamp = 0;    // readyStamp this tile was built for
+    u32 propsVersion = 0;  // propsVersion this tile was scattered with
+    float camX = 0.0f, camZ = 0.0f;  // build-time camera (bakes the near/far LOD; re-scatter when it moves)
+    bool inUse = false;
+    bool building = false;            // a scatter job is in flight for this tile
+    std::vector<engine::PropInstance> instances = {};  // grouped-by-species, persistent (uploaded)
+    u32 instanceCount = 0;
+    std::vector<engine::PropTileRange> ranges = {};
+    u32 rangeCount = 0;
+    u32 perSpecies[AZGAAR_PROP_COUNT] = {};  // debug counts
+    std::vector<engine::PropInstance> cullInstances = {};
+    u32 cullCount = 0;
+    std::vector<engine::PropTileRange> cullRanges = {};
+    u32 cullRangeCount = 0;
+    bool needsCull = false;  // a cull is pending (fresh scatter)
+    bool culling = false;    // a cull job is in flight
+    float cullCamPos[3] = {};
+    float cullYaw = 0.0f, cullPitch = 0.0f;
+    bool cullCamValid = false;
 };
 
 static const AzgaarWorld* g_world = nullptr;
 static u32 g_mapSeed;
-static ThreadPool* g_pool;
+static utils::ThreadPool* g_pool;
 static RoadHash g_roadHash;
 static BiomeSpecies g_biomeSpecies[AZGAAR_PROPS_MAX_BIOMES];
-static Array(PropsTileState) g_tiles = {};
-static Thread g_stateLock = {};
+static std::vector<PropsTileState> g_tiles = {};
+static utils::Thread g_stateLock = {};
 static bool g_initialized;
 static bool g_propsDebug;
 static bool g_propsDisabled;
 
 static void propsTileDrop(PropsTileState* t) {
-    memoryFree(t->instances);
-    memoryFree(t->ranges);
-    memoryFree(t->cullInstances);
-    memoryFree(t->cullRanges);
     *t = PropsTileState{};
 }
 
 // Drops all CPU tile state (called when the variant table is rebuilt so the
 // update loop re-scatters every resident tile with the new variant counts).
 static void propsInvalidateTiles(void) {
-    threadLock(&g_stateLock);
-    for (u32 i = 0; i < arraySize(g_tiles); i++) {
+    utils::threadLock(&g_stateLock);
+    for (u32 i = 0; i < g_tiles.size(); i++) {
         if (g_tiles[i].inUse) {
             propsTileDrop(&g_tiles[i]);
-            arrayDeleteSlow(g_tiles, i);
+            g_tiles.erase(g_tiles.begin() + i);
             i--;
         }
     }
-    threadUnlock(&g_stateLock);
+    utils::threadUnlock(&g_stateLock);
 }
 
 // ── Per-instance culling (v2) ─────────────────────────────────────────────
@@ -1845,14 +1792,14 @@ static CullCam g_cullCam = {};
 // the tiles and re-uploads it as the camera moves.
 struct PropsGlobalSet {
     bool inUse;
-    PropInstance* instances;
+    std::vector<engine::PropInstance> instances;
     u32 instanceCount;
-    PropTileRange* ranges;
+    std::vector<engine::PropTileRange> ranges;
     u32 rangeCount;
     float aabbMin[3], aabbMax[3];
-    PropInstance* cullInstances;
+    std::vector<engine::PropInstance> cullInstances;
     u32 cullCount;
-    PropTileRange* cullRanges;
+    std::vector<engine::PropTileRange> cullRanges;
     u32 cullRangeCount;
     bool needsCull;
     bool culling;
@@ -1928,11 +1875,11 @@ static float propsAabbNearDistSq(const float p[3], const float bmin[3], const fl
 // keeping instances inside the frustum + per-species distance cap.  Fills
 // `outRanges` (capacity >= rangeCount); returns the survivor counts via
 // outCount / outRangeCount.
-static void propsCullCompact(const PropInstance* src,
-                             const PropTileRange* ranges,
+static void propsCullCompact(const engine::PropInstance* src,
+                             const engine::PropTileRange* ranges,
                              u32 rangeCount,
-                             PropInstance* dst,
-                             PropTileRange* outRanges,
+                             engine::PropInstance* dst,
+                             engine::PropTileRange* outRanges,
                              const float camPos[3],
                              const float planes[6][4],
                              u32* outCount,
@@ -1946,7 +1893,7 @@ static void propsCullCompact(const PropInstance* src,
 
     u32 w = 0, rc = 0;
     for (u32 r = 0; r < rangeCount; r++) {
-        const PropTileRange* rng = &ranges[r];
+        const engine::PropTileRange* rng = &ranges[r];
         u32 sp                   = rng->species;
         if (sp >= AZGAAR_PROP_COUNT) continue;
         u32 c0 = rng->start, c1 = rng->start + rng->count;
@@ -1968,7 +1915,7 @@ static void propsCullCompact(const PropInstance* src,
         }
         u32 c = 0;
         for (u32 i = c0; i < c1; i++) {
-            const PropInstance* inst = &src[i];
+            const engine::PropInstance* inst = &src[i];
             float dx                 = inst->pos[0] - camPos[0];
             float dy                 = inst->pos[1] - camPos[1];
             float dz                 = inst->pos[2] - camPos[2];
@@ -2005,7 +1952,7 @@ static void propsCullCompact(const PropInstance* src,
         }
         if (c > 0) {
             outRanges[rc] =
-                PropTileRange{.species = sp, .variant = rng->variant, .start = w, .count = c};
+                engine::PropTileRange{.species = sp, .variant = rng->variant, .start = w, .count = c};
             rc++;
         }
         w += c;
@@ -2021,27 +1968,27 @@ static void propsCullCompact(const PropInstance* src,
 // could be evicted mid-upload).
 static void propsCullJob(void* userData) {
     CullJob* job        = (CullJob*)userData;
-    double cT0          = nanos();
+    double cT0          = utils::nanos();
     static int cHitchOn = -1;
     if (cHitchOn < 0) cHitchOn = getenv("ENGINE_HITCH_DEBUG") != nullptr;
     if (job->isGlobal) {
         PropsGlobalSet* gs    = job->landmarks ? &g_landmarkSet : &g_globalSet;
-        PropInstance* cullOut = nullptr;
-        PropTileRange* cullRO = nullptr;
+        std::vector<engine::PropInstance> cullOut;
+        std::vector<engine::PropTileRange> cullRO;
         u32 w = 0, rc = 0;
         float aabbMin[3], aabbMax[3];
         bool valid = false;
-        threadLock(&g_stateLock);
+        utils::threadLock(&g_stateLock);
         if (gs->inUse && gs->culling) {
             gs->culling = false;
             if (gs->instanceCount > 0) {
-                cullOut  = static_cast<PropInstance*>(memoryAlloc(sizeof(PropInstance) * gs->instanceCount));
-                cullRO   = static_cast<PropTileRange*>(memoryAlloc(sizeof(PropTileRange) * gs->rangeCount));
-                propsCullCompact(gs->instances,
-                                 gs->ranges,
+                cullOut.resize(gs->instanceCount);
+                cullRO.resize(gs->rangeCount);
+                propsCullCompact(gs->instances.data(),
+                                 gs->ranges.data(),
                                  gs->rangeCount,
-                                 cullOut,
-                                 cullRO,
+                                 cullOut.data(),
+                                 cullRO.data(),
                                  job->camPos,
                                  job->planes,
                                  &w,
@@ -2050,44 +1997,38 @@ static void propsCullJob(void* userData) {
                 memcpy(aabbMax, gs->aabbMax, sizeof(aabbMax));
                 valid = true;
                 if (g_propsDebug) {
-                    info("azgaarProps: cull %s: %u -> %u instances",
+                    utils::info("azgaarProps: cull %s: %u -> %u instances",
                          job->landmarks ? "landmarks" : "settlements",
                          gs->instanceCount,
                          w);
                 }
             }
         }
-        threadUnlock(&g_stateLock);
+        utils::threadUnlock(&g_stateLock);
 
         if (valid) {
             if (job->landmarks) {
-                vulkanAzgaarPropsSetLandmarks(cullOut, w, cullRO, rc, aabbMin, aabbMax);
+                engine::vulkanAzgaarPropsSetLandmarks(cullOut.data(), w, cullRO.data(), rc, aabbMin, aabbMax);
             } else {
-                vulkanAzgaarPropsSetGlobal(cullOut, w, cullRO, rc, aabbMin, aabbMax);
+                engine::vulkanAzgaarPropsSetGlobal(cullOut.data(), w, cullRO.data(), rc, aabbMin, aabbMax);
             }
-            threadLock(&g_stateLock);
-            if (gs->inUse) {  // not cleared while the upload was in flight
-                memoryFree(gs->cullInstances);
-                gs->cullInstances = cullOut;
-                memoryFree(gs->cullRanges);
-                gs->cullRanges     = cullRO;
+            utils::threadLock(&g_stateLock);
+            if (gs->inUse) {
+                gs->cullInstances = std::move(cullOut);
+                gs->cullRanges    = std::move(cullRO);
                 gs->cullCount      = w;
                 gs->cullRangeCount = rc;
-                cullOut            = nullptr;
-                cullRO             = nullptr;
             }
-            threadUnlock(&g_stateLock);
+            utils::threadUnlock(&g_stateLock);
         }
-        memoryFree(cullOut);
-        memoryFree(cullRO);
     } else {
-        PropInstance* cullOut = nullptr;
-        PropTileRange* cullRO = nullptr;
+        std::vector<engine::PropInstance> cullOut;
+        std::vector<engine::PropTileRange> cullRO;
         u32 w = 0, rc = 0;
         bool valid = false;
-        threadLock(&g_stateLock);
+        utils::threadLock(&g_stateLock);
         PropsTileState* tile = nullptr;
-        for (u32 i = 0; i < arraySize(g_tiles); i++) {
+        for (u32 i = 0; i < g_tiles.size(); i++) {
             if (g_tiles[i].inUse && g_tiles[i].tileX == job->tileX &&
                 g_tiles[i].tileZ == job->tileZ) {
                 tile = &g_tiles[i];
@@ -2097,41 +2038,41 @@ static void propsCullJob(void* userData) {
         if (tile && tile->inUse && !tile->building && tile->readyStamp == job->readyStamp &&
             tile->instanceCount > 0) {
             tile->culling = false;
-            cullOut        = static_cast<PropInstance*>(memoryAlloc(sizeof(PropInstance) * tile->instanceCount));
-            cullRO         = static_cast<PropTileRange*>(memoryAlloc(sizeof(PropTileRange) * tile->rangeCount));
-            propsCullCompact(tile->instances,
-                             tile->ranges,
+            cullOut.resize(tile->instanceCount);
+            cullRO.resize(tile->rangeCount);
+            propsCullCompact(tile->instances.data(),
+                             tile->ranges.data(),
                              tile->rangeCount,
-                             cullOut,
-                             cullRO,
+                             cullOut.data(),
+                             cullRO.data(),
                              job->camPos,
                              job->planes,
                              &w,
                              &rc);
             valid = true;
             if (g_propsDebug) {
-                info("azgaarProps: cull tile(%d,%d): %u -> %u instances",
+                utils::info("azgaarProps: cull tile(%d,%d): %u -> %u instances",
                      job->tileX,
                      job->tileZ,
                      tile->instanceCount,
                      w);
             }
         } else if (tile) {
-            tile->culling = false;  // tile re-scattered / evicted mid-job
+            tile->culling = false;
         }
-        threadUnlock(&g_stateLock);
+        utils::threadUnlock(&g_stateLock);
 
         if (valid) {
-            vulkanAzgaarPropsSetTile(job->tileX,
+            engine::vulkanAzgaarPropsSetTile(job->tileX,
                                      job->tileZ,
                                      job->readyStamp,
-                                     cullOut,
+                                     cullOut.data(),
                                      w,
-                                     cullRO,
+                                     cullRO.data(),
                                      rc);
-            threadLock(&g_stateLock);
+            utils::threadLock(&g_stateLock);
             PropsTileState* t2 = nullptr;
-            for (u32 i = 0; i < arraySize(g_tiles); i++) {
+            for (u32 i = 0; i < g_tiles.size(); i++) {
                 if (g_tiles[i].inUse && g_tiles[i].tileX == job->tileX &&
                     g_tiles[i].tileZ == job->tileZ && g_tiles[i].readyStamp == job->readyStamp &&
                     !g_tiles[i].building) {
@@ -2139,43 +2080,37 @@ static void propsCullJob(void* userData) {
                     break;
                 }
             }
-            if (t2) {  // tile not dropped / re-scattered while the upload ran
-                memoryFree(t2->cullInstances);
-                t2->cullInstances = cullOut;
-                memoryFree(t2->cullRanges);
-                t2->cullRanges     = cullRO;
+            if (t2) {
+                t2->cullInstances  = std::move(cullOut);
+                t2->cullRanges     = std::move(cullRO);
                 t2->cullCount      = w;
                 t2->cullRangeCount = rc;
                 memcpy(t2->cullCamPos, job->camPos, sizeof(job->camPos));
                 t2->cullYaw      = job->yaw;
                 t2->cullPitch    = job->pitch;
                 t2->cullCamValid = true;
-                cullOut          = nullptr;
-                cullRO           = nullptr;
             }
-            threadUnlock(&g_stateLock);
+            utils::threadUnlock(&g_stateLock);
         }
-        memoryFree(cullOut);
-        memoryFree(cullRO);
     }
     if (cHitchOn)
-        info("HITCH: cull job %s(%d,%d) %.1f ms (worker)",
+        utils::info("HITCH: cull job %s(%d,%d) %.1f ms (worker)",
              job->isGlobal ? (job->landmarks ? "landmarks" : "global") : "tile",
              job->tileX,
              job->tileZ,
-             (nanos() - cT0) / 1e6);
-    memoryFree(job);
+             (utils::nanos() - cT0) / 1e6);
+    delete job;
 }
 
 // Per-frame cull pass (dirty-checked).  Evaluates each resident tile + the
 // global sets against the current camera and enqueues cull jobs where the
 // uploaded set no longer matches what is visible.
-static void propsCullUpdate(HeightmapTerrain* ht, const HeightmapTileView* views, u32 n) {
-    Entity* camEntity = cameraGetEntity();
+static void propsCullUpdate(engine::HeightmapTerrain* ht, const engine::HeightmapTileView* views, u32 n) {
+    engine::Entity* camEntity = engine::cameraGetEntity();
     if (!camEntity) return;
-    Camera* cam = getComponent(camEntity->scene, Camera, camEntity->id);
+    engine::Camera* cam = getComponent(camEntity->scene, engine::Camera, camEntity->id);
     if (!cam) return;
-    Transform* t = getComponent(camEntity->scene, Transform, camEntity->id);
+    engine::Transform* t = getComponent(camEntity->scene, engine::Transform, camEntity->id);
     if (!t) return;
     float camPos[3] = {t->pos[0], t->pos[1], t->pos[2]};
 
@@ -2201,8 +2136,8 @@ static void propsCullUpdate(HeightmapTerrain* ht, const HeightmapTileView* views
                                                                  : 64.0f;
 
     u32 enqueued = 0;
-    threadLock(&g_stateLock);
-    for (u32 k = 0; k < arraySize(g_tiles); k++) {
+    utils::threadLock(&g_stateLock);
+    for (u32 k = 0; k < g_tiles.size(); k++) {
         PropsTileState* tile = &g_tiles[k];
         if (!tile->inUse || tile->building || tile->instanceCount == 0 || tile->culling) continue;
         if (!dirty && !tile->needsCull) continue;
@@ -2238,7 +2173,7 @@ static void propsCullUpdate(HeightmapTerrain* ht, const HeightmapTileView* views
             if (tile->cullCount != 0) {
                 tile->cullCount      = 0;
                 tile->cullRangeCount = 0;
-                vulkanAzgaarPropsSetTile(tile->tileX,
+                engine::vulkanAzgaarPropsSetTile(tile->tileX,
                                          tile->tileZ,
                                          tile->readyStamp,
                                          nullptr,
@@ -2277,7 +2212,7 @@ static void propsCullUpdate(HeightmapTerrain* ht, const HeightmapTileView* views
         //     enqueue a per-instance cull.
         tile->needsCull = false;
         tile->culling   = true;
-        CullJob* job = static_cast<CullJob*>(memoryAlloc(sizeof(CullJob)));
+        CullJob* job = new CullJob{};
         job->isGlobal   = false;
         job->landmarks  = false;
         job->tileX      = tile->tileX;
@@ -2287,7 +2222,7 @@ static void propsCullUpdate(HeightmapTerrain* ht, const HeightmapTileView* views
         memcpy(job->planes, planes, sizeof(planes));
         job->yaw   = cam->yaw;
         job->pitch = cam->pitch;
-        threadPoolAddWork(g_pool, propsCullJob, job);
+        utils::threadPoolAddWork(g_pool, propsCullJob, job);
         enqueued++;
     }
 
@@ -2318,9 +2253,9 @@ static void propsCullUpdate(HeightmapTerrain* ht, const HeightmapTileView* views
                 gs->cullCount      = 0;
                 gs->cullRangeCount = 0;
                 if (gs == &g_landmarkSet) {
-                    vulkanAzgaarPropsSetLandmarks(nullptr, 0, nullptr, 0, gs->aabbMin, gs->aabbMax);
+                    engine::vulkanAzgaarPropsSetLandmarks(nullptr, 0, nullptr, 0, gs->aabbMin, gs->aabbMax);
                 } else {
-                    vulkanAzgaarPropsSetGlobal(nullptr, 0, nullptr, 0, gs->aabbMin, gs->aabbMax);
+                    engine::vulkanAzgaarPropsSetGlobal(nullptr, 0, nullptr, 0, gs->aabbMin, gs->aabbMax);
                 }
             }
             gs->needsCull = false;
@@ -2334,7 +2269,7 @@ static void propsCullUpdate(HeightmapTerrain* ht, const HeightmapTileView* views
         }
         gs->needsCull   = false;
         gs->culling     = true;
-        CullJob* job = static_cast<CullJob*>(memoryAlloc(sizeof(CullJob)));
+        CullJob* job = new CullJob{};
         job->isGlobal   = true;
         job->landmarks  = (gs == &g_landmarkSet);
         job->tileX      = 0;
@@ -2344,10 +2279,10 @@ static void propsCullUpdate(HeightmapTerrain* ht, const HeightmapTileView* views
         memcpy(job->planes, planes, sizeof(planes));
         job->yaw   = cam->yaw;
         job->pitch = cam->pitch;
-        threadPoolAddWork(g_pool, propsCullJob, job);
+        utils::threadPoolAddWork(g_pool, propsCullJob, job);
         enqueued++;
     }
-    threadUnlock(&g_stateLock);
+    utils::threadUnlock(&g_stateLock);
 
     if (dirty) {
         g_cullCam.pos[0] = camPos[0];
@@ -2359,69 +2294,58 @@ static void propsCullUpdate(HeightmapTerrain* ht, const HeightmapTileView* views
         g_cullCam.valid = true;
     }
     if (g_propsDebug && enqueued > 0) {
-        info("azgaarProps: cull: %u jobs enqueued (dirty=%d)", enqueued, (int)dirty);
+        utils::info("azgaarProps: cull: %u jobs enqueued (dirty=%d)", enqueued, (int)dirty);
     }
 }
 
-void azgaarPropsRegisterGlobal(const PropInstance* instances,
+void azgaarPropsRegisterGlobal(const engine::PropInstance* instances,
                                u32 instanceCount,
-                               const PropTileRange* ranges,
+                               const engine::PropTileRange* ranges,
                                u32 rangeCount,
                                const float aabbMin[3],
                                const float aabbMax[3],
                                bool landmarks) {
     PropsGlobalSet* gs = landmarks ? &g_landmarkSet : &g_globalSet;
-    threadLock(&g_stateLock);
-    memoryFree(gs->instances);
-    memoryFree(gs->ranges);
-    memoryFree(gs->cullInstances);
-    memoryFree(gs->cullRanges);
-    gs->instances  = static_cast<PropInstance*>((instanceCount > 0) ? memoryAlloc(sizeof(PropInstance) * instanceCount) : nullptr);
-    if (instanceCount > 0) memcpy(gs->instances, instances, sizeof(PropInstance) * instanceCount);
+    utils::threadLock(&g_stateLock);
+    gs->instances.assign(instances, instances + instanceCount);
     gs->instanceCount = instanceCount;
-    gs->ranges         = static_cast<PropTileRange*>((rangeCount > 0) ? memoryAlloc(sizeof(PropTileRange) * rangeCount) : nullptr);
-    if (rangeCount > 0) memcpy(gs->ranges, ranges, sizeof(PropTileRange) * rangeCount);
+    gs->ranges.assign(ranges, ranges + rangeCount);
     gs->rangeCount = rangeCount;
     memcpy(gs->aabbMin, aabbMin, sizeof(gs->aabbMin));
     memcpy(gs->aabbMax, aabbMax, sizeof(gs->aabbMax));
-    gs->cullInstances  = nullptr;
-    gs->cullRanges     = nullptr;
-    gs->cullCount      = instanceCount;  // the full set is uploaded below
+    gs->cullInstances.clear();
+    gs->cullRanges.clear();
+    gs->cullCount      = instanceCount;
     gs->cullRangeCount = rangeCount;
     gs->inUse          = true;
     gs->needsCull      = true;
     gs->culling        = false;
-    threadUnlock(&g_stateLock);
-    // Initial full-set upload (the cull pass compacts it on the next pass).
+    utils::threadUnlock(&g_stateLock);
     if (landmarks) {
-        vulkanAzgaarPropsSetLandmarks(instances,
+        engine::vulkanAzgaarPropsSetLandmarks(instances,
                                       instanceCount,
                                       ranges,
                                       rangeCount,
                                       aabbMin,
                                       aabbMax);
     } else {
-        vulkanAzgaarPropsSetGlobal(instances, instanceCount, ranges, rangeCount, aabbMin, aabbMax);
+        engine::vulkanAzgaarPropsSetGlobal(instances, instanceCount, ranges, rangeCount, aabbMin, aabbMax);
     }
 }
 
 void azgaarPropsClearGlobal(bool landmarks) {
     PropsGlobalSet* gs = landmarks ? &g_landmarkSet : &g_globalSet;
-    threadLock(&g_stateLock);
+    utils::threadLock(&g_stateLock);
     bool wasInUse = gs->inUse;
     if (wasInUse) {
-        memoryFree(gs->instances);
-        memoryFree(gs->ranges);
-        memoryFree(gs->cullInstances);
-        memoryFree(gs->cullRanges);
         *gs = PropsGlobalSet{};
     }
-    threadUnlock(&g_stateLock);
+    utils::threadUnlock(&g_stateLock);
     if (wasInUse) {
         if (landmarks)
-            vulkanAzgaarPropsClearLandmarks();
+            engine::vulkanAzgaarPropsClearLandmarks();
         else
-            vulkanAzgaarPropsClearGlobal();
+            engine::vulkanAzgaarPropsClearGlobal();
     }
 }
 
@@ -2442,28 +2366,27 @@ static void propsScatterJob(void* userData) {
     ScatterJob* job    = (ScatterJob*)userData;
     static int hitchOn = -1;
     if (hitchOn < 0) hitchOn = getenv("ENGINE_HITCH_DEBUG") != nullptr;
-    double jobT0         = nanos();
-    HeightmapTerrain* ht = heightmapTerrainGetActive();
+    double jobT0         = utils::nanos();
+    engine::HeightmapTerrain* ht = engine::heightmapTerrainGetActive();
     if (!ht || !g_world) {
         if (hitchOn)
-            info("HITCH: scatter tile(%d,%d) aborted %.1f ms",
+            utils::info("HITCH: scatter tile(%d,%d) aborted %.1f ms",
                  job->tileX,
                  job->tileZ,
-                 (nanos() - jobT0) / 1e6);
+                 (utils::nanos() - jobT0) / 1e6);
         return;
     }
 
     // Lock-safe copy of the tile's 512^2 CPU height grid (heap: ~1 MB).
-    float* heights = static_cast<float*>(memoryAlloc(sizeof(float) * static_cast<size_t>(HEIGHTMAP_TEX) * HEIGHTMAP_TEX));
-    if (!heightmapTerrainCopyTile(ht, job->tileX, job->tileZ, heights)) {
-        memoryFree(heights);
-        memoryFree(job);
+    std::vector<float> heights(HEIGHTMAP_TEX * HEIGHTMAP_TEX);
+    if (!heightmapTerrainCopyTile(ht, job->tileX, job->tileZ, heights.data())) {
+        delete job;
         if (hitchOn)
-            info("HITCH: scatter tile(%d,%d) evicted-mid-job %.1f ms",
+            utils::info("HITCH: scatter tile(%d,%d) evicted-mid-job %.1f ms",
                  job->tileX,
                  job->tileZ,
-                 (nanos() - jobT0) / 1e6);
-        return;  // tile evicted mid-job; it will be re-scattered when it returns.
+                 (utils::nanos() - jobT0) / 1e6);
+        return;
     }
 
     const u32 TEX        = HEIGHTMAP_TEX;
@@ -2482,22 +2405,23 @@ static void propsScatterJob(void* userData) {
     PlacedHash ph;
     placedHashBuild(&ph, originX, originZ, tileSize);
     // The world's biome grid (nearest-cell id field) for per-texel biome lookup.
-    const u8* biomeGrid  = g_world->biomeGrid;
+    const u8* biomeGrid  = g_world->biomeGrid.data();
     const u32 bw         = g_world->climateGridWidth;
     const u32 bh         = g_world->climateGridHeight;
     const float invMppPx = 1.0f / mpp;  // world m -> map px (via azgaarMapToWorld inverse)
 
     // Unsorted temp scatter, then group by species into the tile's buffer.
-    PropInstance* temp = static_cast<PropInstance*>(memoryAlloc(sizeof(PropInstance) * AZGAAR_PROPS_TILE_CAP));
+    std::vector<engine::PropInstance> temp(AZGAAR_PROPS_TILE_CAP);
     u32 tempCount                     = 0;
     u32 perSpecies[AZGAAR_PROP_COUNT] = {};
+    const float* heightsData = heights.data();
 
     for (u32 tz = 0; tz < TEX; tz++) {
-        const float* row  = heights + static_cast<size_t>(tz) * TEX;
+        const float* row  = heightsData + static_cast<size_t>(tz) * TEX;
         const u32 tzN     = (tz + 1u < TEX) ? tz + 1u : TEX - 1u;
         const u32 tzS     = (tz > 0u) ? tz - 1u : 0u;
-        const float* rowN = heights + static_cast<size_t>(tzN) * TEX;
-        const float* rowS = heights + static_cast<size_t>(tzS) * TEX;
+        const float* rowN = heightsData + static_cast<size_t>(tzN) * TEX;
+        const float* rowS = heightsData + static_cast<size_t>(tzS) * TEX;
         for (u32 tx = 0; tx < TEX; tx++) {
             float wx = originX + static_cast<float>(tx) * tsz;
             float wz = originZ + static_cast<float>(tz) * tsz;
@@ -2563,7 +2487,7 @@ static void propsScatterJob(void* userData) {
                         float gScale = gdef->baseMin + (gdef->baseMax - gdef->baseMin) *
                                                            propsRand(tileSeed, tx, tz, 0xD2 + gi);
                         float j      = 0.6f + 0.8f * propsRand(tileSeed, tx, tz, 0xD3 + gi);
-                        PropInstance inst = {};
+                        engine::PropInstance inst = {};
                         inst.pos[0]       = gwx;
                         inst.pos[1]       = h;
                         inst.pos[2]       = gwz;
@@ -2616,7 +2540,7 @@ static void propsScatterJob(void* userData) {
                                   (def->baseMax - def->baseMin) * propsRand(tileSeed, tx, tz, 0xE2);
                 if (placedTooClose(&ph, wx, wz, sp, instScale)) continue;  // overlap gate
 
-                PropInstance inst = {};
+                engine::PropInstance inst = {};
                 inst.pos[0]       = wx;
                 inst.pos[1]       = h;
                 inst.pos[2]       = wz;
@@ -2645,7 +2569,7 @@ static void propsScatterJob(void* userData) {
                     u32 farSp = kSpecies[chosen].farVariant;
                     if (farSp != sp && g_variantCount[farSp] > 0 &&
                         tempCount < AZGAAR_PROPS_TILE_CAP) {
-                        PropInstance finst = inst;
+                        engine::PropInstance finst = inst;
                         finst.species      = farSp;
                         u32 fvc            = g_variantCount[farSp];
                         finst.variant     = (fvc > 1) ? (inst.variant < fvc ? inst.variant : 0) : 0;
@@ -2662,7 +2586,7 @@ static void propsScatterJob(void* userData) {
                     float rockScale = 0.5f + 2.5f * propsRand(tileSeed, tx, tz, 0xF3);
                     if (placedTooClose(&ph, wx, wz, AZGAAR_PROP_ROCK, rockScale))
                         continue;  // overlap gate
-                    PropInstance inst = {};
+                    engine::PropInstance inst = {};
                     inst.pos[0]       = wx;
                     inst.pos[1]       = h;
                     inst.pos[2]       = wz;
@@ -2686,10 +2610,10 @@ static void propsScatterJob(void* userData) {
     // ── Phase A (lock): resolve/claim this tile's state entry ──
     // `building` stays true until the GPU hand-over (Phase D) so the entry
     // cannot be evicted or culled while the upload is in flight.
-    threadLock(&g_stateLock);
+    utils::threadLock(&g_stateLock);
     {
         PropsTileState* tile = nullptr;
-        for (u32 i = 0; i < arraySize(g_tiles); i++) {
+        for (u32 i = 0; i < g_tiles.size(); i++) {
             if (g_tiles[i].inUse && g_tiles[i].tileX == job->tileX &&
                 g_tiles[i].tileZ == job->tileZ) {
                 tile = &g_tiles[i];
@@ -2703,8 +2627,8 @@ static void propsScatterJob(void* userData) {
             tile = nullptr;
         }
         if (!tile) {
-            arrayPut(g_tiles, PropsTileState{});
-            tile = &g_tiles[arraySize(g_tiles) - 1u];
+            g_tiles.push_back(PropsTileState{});
+            tile = &g_tiles[static_cast<i32>(g_tiles.size()) - 1u];
         }
         tile->tileX        = job->tileX;
         tile->tileZ        = job->tileZ;
@@ -2715,7 +2639,7 @@ static void propsScatterJob(void* userData) {
         tile->inUse        = true;
         tile->building     = true;  // released in Phase D after the hand-over
     }
-    threadUnlock(&g_stateLock);
+    utils::threadUnlock(&g_stateLock);
 
     // ── Phase B (no lock): group the unsorted instances by (species, variant)
     // ── into job-owned buffers; the GPU upload (Phase C) must not hold
@@ -2723,17 +2647,14 @@ static void propsScatterJob(void* userData) {
     // ── tile-owned memory (eviction could free it mid-upload).
     u32 n = tempCount;
     if (tempCount >= AZGAAR_PROPS_TILE_CAP) {
-        warn("azgaarProps: tile(%d,%d) hit the %u instance cap (truncated)",
+        utils::warn("azgaarProps: tile(%d,%d) hit the %u instance cap (truncated)",
              job->tileX,
              job->tileZ,
              AZGAAR_PROPS_TILE_CAP);
     }
-    // Group by (species, variant).  Only deciduous / deciduous_far carry more
-    // than one variant; every other species uses variant 0.
     u32 totalV = 0;
     for (u32 s = 0; s < AZGAAR_PROP_COUNT; s++) totalV += g_variantCount[s];
-    u32* counts = static_cast<u32*>(memoryAlloc(sizeof(u32) * totalV));
-    memset(counts, 0, sizeof(u32) * totalV);
+    std::vector<u32> counts(totalV, 0);
     u32 base[AZGAAR_PROP_COUNT];
     {
         u32 a = 0;
@@ -2751,7 +2672,6 @@ static void propsScatterJob(void* userData) {
         }
     }
 
-    // Build the list of (species, variant) pairs with count > 0 + prefix offsets.
     struct SVPair {
         u32 species;
         u32 variant;
@@ -2759,7 +2679,7 @@ static void propsScatterJob(void* userData) {
         u32 offset;
     };
 
-    SVPair* pairs = static_cast<SVPair*>(memoryAlloc(sizeof(SVPair) * totalV));
+    std::vector<SVPair> pairs(totalV);
     u32 pairCount = 0;
     u32 acc       = 0;
     for (u32 s = 0; s < AZGAAR_PROP_COUNT; s++) {
@@ -2776,17 +2696,12 @@ static void propsScatterJob(void* userData) {
         }
     }
 
-    // Job-owned grouped buffers: handed to the tile in Phase D, freed here if
-    // the tile was evicted / invalidated in the meantime.
-    PropInstance* grouped     = static_cast<PropInstance*>((n > 0) ? memoryAlloc(sizeof(PropInstance) * n) : nullptr);
-PropTileRange* rangesArr  = (pairCount > 0) ? static_cast<PropTileRange*>(memoryAlloc(sizeof(PropTileRange) * pairCount)) : nullptr;
+    std::vector<engine::PropInstance> grouped(n);
+    std::vector<engine::PropTileRange> rangesArr(pairCount);
 
     if (n > 0) {
-        // Place each instance into its (species, variant) group.
-        u32* cursor = static_cast<u32*>(memoryAlloc(sizeof(u32) * totalV));
-        u32* flatOffset = static_cast<u32*>(memoryAlloc(sizeof(u32) * totalV));
-        memset(cursor, 0, sizeof(u32) * totalV);
-        memset(flatOffset, 0, sizeof(u32) * totalV);
+        std::vector<u32> cursor(totalV, 0);
+        std::vector<u32> flatOffset(totalV, 0);
         for (u32 p = 0; p < pairCount; p++) {
             flatOffset[base[pairs[p].species] + pairs[p].variant] = pairs[p].offset;
         }
@@ -2797,11 +2712,9 @@ PropTileRange* rangesArr  = (pairCount > 0) ? static_cast<PropTileRange*>(memory
             u32 dst      = flatOffset[flat] + cursor[flat]++;
             grouped[dst] = temp[i];
         }
-        memoryFree(cursor);
-        memoryFree(flatOffset);
 
         for (u32 p = 0; p < pairCount; p++) {
-            rangesArr[p] = PropTileRange{
+            rangesArr[p] = engine::PropTileRange{
                 .species = pairs[p].species,
                 .variant = pairs[p].variant,
                 .start   = pairs[p].offset,
@@ -2809,52 +2722,42 @@ PropTileRange* rangesArr  = (pairCount > 0) ? static_cast<PropTileRange*>(memory
             };
         }
     }
-    memoryFree(counts);
-    memoryFree(pairs);
 
-    // ── Phase C (no lock): compact the grouped set against the enqueue-time
-    // ── camera and upload ONLY the visible subset (non-blocking; the pass
-    // ── adopts it in preUpdate once the copy's fence signals).  The full
-    // ── grouped set stays the CPU source of truth for later re-culls.
-    // ── Without a captured camera we fall back to uploading the full set
-    // ── and letting the cull pass compact it on its first pass.
-    PropInstance* cullOut = nullptr;
-    PropTileRange* cullRO = nullptr;
+    std::vector<engine::PropInstance> cullOut;
+    std::vector<engine::PropTileRange> cullRO;
     u32 cullW = 0, cullRC = 0;
     if (job->havePlanes && n > 0) {
-        cullOut  = static_cast<PropInstance*>(memoryAlloc(sizeof(PropInstance) * n));
-        cullRO   = static_cast<PropTileRange*>(memoryAlloc(sizeof(PropTileRange) * (pairCount > 0 ? pairCount : 1)));
-        propsCullCompact(grouped,
-                         rangesArr,
+        cullOut.resize(n);
+        cullRO.resize(pairCount > 0 ? pairCount : 1);
+        propsCullCompact(grouped.data(),
+                         rangesArr.data(),
                          pairCount,
-                         cullOut,
-                         cullRO,
+                         cullOut.data(),
+                         cullRO.data(),
                          job->camPos,
                          job->planes,
                          &cullW,
                          &cullRC);
-        vulkanAzgaarPropsSetTile(job->tileX,
+        engine::vulkanAzgaarPropsSetTile(job->tileX,
                                  job->tileZ,
                                  job->readyStamp,
-                                 cullOut,
+                                 cullOut.data(),
                                  cullW,
-                                 cullRO,
+                                 cullRO.data(),
                                  cullRC);
     } else {
-        vulkanAzgaarPropsSetTile(job->tileX,
+        engine::vulkanAzgaarPropsSetTile(job->tileX,
                                  job->tileZ,
                                  job->readyStamp,
-                                 grouped,
+                                 grouped.data(),
                                  n,
-                                 rangesArr,
+                                 rangesArr.data(),
                                  pairCount);
     }
 
-    // ── Phase D (lock): hand the grouped buffers over to the tile, or free
-    // ── them if the tile was evicted / invalidated while the upload ran.
-    threadLock(&g_stateLock);
+    utils::threadLock(&g_stateLock);
     PropsTileState* tile = nullptr;
-    for (u32 i = 0; i < arraySize(g_tiles); i++) {
+    for (u32 i = 0; i < g_tiles.size(); i++) {
         if (g_tiles[i].inUse && g_tiles[i].tileX == job->tileX && g_tiles[i].tileZ == job->tileZ &&
             g_tiles[i].readyStamp == job->readyStamp && g_tiles[i].building) {
             tile = &g_tiles[i];
@@ -2862,26 +2765,16 @@ PropTileRange* rangesArr  = (pairCount > 0) ? static_cast<PropTileRange*>(memory
         }
     }
     if (tile) {
-        memoryFree(tile->instances);
-        tile->instances = grouped;
-        grouped         = nullptr;
-        memoryFree(tile->ranges);
-        tile->ranges        = rangesArr;
-        rangesArr           = nullptr;
+        tile->instances = std::move(grouped);
+        tile->ranges    = std::move(rangesArr);
         tile->rangeCount    = pairCount;
         tile->instanceCount = n;
         for (u32 s = 0; s < AZGAAR_PROP_COUNT; s++) {
             tile->perSpecies[s] = perSpecies[s];
         }
-        if (job->havePlanes && cullOut) {
-            // A compacted set is already uploaded: no first cull needed, and
-            // the upload is fresh for the capture camera (see cullCamValid).
-            memoryFree(tile->cullInstances);
-            memoryFree(tile->cullRanges);
-            tile->cullInstances  = cullOut;
-            cullOut              = nullptr;
-            tile->cullRanges     = cullRO;
-            cullRO               = nullptr;
+        if (job->havePlanes && !cullOut.empty()) {
+            tile->cullInstances  = std::move(cullOut);
+            tile->cullRanges     = std::move(cullRO);
             tile->cullCount      = cullW;
             tile->cullRangeCount = cullRC;
             memcpy(tile->cullCamPos, job->camPos, sizeof(tile->cullCamPos));
@@ -2890,12 +2783,8 @@ PropTileRange* rangesArr  = (pairCount > 0) ? static_cast<PropTileRange*>(memory
             tile->cullCamValid = true;
             tile->needsCull    = false;
         } else {
-            // Fallback: the full set is the uploaded set; mark the tile for
-            // its first per-instance cull (the cull pass compacts it).
-            memoryFree(tile->cullInstances);
-            memoryFree(tile->cullRanges);
-            tile->cullInstances  = nullptr;
-            tile->cullRanges     = nullptr;
+            tile->cullInstances.clear();
+            tile->cullRanges.clear();
             tile->cullCount      = tile->instanceCount;
             tile->cullRangeCount = tile->rangeCount;
             tile->needsCull      = true;
@@ -2904,16 +2793,16 @@ PropTileRange* rangesArr  = (pairCount > 0) ? static_cast<PropTileRange*>(memory
         tile->building = false;
         if (g_propsDebug) {
             u32 total = tile->instanceCount;
-            info("azgaarProps: tile(%d,%d) built %u instances in %.1f KB (species: %u/%u/%u...)",
+            utils::info("azgaarProps: tile(%d,%d) built %u instances in %.1f KB (species: %u/%u/%u...)",
                  job->tileX,
                  job->tileZ,
                  total,
-                 static_cast<float>(total * sizeof(PropInstance)) / 1024.0f,
+                 static_cast<float>(total * sizeof(engine::PropInstance)) / 1024.0f,
                  tile->perSpecies[AZGAAR_PROP_GRASS_TUFT],
                  tile->perSpecies[AZGAAR_PROP_CONIFER],
                  tile->perSpecies[AZGAAR_PROP_DECIDUOUS]);
             if (job->havePlanes && cullW != total) {
-                info("azgaarProps: tile(%d,%d) scatter-cull %u -> %u instances",
+                utils::info("azgaarProps: tile(%d,%d) scatter-cull %u -> %u instances",
                      job->tileX,
                      job->tileZ,
                      total,
@@ -2921,22 +2810,16 @@ PropTileRange* rangesArr  = (pairCount > 0) ? static_cast<PropTileRange*>(memory
             }
         }
     }
-    threadUnlock(&g_stateLock);
+    utils::threadUnlock(&g_stateLock);
 
-    memoryFree(grouped);
-    memoryFree(rangesArr);
-    memoryFree(cullOut);
-    memoryFree(cullRO);
     placedHashFree(&ph);
-    memoryFree(temp);
-    memoryFree(heights);
     if (hitchOn)
-        info("HITCH: scatter tile(%d,%d) %u insts total %.1f ms (worker)",
+        utils::info("HITCH: scatter tile(%d,%d) %u insts total %.1f ms (worker)",
              job->tileX,
              job->tileZ,
              tempCount,
-             (nanos() - jobT0) / 1e6);
-    memoryFree(job);
+             (utils::nanos() - jobT0) / 1e6);
+    delete job;
 }
 
 // ── Per-frame poll: enqueue READY tiles not yet built, push wind ─────────
@@ -2966,12 +2849,12 @@ static void propsPushWind(const AzgaarWorld* world) {
         speed = static_cast<float>(atof(pEnv));
     }
     float enabled              = (!g_propsDisabled) ? 1.0f : 0.0f;
-    VulkanAzgaarPropsData data = {
+    engine::VulkanAzgaarPropsData data = {
         .wind    = {cosf(rad), sinf(rad), speed, strength},
         .density = {1.0f, 1.0f, 1.0f, enabled},
         .lod     = {PROPS_LOD_SWITCH, PROPS_LOD_SWITCH, 0.0f, 0.0f},
     };
-    vulkanResourceSetAzgaarPropsData(&data);
+    engine::vulkanResourceSetAzgaarPropsData(&data);
 }
 
 // ── Lifecycle ─────────────────────────────────────────────────────────────
@@ -3001,27 +2884,24 @@ void azgaarPropsInit(const AzgaarWorld* world) {
     azgaarLoadDeciduousModel();
 
     // Build the merged species-mesh buffer + variant table, push to the engine pass.
+    std::vector<engine::PropsVertex> verts;
+    std::vector<u32> idx;
+    std::vector<engine::PropVariantRange> variants;
     u32 vCount = 0, iCount = 0, variantCount = 0;
-    void* verts                = nullptr;
-    void* idx                  = nullptr;
-    PropVariantRange* variants = nullptr;
-    buildAllMeshes(&variants, &variantCount, &vCount, &iCount, &verts, &idx);
-    vulkanAzgaarPropsSetMeshes(verts, vCount, idx, iCount);
-    vulkanAzgaarPropsSetVariants(variants, variantCount);
-    memoryFree(verts);
-    memoryFree(idx);
-    memoryFree(variants);
+    buildAllMeshes(variants, variantCount, vCount, iCount, verts, idx);
+    engine::vulkanAzgaarPropsSetMeshes(verts.data(), vCount, idx.data(), iCount);
+    engine::vulkanAzgaarPropsSetVariants(variants.data(), variantCount);
 
     // Reuse the pool from a previous world: azgaarPropsDestroy() must not
     // destroy it (thpool's keepalive flag is process-wide — destroying any
     // pool kills the workers of every pool, see azgaarPropsDestroy).
-    if (!g_pool) g_pool = threadPoolInit(3);
+    if (!g_pool) g_pool = utils::threadPoolInit(3);
     g_initialized = true;
-    info("azgaarProps: variant table built: %u rows, %u deciduous variants",
+    utils::info("azgaarProps: variant table built: %u rows, %u deciduous variants",
          variantCount,
          g_variantCount[AZGAAR_PROP_DECIDUOUS]);
     if (g_propsDebug) {
-        info("azgaarProps: %u species, %u verts / %u idx; road hash %u pts; seed=0x%08x%s",
+        utils::info("azgaarProps: %u species, %u verts / %u idx; road hash %u pts; seed=0x%08x%s",
              AZGAAR_PROP_COUNT,
              vCount,
              iCount,
@@ -3038,12 +2918,12 @@ void azgaarPropsUpdate(void) {
     u32 enqNew = 0, enqVer = 0, enqLod = 0;
     propsPushWind(g_world);
 
-    HeightmapTerrain* ht = heightmapTerrainGetActive();
+    engine::HeightmapTerrain* ht = engine::heightmapTerrainGetActive();
     if (!ht || !ht->initialized) return;
 
     u32 cap                  = ht->windowSize * ht->windowSize + 4u;
-    HeightmapTileView* views = static_cast<HeightmapTileView*>(memoryAlloc(sizeof(HeightmapTileView) * cap));
-    u32 n                    = heightmapTerrainSnapshotTiles(ht, views, cap);
+    std::vector<engine::HeightmapTileView> views(cap);
+    u32 n                    = heightmapTerrainSnapshotTiles(ht, views.data(), cap);
 
     // If the authored deciduous model file exists but its scene is not ready
     // yet, defer the first scatter until the model is loaded, so the real
@@ -3051,11 +2931,10 @@ void azgaarPropsUpdate(void) {
     // pop).  Other vegetation (grass / rocks) is held for this frame too —
     // acceptable at world start, behind the loading screen.
     bool modelPending = false;
-    if (g_deciduousPath && (!g_deciduousScene || !g_deciduousScene->ready)) modelPending = true;
-    if (g_deciduousFarPath && (!g_deciduousFarScene || !g_deciduousFarScene->ready))
+    if (!g_deciduousPath.empty() && (!g_deciduousScene || !g_deciduousScene->ready)) modelPending = true;
+    if (!g_deciduousFarPath.empty() && (!g_deciduousFarScene || !g_deciduousFarScene->ready))
         modelPending = true;
     if (modelPending) {
-        memoryFree(views);
         return;
     }
 
@@ -3066,15 +2945,15 @@ void azgaarPropsUpdate(void) {
     float planes[6][4] = {};
     float camYaw = 0.0f, camPitch = 0.0f;
     bool havePlanes   = false;
-    Entity* camEntity = cameraGetEntity();
+    engine::Entity* camEntity = engine::cameraGetEntity();
     if (camEntity) {
-        Transform* t = getComponent(camEntity->scene, Transform, camEntity->id);
+        engine::Transform* t = getComponent(camEntity->scene, engine::Transform, camEntity->id);
         if (t) {
             camX = t->pos[0];
             camZ = t->pos[2];
             memcpy(camPos, t->pos, sizeof(camPos));
         }
-        Camera* cam = getComponent(camEntity->scene, Camera, camEntity->id);
+        engine::Camera* cam = getComponent(camEntity->scene, engine::Camera, camEntity->id);
         if (cam) {
             for (int i = 0; i < 6; i++) {
                 for (int c = 0; c < 4; c++) planes[i][c] = cam->cameraUbo.frustumPlanes[i][c];
@@ -3086,12 +2965,12 @@ void azgaarPropsUpdate(void) {
     }
 
     for (u32 i = 0; i < n; i++) {
-        HeightmapTileView* v = &views[i];
+        engine::HeightmapTileView* v = &views[i];
         if (!g_propsDisabled) {
             // Enqueue scatter for READY tiles not yet built / building for this stamp.
             PropsTileState* tile = nullptr;
-            threadLock(&g_stateLock);
-            for (u32 k = 0; k < arraySize(g_tiles); k++) {
+            utils::threadLock(&g_stateLock);
+            for (u32 k = 0; k < g_tiles.size(); k++) {
                 if (g_tiles[k].inUse && g_tiles[k].tileX == v->tileX &&
                     g_tiles[k].tileZ == v->tileZ) {
                     tile = &g_tiles[k];
@@ -3125,12 +3004,12 @@ void azgaarPropsUpdate(void) {
                 else
                     reason = 3;
             }
-            threadUnlock(&g_stateLock);
+            utils::threadUnlock(&g_stateLock);
             if (needsBuild) {
-                threadLock(&g_stateLock);
+                utils::threadLock(&g_stateLock);
                 // Re-check + claim the tile (avoid double-claim by the poll).
                 bool claimed = false;
-                for (u32 k = 0; k < arraySize(g_tiles); k++) {
+                for (u32 k = 0; k < g_tiles.size(); k++) {
                     if (g_tiles[k].inUse && g_tiles[k].tileX == v->tileX &&
                         g_tiles[k].tileZ == v->tileZ && g_tiles[k].readyStamp == v->readyStamp &&
                         !g_tiles[k].building) {
@@ -3148,12 +3027,12 @@ void azgaarPropsUpdate(void) {
                                          .camZ         = 0.0f,
                                          .inUse        = true,
                                          .building     = true};
-                    arrayPut(g_tiles, ns);
+                    g_tiles.push_back(ns);
                     claimed = true;
                 }
-                threadUnlock(&g_stateLock);
+                utils::threadUnlock(&g_stateLock);
                 if (claimed && g_pool) {
-                    ScatterJob* job = static_cast<ScatterJob*>(memoryAlloc(sizeof(ScatterJob)));
+                    ScatterJob* job = new ScatterJob{};
                     job->tileX        = v->tileX;
                     job->tileZ        = v->tileZ;
                     job->readyStamp   = v->readyStamp;
@@ -3165,7 +3044,7 @@ void azgaarPropsUpdate(void) {
                     job->yaw        = camYaw;
                     job->pitch      = camPitch;
                     job->havePlanes = havePlanes;
-                    threadPoolAddWork(g_pool, propsScatterJob, job);
+                    utils::threadPoolAddWork(g_pool, propsScatterJob, job);
                     if (reason == 1)
                         enqNew++;
                     else if (reason == 2)
@@ -3178,7 +3057,7 @@ void azgaarPropsUpdate(void) {
     }
 
     if (hitchOn && (enqNew + enqVer + enqLod) > 0) {
-        info("HITCH: scatter enqueue %u jobs (new=%u lod=%u ver=%u)",
+        utils::info("HITCH: scatter enqueue %u jobs (new=%u lod=%u ver=%u)",
              static_cast<unsigned>(enqNew + enqVer + enqLod),
              static_cast<unsigned>(enqNew),
              static_cast<unsigned>(enqLod),
@@ -3188,8 +3067,8 @@ void azgaarPropsUpdate(void) {
     // Drop CPU state for tiles that left the window (their GPU buffer is
     // cleared by the engine pass' ClearAll on world teardown; here we just
     // free the CPU arrays so a 25-tile window doesn't retain evicted data).
-    threadLock(&g_stateLock);
-    for (i32 i = static_cast<i32>(arraySize(g_tiles)) - 1; i >= 0; i--) {
+    utils::threadLock(&g_stateLock);
+    for (i32 i = static_cast<i32>(static_cast<i32>(g_tiles.size())) - 1; i >= 0; i--) {
         PropsTileState* t = &g_tiles[i];
         if (!t->inUse) continue;
         bool resident = false;
@@ -3202,84 +3081,61 @@ void azgaarPropsUpdate(void) {
         if (!resident && !t->building && !t->culling) {
             i32 dropX = t->tileX, dropZ = t->tileZ;
             propsTileDrop(t);
-            arrayDeleteSlow(g_tiles, static_cast<u32>(i));
+            g_tiles.erase(g_tiles.begin() + static_cast<u32>(i));
             // Free the engine pass' GPU instance buffer for the evicted tile so
             // flying across many tiles doesn't accumulate GPU memory.
-            vulkanAzgaarPropsClearTile(dropX, dropZ);
+            engine::vulkanAzgaarPropsClearTile(dropX, dropZ);
         }
     }
-    threadUnlock(&g_stateLock);
+    utils::threadUnlock(&g_stateLock);
 
     // Per-instance culling (dirty-checked): compact the full tile / global
     // sets to what the current camera can see and re-upload.
     if (!g_propsDisabled) {
-        propsCullUpdate(ht, views, n);
+        propsCullUpdate(ht, views.data(), n);
     }
 
-    memoryFree(views);
 }
 
 void azgaarPropsDestroy(void) {
-    // Wait for in-flight scatter jobs (they touch g_tiles + the pass), then
-    // free everything and clear the engine pass.
-    //
-    // NOTE: do NOT threadPoolDestroy(g_pool) here.  thpool's keepalive flag
-    // is a process-wide global: thpool_destroy() sets it to 0 and every pool
-    // worker in the process (default + transform pools included) exits its
-    // loop forever.  On the next world entry the scene-parse jobs queued on
-    // the default pool would never run and the loading screen would stall.
-    // Keep the (3) idle threads alive for the process lifetime instead.
     if (g_pool) {
-        threadPoolWait(g_pool);
+        utils::threadPoolWait(g_pool);
     }
-    threadLock(&g_stateLock);
-    for (u32 i = 0; i < arraySize(g_tiles); i++) {
+    utils::threadLock(&g_stateLock);
+    for (u32 i = 0; i < g_tiles.size(); i++) {
         if (g_tiles[i].inUse) propsTileDrop(&g_tiles[i]);
     }
-    arrayFree(g_tiles);
-    threadUnlock(&g_stateLock);
+    utils::threadUnlock(&g_stateLock);
 
-    // Drop the global sets (the owning modules may already have cleared them;
-    // inUse makes this idempotent).
     azgaarPropsClearGlobal(false);
     azgaarPropsClearGlobal(true);
 
-    memoryFree(g_roadHash.pts);
-    memoryFree(g_roadHash.starts);
     g_roadHash = RoadHash{};
 
-    vulkanAzgaarPropsClearAll();
-    vulkanAzgaarPropsSetMeshes(nullptr, 0, nullptr, 0);
-    vulkanAzgaarPropsSetVariants(nullptr, 0);
-    VulkanAzgaarPropsData off = {.wind    = {0, 0, 0, 0},
+    engine::vulkanAzgaarPropsClearAll();
+    engine::vulkanAzgaarPropsSetMeshes(nullptr, 0, nullptr, 0);
+    engine::vulkanAzgaarPropsSetVariants(nullptr, 0);
+    engine::VulkanAzgaarPropsData off = {.wind    = {0, 0, 0, 0},
                                  .density = {0, 0, 0, 0},
                                  .lod     = {PROPS_LOD_SWITCH, PROPS_LOD_SWITCH, 0.0f, 0.0f}};
-    vulkanResourceSetAzgaarPropsData(&off);
+    engine::vulkanResourceSetAzgaarPropsData(&off);
 
     if (g_deciduousScene) {
-        rendererSceneDestroy(g_deciduousScene);
-        sceneDestroy(g_deciduousScene);
+        engine::rendererSceneDestroy(g_deciduousScene);
+        engine::sceneDestroy(g_deciduousScene);
         g_deciduousScene = nullptr;
     }
-    if (g_deciduousPath) {
-        memoryFree(g_deciduousPath);
-        g_deciduousPath = nullptr;
-    }
+    g_deciduousPath.clear();
     if (g_deciduousFarScene) {
-        rendererSceneDestroy(g_deciduousFarScene);
-        sceneDestroy(g_deciduousFarScene);
+        engine::rendererSceneDestroy(g_deciduousFarScene);
+        engine::sceneDestroy(g_deciduousFarScene);
         g_deciduousFarScene = nullptr;
     }
-    if (g_deciduousFarPath) {
-        memoryFree(g_deciduousFarPath);
-        g_deciduousFarPath = nullptr;
-    }
-    memoryFree(g_variantSphereC);
-    memoryFree(g_variantSphereR);
-    g_variantSphereC    = nullptr;
-    g_variantSphereR    = nullptr;
+    g_deciduousFarPath.clear();
+    g_variantSphereC.clear();
+    g_variantSphereR.clear();
     g_variantSphereRows = 0;
 
     g_world       = nullptr;
     g_initialized = false;
-}
+}}  // namespace game

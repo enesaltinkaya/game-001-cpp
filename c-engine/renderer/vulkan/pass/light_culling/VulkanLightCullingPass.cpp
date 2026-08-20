@@ -1,4 +1,5 @@
 #include "VulkanLightCullingPass.h"
+#include "VulkanLightCullingPass.h"
 #include "ecs/Ecs.h"
 #include "ecs/system/camera/CameraComponent.h"
 #include "ecs/system/camera/CameraSystem.h"
@@ -11,23 +12,11 @@
 #include "renderer/vulkan/resources/VulkanFrameResources.h"
 #include "renderer/vulkan/resources/VulkanResourceManager.h"
 
-static void added(void);
-static void preUpdate(void);
-static void update(void);
-static void removed(void);
+namespace engine {
 
-System vulkanLightCullingPass = {
-    .name                = "light_culling",
-    .added               = added,
-    .removed             = removed,
-    .preUpdate           = preUpdate,
-    .update              = update,
-    .postUpdate          = nullptr,
-    .cpuElapsedLastFrame = 0.0,
-    .cpuElapsed          = 0.0,
-    .gpuElapsed          = 0.0,
-    .priority            = 0,
-};
+VulkanLightCullingPass vulkanLightCullingPass;
+
+VulkanLightCullingPass::VulkanLightCullingPass() : System("light_culling") {}
 
 /* Must match shaders/includes/globalset.shader */
 #define MAX_LIGHTS_PER_TILE 64u
@@ -51,8 +40,8 @@ static void createBuffers(u32 tileCount) {
     if (buffersReady) {
         vulkanDestroyBuffer(&lightGridBuffer,  NULL);
         vulkanDestroyBuffer(&lightIndexBuffer, NULL);
-        lightGridBuffer    = VulkanBuffer{0};
-        lightIndexBuffer   = VulkanBuffer{0};
+        lightGridBuffer    = VulkanBuffer{};
+        lightIndexBuffer   = VulkanBuffer{};
         buffersReady       = 0;
         allocatedTileCount = 0;
     }
@@ -75,17 +64,17 @@ static void createBuffers(u32 tileCount) {
     buffersReady       = 1;
     allocatedTileCount = tileCount;
 
-    info("light_culling: allocated %u tiles (%u lights/tile)",
+    utils::info("light_culling: allocated %u tiles (%u lights/tile)",
          allocatedTileCount, MAX_LIGHTS_PER_TILE);
 }
 
-static void added(void) {
+void VulkanLightCullingPass::added() {
     pipe = vulkanCreatePipe(
         .name = "light_culling",
         .comp = "shaders/pass/light_culling/spv/light_culling.comp.spv");
 }
 
-static void preUpdate(void) {
+void VulkanLightCullingPass::preUpdate() {
     if (!vulkan.skipFrame && window.renderWidth > 0 && window.renderHeight > 0) {
         u32 tileCountX = ((u32)window.renderWidth  + 15u) / 16u;
         u32 tileCountY = ((u32)window.renderHeight + 15u) / 16u;
@@ -96,7 +85,7 @@ static void preUpdate(void) {
     vulkanResetProfile(vulkan.currentCmd, &pipe.profile, 0);
 }
 
-static void update(void) {
+void VulkanLightCullingPass::update() {
     if (vulkan.skipFrame) return;
 
     Entity* camEntity = cameraGetEntity();
@@ -135,15 +124,22 @@ static void update(void) {
     /* Barrier: compute writes → fragment reads */
     VkMemoryBarrier2 writeDone = {
         .sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
+        .pNext         = nullptr,
         .srcStageMask  = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
         .srcAccessMask = VK_ACCESS_2_SHADER_WRITE_BIT,
         .dstStageMask  = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
         .dstAccessMask = VK_ACCESS_2_SHADER_READ_BIT,
     };
     VkDependencyInfo depDone = {
-        .sType              = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-        .memoryBarrierCount = 1,
-        .pMemoryBarriers    = &writeDone,
+        .sType                    = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+        .pNext                    = nullptr,
+        .dependencyFlags          = 0,
+        .memoryBarrierCount       = 1,
+        .pMemoryBarriers          = &writeDone,
+        .bufferMemoryBarrierCount = 0,
+        .pBufferMemoryBarriers    = nullptr,
+        .imageMemoryBarrierCount  = 0,
+        .pImageMemoryBarriers     = nullptr,
     };
     vkCmdPipelineBarrier2(cmd->cmd, &depDone);
 
@@ -153,15 +149,16 @@ static void update(void) {
     vulkanLightCullingPass.gpuElapsed = pipe.profile.elapsed;
 }
 
-static void removed(void) {
+void VulkanLightCullingPass::removed() {
     vulkanDestroyPipe(&pipe);
 
     if (buffersReady) {
         vulkanDestroyBuffer(&lightGridBuffer,  NULL);
         vulkanDestroyBuffer(&lightIndexBuffer, NULL);
-        lightGridBuffer    = VulkanBuffer{0};
-        lightIndexBuffer   = VulkanBuffer{0};
+        lightGridBuffer    = VulkanBuffer{};
+        lightIndexBuffer   = VulkanBuffer{};
         buffersReady       = 0;
         allocatedTileCount = 0;
     }
 }
+}  // namespace engine

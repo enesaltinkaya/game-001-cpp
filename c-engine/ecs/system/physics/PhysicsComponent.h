@@ -4,6 +4,7 @@
 
 typedef struct JoltMesh JoltMesh;
 typedef struct JoltBody JoltBody;
+namespace engine {
 
 REGISTER_COMPONENT(Physics);
 
@@ -24,3 +25,4 @@ typedef struct Physics {
         JoltBody* joltBody;
     };
 } Physics;
+}  // namespace engine

@@ -10,6 +10,7 @@
 #include <math.h>
 #include <stdlib.h>
 
+namespace utils {
 Image imageLoadFromData(const u8 *data, u64 size, const char *mime) {
   Image image = {};
 
@@ -42,12 +43,12 @@ Image imageLoadFromData(const u8 *data, u64 size, const char *mime) {
     for (i32 i = 0, s = image.mips; i < s; i++) {
       size_t size = 0;
       ktxTexture_GetImageOffset((ktxTexture *)ktxTexture2, i, 0, 0, &size);
-      arrayPut(image.mipSizes, size);
+      image.mipSizes.push_back(size);
     }
 
     image.vkFormat = ktxTexture2->vkFormat;
     image.size = ktxTexture2->dataSize;
-    image.data = memoryAlloc(image.size);
+    image.data = new u8[image.size];
     image.channels = numChannels;
 
     memcpy(image.data, ktxTexture2->pData, image.size);
@@ -105,12 +106,12 @@ Image imageLoadKtx(const char *path, KtxFormat format) {
     for (i32 i = 0, s = image.mips; i < s; i++) {
       size_t size = 0;
       ktxTexture_GetImageOffset((ktxTexture *)ktxTexture2, i, 0, 0, &size);
-      arrayPut(image.mipSizes, size);
+      image.mipSizes.push_back(size);
     }
 
     image.vkFormat = ktxTexture2->vkFormat;
     image.size = ktxTexture2->dataSize;
-    image.data = memoryAlloc(image.size);
+    image.data = new u8[image.size];
     image.channels = ktxTexture2_GetNumComponents(ktxTexture2);
     memcpy(image.data, ktxTexture2->pData, image.size);
     ktxTexture_Destroy((ktxTexture *)ktxTexture2);
@@ -135,12 +136,10 @@ Image imageLoadKtx(const char *path, KtxFormat format) {
 
 void imageDestory(Image *image) {
   if (image->isKtx) {
-    memoryFree(image->data);
+    delete[] static_cast<u8*>(image->data);
   } else if (!image->isRaw) {
     stbi_image_free(image->data);
   }
-  if (image->mipSizes)
-    arrayFree(image->mipSizes);
 }
 
 Image imageResize(Image *image, int newWidth, int newHeight) {
@@ -857,3 +856,4 @@ void boxBlurWithHolesOptimized(const float *input, float *output, int width,
 
   free(temp);
 }
+}  // namespace utils

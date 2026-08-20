@@ -4,7 +4,7 @@ set -e
 
 TOOLS_DIR="$(dirname "$(realpath "$0")")"
 ROOT="$TOOLS_DIR/.."
-THIRDPARTY="/home/enes/project/c/cpp-thirdparty"
+THIRDPARTY="/home/enes/Projects/c/cpp-thirdparty"
 SRC="$ROOT/tools/terrain-chunker/main.c"
 OUT="$ROOT/tools/terrain-chunker/terrain-chunker"
 

@@ -3,6 +3,7 @@
 #include <atomic>
 
 #include "renderer/vulkan/resources/VulkanBuffer.h"
+namespace engine {
 struct VulkanImage;
 struct VulkanPipe;
 
@@ -35,7 +36,8 @@ void vulkanLabelBeginColor(VulkanCommand* cmd,
 void vulkanLabelBegin(VulkanCommand* cmd, const char* name);
 void vulkanLabelEnd(VulkanCommand* cmd);
 
-#define vulkanSubmit(...) r_vulkanSubmit(VulkanSubmitInfo{__VA_ARGS__})
+#define vulkanSubmit(...) engine::r_vulkanSubmit(engine::VulkanSubmitInfo{__VA_ARGS__})
 void r_vulkanSubmit(VulkanSubmitInfo info);
 void vulkanPresent(VkSwapchainKHR* pSwapchains, u32* pImageIndices, VkSemaphore* pWaitSemaphore);
 void vulkanWaitIdle(const char* reason);
+}  // namespace engine

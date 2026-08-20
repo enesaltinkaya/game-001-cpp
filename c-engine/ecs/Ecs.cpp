@@ -1,5 +1,6 @@
 #include "Utils.h"
-#include "container/Array.h"
+#include <algorithm>
+#include <vector>
 #include "ecs/system/scene/SceneSystem.h"
 #include "ecs/system/System.h"
 #include "ecs/system/transform/TransformSystem.h"
@@ -18,13 +19,14 @@
 #include "renderer/Renderer.h"
 #include "timer/Timer.h"
 
+namespace engine {
 struct Ecs ecs;
 
-void ecsInit(struct System* gameSystem) {
-    info("ecs: initializing");
+void ecsInit(System* gameSystem) {
+    utils::info("ecs: initializing");
     static Scene scene = {};
     ecs.defaultScene   = &scene;
-    stringPrintf(&ecs.defaultScene->name, "defaultScene");
+    utils::stringPrintf(&ecs.defaultScene->name, "defaultScene");
 
     /*
      * System order matters.
@@ -55,53 +57,50 @@ void ecsInit(struct System* gameSystem) {
     systemAddNow(9000, &meshSystem);
     systemAddNow(10000, &renderSystem);
 
-    signalEmit("ecsInitialized", nullptr);
+    utils::signalEmit("ecsInitialized", nullptr);
 }
 
 void ecsDestroy(void) {
     // Destroy systems in reverse order so the renderer shuts down before
     // the window system (SDL_Quit closes the X11 display, which the AMD
     // Vulkan driver needs for swapchain destruction).
-    for (i32 i = (i32)arraySize(ecs.systems) - 1; i >= 0; i--) {
-        struct System* system = ecs.systems[i];
-        warn("remove system: %s", system->name);
-        if (system->removed) {
-            system->removed();
-        }
+    for (i32 i = (i32)static_cast<i32>(ecs.systems.size()) - 1; i >= 0; i--) {
+        System* system = ecs.systems[i];
+        utils::warn("remove system: %s", system->name);
+        system->removed();
     }
 
     // Free CPU-side scene data after all systems have cleaned up.
     // GPU scene resources are already freed by the renderer's removed().
-    for (i32 i = (i32)arraySize(ecs.scenes) - 1; i >= 0; i--) {
+    for (i32 i = (i32)static_cast<i32>(ecs.scenes.size()) - 1; i >= 0; i--) {
         sceneDestroy(ecs.scenes[i]);
     }
-    arrayFree(ecs.scenes);
 }
 
 void ecsPreUpdate(void) {  // runs every frame
-    double now              = nanos();
+    double now              = utils::nanos();
     ecs.totalCpuElapsed     = ecs.totalCpuElapsedTemp;
     ecs.totalCpuElapsedTemp = now;
-    foreach (struct System* system, ecs.systems) {
+    for (System* system : ecs.systems) {
         systemPreUpdate(system);
     }
 }
 
 static void ecsUpdateForTimer(void) {
-    foreach (struct System* system, ecs.systems) {
+    for (System* system : ecs.systems) {
         systemUpdate(system);
     }
 }
 
 void ecsUpdate(void) {  // might not run every frame, might run multiple times per frame
-    timerUpdate(ecsUpdateForTimer);
+    utils::timerUpdate(ecsUpdateForTimer);
 }
 
 void ecsPostUpdate(void) {  // runs every frame
-    foreach (struct System* system, ecs.systems) {
+    for (System* system : ecs.systems) {
         systemPostUpdate(system);
     }
-    ecs.totalCpuElapsedTemp = nanos() - ecs.totalCpuElapsedTemp;
+    ecs.totalCpuElapsedTemp = utils::nanos() - ecs.totalCpuElapsedTemp;
 }
 
 /*
@@ -111,66 +110,57 @@ SYSTEM
 */
 
 static void systemRemoveLater(void* pSystem) {
-    struct System* system  = static_cast<struct System*>(pSystem);
-    for (i32 i = 0, si = arraySize(ecs.systems); i < si; i++) {
+    System* system = static_cast<System*>(pSystem);
+    for (i32 i = 0, si = static_cast<i32>(ecs.systems.size()); i < si; i++) {
         if (ecs.systems[i] == system) {
-            arrayDeleteSlow(ecs.systems, i);
-            if (system->removed) {
-                system->removed();
-            }
+            ecs.systems.erase(ecs.systems.begin() + i);
+            system->removed();
             break;
         }
     }
 }
 
-void systemRemove(struct System* system) {
-    futureTaskAdd(0, systemRemoveLater, system);
+void systemRemove(System* system) {
+    utils::futureTaskAdd(0, systemRemoveLater, system);
 }
 
-int systemSort(const void* first, const void* second) {
-    return (*(struct System**)first)->priority - (*(struct System**)second)->priority;
-}
-
-static bool systemIsRegistered(struct System* system) {
-    for (i32 i = 0, si = arraySize(ecs.systems); i < si; i++) {
+static bool systemIsRegistered(System* system) {
+    for (i32 i = 0, si = static_cast<i32>(ecs.systems.size()); i < si; i++) {
         if (ecs.systems[i] == system) return true;
     }
     return false;
 }
 
 static void systemAddDelayed(void* pSystem) {
-    struct System* system  = static_cast<struct System*>(pSystem);
+    System* system = static_cast<System*>(pSystem);
     // Idempotent add: re-entering a state that adds the same systems would
     // otherwise duplicate the entry (double added()/update()/removed()
     // lifetimes — a classic crash source).
     if (systemIsRegistered(system)) {
-        warn("ecs: system %s already registered, skipping duplicate add", system->name);
+        utils::warn("ecs: system %s already registered, skipping duplicate add", system->name);
         return;
     }
-    info("ecs: adding system %s", system->name);
-    arrayPut(ecs.systems, system);
-    qsort((void*)ecs.systems, arraySize(ecs.systems), sizeof(struct System*), systemSort);
-    if (system->added) {
-        system->added();
-    }
+    utils::info("ecs: adding system %s", system->name);
+    ecs.systems.push_back(system);
+    std::sort(ecs.systems.begin(), ecs.systems.end(), [](const System* a, const System* b) { return a->priority < b->priority; });
+    system->added();
 }
 
-void systemAdd(int priority, struct System* system) {
+void systemAdd(int priority, System* system) {
     system->priority = priority;
-    futureTaskAdd(0, systemAddDelayed, system);
+    utils::futureTaskAdd(0, systemAddDelayed, system);
 }
 
-void systemAddNow(int priority, struct System* system) {
+void systemAddNow(int priority, System* system) {
     system->priority = priority;
     // See systemAddDelayed: never register the same System twice.
     if (systemIsRegistered(system)) {
-        warn("ecs: system %s already registered, skipping duplicate add", system->name);
+        utils::warn("ecs: system %s already registered, skipping duplicate add", system->name);
         return;
     }
-    info("ecs: adding system %s", system->name);
-    arrayPut(ecs.systems, system);
-    qsort((void*)ecs.systems, arraySize(ecs.systems), sizeof(struct System*), systemSort);
-    if (system->added) {
-        system->added();
-    }
+    utils::info("ecs: adding system %s", system->name);
+    ecs.systems.push_back(system);
+    std::sort(ecs.systems.begin(), ecs.systems.end(), [](const System* a, const System* b) { return a->priority < b->priority; });
+    system->added();
 }
+}  // namespace engine

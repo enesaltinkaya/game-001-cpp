@@ -12,23 +12,11 @@
 #include "ecs/system/camera/CameraSystem.h"
 #include "thread/Thread.h"
 
-static void added(void);
-static void preUpdate(void);
-static void update(void);
-static void removed(void);
+namespace engine {
 
-System vulkanAzgaarWaterPass = {
-    .name                = "azgaar_water",
-    .added               = added,
-    .removed             = removed,
-    .preUpdate           = preUpdate,
-    .update              = update,
-    .postUpdate          = nullptr,
-    .cpuElapsedLastFrame = 0.0,
-    .cpuElapsed          = 0.0,
-    .gpuElapsed          = 0.0,
-    .priority            = 0,
-};
+VulkanAzgaarWaterPass vulkanAzgaarWaterPass;
+
+VulkanAzgaarWaterPass::VulkanAzgaarWaterPass() : System("azgaar_water") {}
 
 // Must match the GLSL push-constant block in azgaar_water.frag.
 typedef struct WaterPushConstants {
@@ -49,9 +37,9 @@ static u32 indexCount = 0;
 static bool uploaded = false;
 
 // Pending upload (set on game thread, consumed on render thread)
-static Thread uploadLock = {.mutex = PTHREAD_MUTEX_INITIALIZER};
-static SceneVertex* pendingVertexData = NULL;
-static u32* pendingIndexData = NULL;
+static utils::Thread uploadLock = {.mutex = PTHREAD_MUTEX_INITIALIZER};
+static std::vector<SceneVertex> pendingVertexData;
+static std::vector<u32> pendingIndexData;
 static u32 pendingVertexCount = 0;
 static u32 pendingIndexCount = 0;
 static bool pendingClear = false;
@@ -98,36 +86,33 @@ static void swapchainCreated(void*) {
 
 void vulkanAzgaarWaterSetMesh(const void* vertices, u32 vCount,
                                const void* indices, u32 iCount) {
-    threadLock(&uploadLock);
-    // Free any existing pending data
-    if (pendingVertexData) { memoryFree(pendingVertexData); pendingVertexData = NULL; }
-    if (pendingIndexData) { memoryFree(pendingIndexData); pendingIndexData = NULL; }
+    utils::threadLock(&uploadLock);
+    pendingVertexData.clear();
+    pendingIndexData.clear();
     pendingVertexCount = pendingIndexCount = 0;
     pendingClear = false;
 
     pendingVertexCount = vCount;
     pendingIndexCount = iCount;
-    pendingVertexData  = static_cast<SceneVertex*>(memoryAlloc(sizeof(SceneVertex) * vCount));
-    pendingIndexData  = static_cast<u32*>(memoryAlloc(sizeof(u32) * iCount));
-    memcpy(pendingVertexData, vertices, sizeof(SceneVertex) * vCount);
-    memcpy(pendingIndexData, indices, sizeof(u32) * iCount);
-    threadUnlock(&uploadLock);
+    pendingVertexData.assign(static_cast<const SceneVertex*>(vertices), static_cast<const SceneVertex*>(vertices) + vCount);
+    pendingIndexData.assign(static_cast<const u32*>(indices), static_cast<const u32*>(indices) + iCount);
+    utils::threadUnlock(&uploadLock);
 }
 
 void vulkanAzgaarWaterClear(void) {
-    threadLock(&uploadLock);
+    utils::threadLock(&uploadLock);
     pendingClear = true;
-    if (pendingVertexData) { memoryFree(pendingVertexData); pendingVertexData = NULL; }
-    if (pendingIndexData) { memoryFree(pendingIndexData); pendingIndexData = NULL; }
+    pendingVertexData.clear();
+    pendingIndexData.clear();
     pendingVertexCount = pendingIndexCount = 0;
-    threadUnlock(&uploadLock);
+    utils::threadUnlock(&uploadLock);
 }
 
 bool vulkanAzgaarWaterGetGpuMesh(VulkanBuffer** outVertexBuffer,
                                   VulkanBuffer** outIndexBuffer,
                                   u32* outVertexCount,
                                   u32* outIndexCount) {
-    threadLock(&uploadLock);
+    utils::threadLock(&uploadLock);
     bool ok = uploaded && vertexBuffer.buf && indexBuffer.buf;
     if (ok) {
         if (outVertexBuffer) *outVertexBuffer = &vertexBuffer;
@@ -135,7 +120,7 @@ bool vulkanAzgaarWaterGetGpuMesh(VulkanBuffer** outVertexBuffer,
         if (outVertexCount)  *outVertexCount  = vertexCount;
         if (outIndexCount)   *outIndexCount   = indexCount;
     }
-    threadUnlock(&uploadLock);
+    utils::threadUnlock(&uploadLock);
     return ok;
 }
 
@@ -179,58 +164,56 @@ bool vulkanAzgaarWaterIsVisible(void) {
 }
 
 static void uploadPending(void) {
-    threadLock(&uploadLock);
+    utils::threadLock(&uploadLock);
     bool hasClear = pendingClear;
-    bool hasData = pendingVertexData && pendingIndexData && pendingVertexCount > 0 && pendingIndexCount > 0;
-    if (!hasClear && !hasData) { threadUnlock(&uploadLock); return; }
+    bool hasData = !pendingVertexData.empty() && !pendingIndexData.empty() && pendingVertexCount > 0 && pendingIndexCount > 0;
+    if (!hasClear && !hasData) { utils::threadUnlock(&uploadLock); return; }
 
-    SceneVertex* verts = NULL;
-    u32* idxs = NULL;
+    const SceneVertex* verts = nullptr;
+    const u32* idxs = nullptr;
     u32 vCount = 0, iCount = 0;
     if (hasData) {
-        verts = pendingVertexData;
-        idxs = pendingIndexData;
+        verts = pendingVertexData.data();
+        idxs = pendingIndexData.data();
         vCount = pendingVertexCount;
         iCount = pendingIndexCount;
-        pendingVertexData = NULL;
-        pendingIndexData = NULL;
+        pendingVertexData.clear();
+        pendingIndexData.clear();
         pendingVertexCount = pendingIndexCount = 0;
     }
     pendingClear = false;
-    threadUnlock(&uploadLock);
+    utils::threadUnlock(&uploadLock);
 
     if (hasClear) {
-        threadLock(&uploadLock);
+        utils::threadLock(&uploadLock);
         if (vertexBuffer.buf) vulkanDestroyBuffer(&vertexBuffer, VK_NULL_HANDLE);
         if (indexBuffer.buf) vulkanDestroyBuffer(&indexBuffer, VK_NULL_HANDLE);
         vertexCount = indexCount = 0;
         uploaded = false;
-        threadUnlock(&uploadLock);
+        utils::threadUnlock(&uploadLock);
         return;
     }
 
     if (!verts || !idxs) {
-        memoryFree(verts);
-        memoryFree(idxs);
         return;
     }
 
     // Upload via transient command buffer (synchronous)
-    VulkanBuffer vbuf = vulkanCreateGpuBuffer(strtmp("AzgaarWaterVBO"),
+    VulkanBuffer vbuf = vulkanCreateGpuBuffer(utils::strtmp("AzgaarWaterVBO"),
                                                vCount * sizeof(SceneVertex),
                                                VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
-    VulkanBuffer ibuf = vulkanCreateGpuBuffer(strtmp("AzgaarWaterIBO"),
+    VulkanBuffer ibuf = vulkanCreateGpuBuffer(utils::strtmp("AzgaarWaterIBO"),
                                                iCount * sizeof(u32),
                                                VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
 
     VulkanCommand* cmd = vulkanTransientBegin();
-    vulkanCopy(.cmd = cmd, .source.data = verts, .target.buf = &vbuf,
+    vulkanCopy(.cmd = cmd, .source.data = (void*)verts, .target.buf = &vbuf,
                .size = static_cast<u32>(vCount * sizeof(SceneVertex)));
-    vulkanCopy(.cmd = cmd, .source.data = idxs, .target.buf = &ibuf,
+    vulkanCopy(.cmd = cmd, .source.data = (void*)idxs, .target.buf = &ibuf,
                .size = static_cast<u32>(iCount * sizeof(u32)));
     vulkanTransientEnd(cmd, 1);
 
-    threadLock(&uploadLock);
+    utils::threadLock(&uploadLock);
     if (vertexBuffer.buf) vulkanDestroyBuffer(&vertexBuffer, VK_NULL_HANDLE);
     if (indexBuffer.buf) vulkanDestroyBuffer(&indexBuffer, VK_NULL_HANDLE);
     vertexBuffer = vbuf;
@@ -238,30 +221,27 @@ static void uploadPending(void) {
     vertexCount = vCount;
     indexCount = iCount;
     uploaded = true;
-    threadUnlock(&uploadLock);
-
-    memoryFree(verts);
-    memoryFree(idxs);
+    utils::threadUnlock(&uploadLock);
 }
 
-static void added(void) {
-    signalSubscribe("swapchainCreated", swapchainCreated);
+void VulkanAzgaarWaterPass::added() {
+    utils::signalSubscribe("swapchainCreated", swapchainCreated);
     recreatePipelines();
 }
 
-static void preUpdate(void) {
+void VulkanAzgaarWaterPass::preUpdate() {
     uploadPending();
 }
 
-static void update(void) {
+void VulkanAzgaarWaterPass::update() {
     if (vulkan.skipFrame) { return; }
 
-    threadLock(&uploadLock);
+    utils::threadLock(&uploadLock);
     bool isUploaded = uploaded;
     VulkanBuffer vbufCopy = vertexBuffer;
     VulkanBuffer ibufCopy = indexBuffer;
     u32 idxCount = indexCount;
-    threadUnlock(&uploadLock);
+    utils::threadUnlock(&uploadLock);
     if (!isUploaded || !vbufCopy.buf || !ibufCopy.buf || idxCount == 0) return;
 
     VulkanCommand* cmd = vulkan.currentCmd;
@@ -316,13 +296,14 @@ static void update(void) {
     vulkanEndRender(cmd);
 }
 
-static void removed(void) {
+void VulkanAzgaarWaterPass::removed() {
     vulkanAzgaarWaterClear();
-    threadLock(&uploadLock);
+    utils::threadLock(&uploadLock);
     if (vertexBuffer.buf) vulkanDestroyBuffer(&vertexBuffer, VK_NULL_HANDLE);
     if (indexBuffer.buf) vulkanDestroyBuffer(&indexBuffer, VK_NULL_HANDLE);
     vertexCount = indexCount = 0;
     uploaded = false;
-    threadUnlock(&uploadLock);
+    utils::threadUnlock(&uploadLock);
     vulkanDestroyPipe(&pipe);
 }
+}  // namespace engine

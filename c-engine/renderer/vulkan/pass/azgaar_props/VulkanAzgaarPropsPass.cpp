@@ -1,4 +1,5 @@
 #include "renderer/vulkan/pass/azgaar_props/VulkanAzgaarPropsPass.h"
+#include <iterator>
 #include "renderer/Renderer.h"
 #include "renderer/vulkan/Vulkan.h"
 #include "renderer/vulkan/command/VulkanCommand.h"
@@ -12,23 +13,11 @@
 #include "ecs/system/camera/CameraSystem.h"
 #include "thread/Thread.h"
 
-static void added(void);
-static void preUpdate(void);
-static void update(void);
-static void removed(void);
+namespace engine {
 
-System vulkanAzgaarPropsPass = {
-    .name                = "azgaar_props",
-    .added               = added,
-    .removed             = removed,
-    .preUpdate           = preUpdate,
-    .update              = update,
-    .postUpdate          = nullptr,
-    .cpuElapsedLastFrame = 0.0,
-    .cpuElapsed          = 0.0,
-    .gpuElapsed          = 0.0,
-    .priority            = 0,
-};
+VulkanAzgaarPropsPass vulkanAzgaarPropsPass;
+
+VulkanAzgaarPropsPass::VulkanAzgaarPropsPass() : System("azgaar_props") {}
 
 // Must match the GLSL `PropPush` block (std430).
 typedef struct PropPushConstants {
@@ -63,8 +52,7 @@ static u32 meshVertCount = 0;
 static u32 meshIdxCount  = 0;
 
 // Per-(species, variant) metadata table (owned copy).
-static PropVariantRange* variants   = NULL;
-static u32               variantCount = 0;
+static std::vector<PropVariantRange> variants;
 
 // Per-tile GPU instance buffers (one entry per resident props tile).
 typedef struct PropGpuTile {
@@ -73,10 +61,10 @@ typedef struct PropGpuTile {
     bool  inUse;
     VulkanBuffer ibo;
     u32     instanceCount;
-    PropTileRange* ranges; // heap, owned
+    std::vector<PropTileRange> ranges = {};
     u32     rangeCount;
 } PropGpuTile;
-static Array(PropGpuTile)   gpuTiles   = {};
+static std::vector<PropGpuTile>   gpuTiles   = {};
 
 // Pending tile uploads.  The instance buffer is BUILT (VMA alloc + staging
 // copy) on the enqueueing thread (props pool worker, or the main thread at
@@ -84,36 +72,36 @@ static Array(PropGpuTile)   gpuTiles   = {};
 // so workers never stall behind the graphics queue.  The render thread polls
 // the entry's fence in preUpdate and adopts the buffer only once the GPU
 // copy has completed; unfinished entries are re-queued for the next frame.
-typedef struct PendingTileUpload {
-    i32   tileX, tileZ;
-    u64   readyStamp;
-    bool  clear; // clear == drop this tile's buffer
-    VulkanBuffer ibo;      // pre-built (zero when clear / count 0)
-    VulkanCommand* cmd;    // owns the in-flight transient copy (NULL once adopted)
-    u32     instanceCount;
-    PropTileRange* ranges; // heap, owned
-    u32     rangeCount;
-} PendingTileUpload;
-static Array(PendingTileUpload) pendingTiles = {};
+struct PendingTileUpload {
+    i32   tileX = 0, tileZ = 0;
+    u64   readyStamp = 0;
+    bool  clear = false; // clear == drop this tile's buffer
+    VulkanBuffer ibo = {};      // pre-built (zero when clear / count 0)
+    VulkanCommand* cmd = nullptr;    // owns the in-flight transient copy (NULL once adopted)
+    u32     instanceCount = 0;
+    std::vector<PropTileRange> ranges = {};
+    u32     rangeCount = 0;
+};
+static std::vector<PendingTileUpload> pendingTiles = {};
 static bool                     clearAllFlag = false; // drained on render thread
-static Thread uploadLock = {.mutex = PTHREAD_MUTEX_INITIALIZER};
+static utils::Thread uploadLock = {.mutex = PTHREAD_MUTEX_INITIALIZER};
 
 // IBOs displaced by a newer upload (or a tile clear): the GPU may still be
 // drawing them for up to FRAMES_IN_FLIGHT frames (the render loop does not
 // fence per frame), so destruction is deferred by that many preUpdates.
-static Array(VulkanBuffer) retiredIbos = {};
+static std::vector<VulkanBuffer> retiredIbos = {};
 
 static void retireIbo(VulkanBuffer* ibo) {
     if (ibo->buf) {
-        arrayPut(retiredIbos, *ibo);
-        *ibo = VulkanBuffer{0};
+        retiredIbos.push_back(*ibo);
+        *ibo = VulkanBuffer{};
     }
 }
 
 static void retireFlush(void) {
-    while (arraySize(retiredIbos) > FRAMES_IN_FLIGHT) {
+    while (static_cast<i32>(retiredIbos.size()) > FRAMES_IN_FLIGHT) {
         VulkanBuffer b  = retiredIbos[0];
-        arrayDeleteSlow(retiredIbos, 0u);
+        retiredIbos.erase(retiredIbos.begin() + 0u);
         vulkanDestroyBuffer(&b, VK_NULL_HANDLE);
     }
 }
@@ -123,7 +111,7 @@ typedef struct PropGpuGlobal {
     bool  inUse;
     VulkanBuffer ibo;
     u32  instanceCount;
-    PropTileRange* ranges; // heap, owned
+    std::vector<PropTileRange> ranges = {};
     u32  rangeCount;
     float aabbMin[3];
     float aabbMax[3];
@@ -131,21 +119,21 @@ typedef struct PropGpuGlobal {
 static PropGpuGlobal gpuGlobal = {};
 
 // Pending global uploads (pre-built instance buffer, see PendingTileUpload).
-typedef struct PendingGlobalUpload {
-    bool  clear;
-    VulkanBuffer ibo;         // pre-built (zero when clear / count 0)
-    u32     instanceCount;
-    PropTileRange* ranges;    // heap, owned
-    u32     rangeCount;
-    float   aabbMin[3];
-    float   aabbMax[3];
-} PendingGlobalUpload;
-static Array(PendingGlobalUpload) pendingGlobals = {};
+struct PendingGlobalUpload {
+    bool  clear = false;
+    VulkanBuffer ibo = {};         // pre-built (zero when clear / count 0)
+    u32     instanceCount = 0;
+    std::vector<PropTileRange> ranges = {};
+    u32     rangeCount = 0;
+    float   aabbMin[3] = {};
+    float   aabbMax[3] = {};
+};
+static std::vector<PendingGlobalUpload> pendingGlobals = {};
 
 // Second whole-map slot (landmark props, workstream E): same layout as the
 // settlements' global slot.
 static PropGpuGlobal gpuLandmarks = {};
-static Array(PendingGlobalUpload) pendingLandmarks = {};
+static std::vector<PendingGlobalUpload> pendingLandmarks = {};
 
 static bool enabled = true; // master switch (vulkanAzgaarPropsSetEnabled)
 
@@ -258,18 +246,18 @@ static void swapchainCreated(void*) {
 
 void vulkanAzgaarPropsSetMeshes(const void* verts, u32 vertCount,
                                 const void* idx, u32 idxCount) {
-    threadLock(&uploadLock);
+    utils::threadLock(&uploadLock);
     if (meshVbo.buf) vulkanDestroyBuffer(&meshVbo, VK_NULL_HANDLE);
     if (meshIbo.buf) vulkanDestroyBuffer(&meshIbo, VK_NULL_HANDLE);
     meshVertCount = vertCount;
     meshIdxCount  = idxCount;
     if (vertCount > 0 && idxCount > 0) {
         meshVbo = vulkanCreateGpuBuffer(
-            strtmp("azgaar_props_mesh_vbo"),
+            utils::strtmp("azgaar_props_mesh_vbo"),
             vertCount * sizeof(PropsVertex),
             VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
         meshIbo = vulkanCreateGpuBuffer(
-            strtmp("azgaar_props_mesh_ibos"),
+            utils::strtmp("azgaar_props_mesh_ibos"),
             idxCount * sizeof(u32),
             VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
         VulkanCommand* cmd = vulkanTransientBegin();
@@ -279,23 +267,19 @@ void vulkanAzgaarPropsSetMeshes(const void* verts, u32 vertCount,
                    .size = static_cast<u32>(idxCount * sizeof(u32)));
         vulkanTransientEnd(cmd, 1);
     } else {
-        meshVbo = VulkanBuffer{0};
-        meshIbo = VulkanBuffer{0};
+        meshVbo = VulkanBuffer{};
+        meshIbo = VulkanBuffer{};
     }
-    threadUnlock(&uploadLock);
+    utils::threadUnlock(&uploadLock);
 }
 
 void vulkanAzgaarPropsSetVariants(const PropVariantRange* table, u32 count) {
-    threadLock(&uploadLock);
-    memoryFree(variants);
-    variants     = NULL;
-    variantCount = 0;
+    utils::threadLock(&uploadLock);
+    variants.clear();
     if (table && count > 0) {
-        variants      = static_cast<PropVariantRange*>(memoryAlloc(sizeof(PropVariantRange) * count));
-        memcpy(variants, table, sizeof(PropVariantRange) * count);
-        variantCount = count;
+        variants.assign(table, table + count);
     }
-    threadUnlock(&uploadLock);
+    utils::threadUnlock(&uploadLock);
 }
 
 // ── Per-tile instance buffers (built on the caller thread, adopted on the
@@ -319,7 +303,7 @@ void vulkanAzgaarPropsSetTile(i32 tileX, i32 tileZ, u64 readyStamp,
     if (instances && instanceCount > 0) {
         static int hitchOn = -1;
         if (hitchOn < 0) hitchOn = getenv("ENGINE_HITCH_DEBUG") != NULL;
-        double t0 = nanos();
+        double t0 = utils::nanos();
         u64 need = (u64)instanceCount * sizeof(PropInstance);
         p.ibo = vulkanCreateGpuBuffer("azgaar_props_inst",
                                       need,
@@ -330,30 +314,29 @@ void vulkanAzgaarPropsSetTile(i32 tileX, i32 tileZ, u64 readyStamp,
                    .size = static_cast<u32>(need));
         vulkanTransientEndAsync(cmd);
         p.cmd = cmd;
-        if (hitchOn) info("HITCH: props tile(%d,%d) IBO build %u insts %.1f MB in %.1f ms (worker, async)",
-                           tileX, tileZ, instanceCount, (double)need / 1048576.0, (nanos() - t0) / 1e6);
+        if (hitchOn) utils::info("HITCH: props tile(%d,%d) IBO build %u insts %.1f MB in %.1f ms (worker, async)",
+                           tileX, tileZ, instanceCount, (double)need / 1048576.0, (utils::nanos() - t0) / 1e6);
     }
     if (ranges && rangeCount > 0) {
-        p.ranges  = static_cast<PropTileRange*>(memoryAlloc(sizeof(PropTileRange) * rangeCount));
-        memcpy(p.ranges, ranges, sizeof(PropTileRange) * rangeCount);
+        p.ranges.assign(ranges, ranges + rangeCount);
     }
-    threadLock(&uploadLock);
-    arrayPut(pendingTiles, p);
-    threadUnlock(&uploadLock);
+    utils::threadLock(&uploadLock);
+    pendingTiles.push_back(p);
+    utils::threadUnlock(&uploadLock);
 }
 
 void vulkanAzgaarPropsClearTile(i32 tileX, i32 tileZ) {
     PendingTileUpload p = {.tileX = tileX, .tileZ = tileZ, .clear = true};
-    threadLock(&uploadLock);
-    arrayPut(pendingTiles, p);
-    threadUnlock(&uploadLock);
+    utils::threadLock(&uploadLock);
+    pendingTiles.push_back(p);
+    utils::threadUnlock(&uploadLock);
 }
 
 void vulkanAzgaarPropsClearAll(void) {
     // Flag drained by the render thread (avoids touching gpuTiles off-thread).
-    threadLock(&uploadLock);
+    utils::threadLock(&uploadLock);
     clearAllFlag = true;
-    threadUnlock(&uploadLock);
+    utils::threadUnlock(&uploadLock);
 }
 
 // ── Whole-map global instance buffers (workstream D + E) ──────────────────
@@ -361,7 +344,7 @@ void vulkanAzgaarPropsClearAll(void) {
 // Shared enqueue for the two whole-map slots (settlements, landmarks): builds
 // the instance buffer on the calling thread (see vulkanAzgaarPropsSetTile) and
 // copies only the ranges to the heap under the upload lock.
-static void enqueueGlobal(Array(PendingGlobalUpload)* queue,
+static void enqueueGlobal(std::vector<PendingGlobalUpload>* queue,
                           const PropInstance* instances, u32 instanceCount,
                           const PropTileRange* ranges, u32 rangeCount,
                           const float aabbMin[3], const float aabbMax[3]) {
@@ -382,12 +365,11 @@ static void enqueueGlobal(Array(PendingGlobalUpload)* queue,
         vulkanTransientEnd(cmd, 1);
     }
     if (ranges && rangeCount > 0) {
-        p.ranges  = static_cast<PropTileRange*>(memoryAlloc(sizeof(PropTileRange) * rangeCount));
-        memcpy(p.ranges, ranges, sizeof(PropTileRange) * rangeCount);
+        p.ranges.assign(ranges, ranges + rangeCount);
     }
-    threadLock(&uploadLock);
-    arrayPut(*queue, p);
-    threadUnlock(&uploadLock);
+    utils::threadLock(&uploadLock);
+    queue->push_back(p);
+    utils::threadUnlock(&uploadLock);
 }
 
 void vulkanAzgaarPropsSetGlobal(const PropInstance* instances, u32 instanceCount,
@@ -397,9 +379,9 @@ void vulkanAzgaarPropsSetGlobal(const PropInstance* instances, u32 instanceCount
 }
 
 void vulkanAzgaarPropsClearGlobal(void) {
-    threadLock(&uploadLock);
-    arrayPut(pendingGlobals, PendingGlobalUpload{.clear = true});
-    threadUnlock(&uploadLock);
+    utils::threadLock(&uploadLock);
+    pendingGlobals.push_back(PendingGlobalUpload{.clear = true});
+    utils::threadUnlock(&uploadLock);
 }
 
 void vulkanAzgaarPropsSetLandmarks(const PropInstance* instances, u32 instanceCount,
@@ -409,9 +391,9 @@ void vulkanAzgaarPropsSetLandmarks(const PropInstance* instances, u32 instanceCo
 }
 
 void vulkanAzgaarPropsClearLandmarks(void) {
-    threadLock(&uploadLock);
-    arrayPut(pendingLandmarks, PendingGlobalUpload{.clear = true});
-    threadUnlock(&uploadLock);
+    utils::threadLock(&uploadLock);
+    pendingLandmarks.push_back(PendingGlobalUpload{.clear = true});
+    utils::threadUnlock(&uploadLock);
 }
 
 void vulkanAzgaarPropsSetEnabled(bool e) {
@@ -421,7 +403,7 @@ void vulkanAzgaarPropsSetEnabled(bool e) {
 // ── Render-thread upload consumption ──────────────────────────────────────
 
 static PropGpuTile* gpuTileFind(i32 tileX, i32 tileZ) {
-    for (u32 i = 0u; i < arraySize(gpuTiles); i++) {
+    for (u32 i = 0; i < gpuTiles.size(); i++) {
         if (gpuTiles[i].inUse && gpuTiles[i].tileX == tileX && gpuTiles[i].tileZ == tileZ) {
             return &gpuTiles[i];
         }
@@ -431,42 +413,41 @@ static PropGpuTile* gpuTileFind(i32 tileX, i32 tileZ) {
 
 static void gpuTileDestroy(PropGpuTile* e) {
     retireIbo(&e->ibo);
-    memoryFree(e->ranges);
-    *e = PropGpuTile{0};
+    e->ranges.clear();
+    *e = PropGpuTile{};
 }
 
 static void applyPendingTiles(void) {
     // Drain the pending queue (buffers already built on the game/pool threads)
     // and adopt them into the per-tile GPU table.  Runs on the render thread.
-    threadLock(&uploadLock);
+    utils::threadLock(&uploadLock);
     bool     doClearAll = clearAllFlag;
     clearAllFlag        = false;
-    Array(PendingTileUpload) batch = {};
-    while (arraySize(pendingTiles) > 0u) {
-        arrayPut(batch, pendingTiles[0]);
-        arrayDeleteSlow(pendingTiles, 0);
+    std::vector<PendingTileUpload> batch = {};
+    while (!pendingTiles.empty()) {
+        batch.push_back(pendingTiles[0]);
+        pendingTiles.erase(pendingTiles.begin() + 0);
     }
-    threadUnlock(&uploadLock);
+    utils::threadUnlock(&uploadLock);
 
     if (doClearAll) {
-        for (u32 i = 0u; i < arraySize(gpuTiles); i++) {
+        for (u32 i = 0; i < gpuTiles.size(); i++) {
             if (gpuTiles[i].inUse) gpuTileDestroy(&gpuTiles[i]);
         }
-        arrayFree(gpuTiles);
     }
 
-    for (u32 i = 0u; i < arraySize(batch); i++) {
+    for (u32 i = 0; i < batch.size(); i++) {
         PendingTileUpload* p = &batch[i];
         if (p->cmd) {
             if (vkGetFenceStatus(vulkan.device, p->cmd->fence) != VK_SUCCESS) {
                 // GPU copy still in flight: keep the entry queued and retry on
                 // the next preUpdate (ownership moves to the re-queued copy).
-                threadLock(&uploadLock);
-                arrayPut(pendingTiles, *p);
+                utils::threadLock(&uploadLock);
+                pendingTiles.push_back(*p);
                 p->cmd   = NULL;
-                p->ranges = NULL;
-                p->ibo   = VulkanBuffer{0};
-                threadUnlock(&uploadLock);
+                p->ranges.clear();
+                p->ibo   = VulkanBuffer{};
+                utils::threadUnlock(&uploadLock);
                 continue;
             }
             vulkanTransientFinish(p->cmd);
@@ -475,8 +456,8 @@ static void applyPendingTiles(void) {
         PropGpuTile*       e = gpuTileFind(p->tileX, p->tileZ);
         if (!e) {
             if (!p->clear && p->instanceCount > 0) {
-                arrayPut(gpuTiles, PropGpuTile{0});
-                e = &gpuTiles[arraySize(gpuTiles) - 1u];
+                gpuTiles.push_back(PropGpuTile{});
+                e = &gpuTiles[static_cast<i32>(gpuTiles.size()) - 1u];
                 e->tileX = p->tileX;
                 e->tileZ = p->tileZ;
             } else {
@@ -486,16 +467,17 @@ static void applyPendingTiles(void) {
 
         if (p->clear) {
             gpuTileDestroy(e);
-            arrayDeleteSwap(gpuTiles, (u32)(e - gpuTiles));
-            memoryFree(p->ranges);
+            u32 idx = static_cast<u32>(std::distance(gpuTiles.data(), e));
+            gpuTiles[idx] = gpuTiles.back();
+            gpuTiles.pop_back();
+            p->ranges.clear();
             continue;
         }
 
         // Adopt the pre-built buffer; retire the previous one (the GPU may
         // still be drawing it — see retiredIbos).
         if (e->ibo.buf) retireIbo(&e->ibo);
-        memoryFree(e->ranges);
-        e->ranges         = NULL;
+        e->ranges.clear();
         e->rangeCount     = 0;
         e->instanceCount  = 0;
         e->readyStamp     = p->readyStamp;
@@ -503,69 +485,66 @@ static void applyPendingTiles(void) {
 
         if (p->instanceCount > 0) {
             e->ibo           = p->ibo;
-            p->ibo           = VulkanBuffer{0};
+            p->ibo           = VulkanBuffer{};
             e->instanceCount = p->instanceCount;
-            e->ranges        = p->ranges; // takes ownership
+            e->ranges        = std::move(p->ranges); // takes ownership
             e->rangeCount    = p->rangeCount;
-            p->ranges        = NULL;     // consumed (a later clear in this batch frees it via gpuTileDestroy)
+            p->ranges.clear();            // consumed (a later clear in this batch frees it via gpuTileDestroy)
         }
     }
 
     // Free batch entries whose payload was NOT handed to a tile (count-0
     // uploads, clears of absent tiles).
-    for (u32 i = 0u; i < arraySize(batch); i++) {
+    for (u32 i = 0; i < batch.size(); i++) {
         if (batch[i].cmd) vulkanTransientFinish(batch[i].cmd); // defensive: normally NULL here
-        if (batch[i].ranges) memoryFree(batch[i].ranges);
         if (batch[i].ibo.buf) vulkanDestroyBuffer(&batch[i].ibo, VK_NULL_HANDLE);
     }
-    arrayFree(batch);
 }
 
 static void gpuSetDestroy(PropGpuGlobal* g) {
     retireIbo(&g->ibo);
-    memoryFree(g->ranges);
-    *g = PropGpuGlobal{0};
+    g->ranges.clear();
+    *g = PropGpuGlobal{};
 }
 
 // Drain a pending global-upload queue (game/pool thread -> render thread),
 // adopting the slot's pre-built whole-map instance buffer.  Called in preUpdate.
-static void drainGlobalQueue(Array(PendingGlobalUpload)* queue, PropGpuGlobal* target,
+static void drainGlobalQueue(std::vector<PendingGlobalUpload>* queue, PropGpuGlobal* target,
                              const char* bufferName) {
     (void)bufferName;
-    threadLock(&uploadLock);
-    Array(PendingGlobalUpload) gbatch = {};
-    while (arraySize(*queue) > 0u) {
-        arrayPut(gbatch, (*queue)[0]);
-        arrayDeleteSlow(*queue, 0);
+    utils::threadLock(&uploadLock);
+    std::vector<PendingGlobalUpload> gbatch = {};
+    while (!queue->empty()) {
+        gbatch.push_back((*queue)[0]);
+        queue->erase(queue->begin());
     }
-    threadUnlock(&uploadLock);
+    utils::threadUnlock(&uploadLock);
 
-    for (u32 i = 0u; i < arraySize(gbatch); i++) {
+    for (u32 i = 0; i < gbatch.size(); i++) {
         PendingGlobalUpload* p = &gbatch[i];
         if (p->clear) {
             gpuSetDestroy(target);
-            memoryFree(p->ranges);
+            p->ranges.clear();
             continue;
         }
         if (p->instanceCount > 0) {
             if (target->ibo.buf) retireIbo(&target->ibo);
             target->ibo          = p->ibo;
-            p->ibo               = VulkanBuffer{0};
-            memoryFree(target->ranges);
+            p->ibo               = VulkanBuffer{};
+            target->ranges.clear();
             target->inUse         = true;
             target->instanceCount = p->instanceCount;
-            target->ranges        = p->ranges; // takes ownership
+            target->ranges        = std::move(p->ranges); // takes ownership
             target->rangeCount    = p->rangeCount;
-            p->ranges             = NULL;
+            p->ranges.clear();
             memcpy(target->aabbMin, p->aabbMin, sizeof(target->aabbMin));
             memcpy(target->aabbMax, p->aabbMax, sizeof(target->aabbMax));
         } else {
             gpuSetDestroy(target);
-            memoryFree(p->ranges);
+            p->ranges.clear();
         }
         if (p->ibo.buf) vulkanDestroyBuffer(&p->ibo, VK_NULL_HANDLE); // zero unless adopted above
     }
-    arrayFree(gbatch);
 }
 
 // ── Frustum culling ───────────────────────────────────────────────────────
@@ -587,12 +566,12 @@ static bool aabbOutsideFrustum(const vec3 min, const vec3 max, vec4* planes) {
 
 // ── System callbacks ──────────────────────────────────────────────────────
 
-static void added(void) {
-    signalSubscribe("swapchainCreated", swapchainCreated);
+void VulkanAzgaarPropsPass::added() {
+    utils::signalSubscribe("swapchainCreated", swapchainCreated);
     recreatePipelines();
 }
 
-static void preUpdate(void) {
+void VulkanAzgaarPropsPass::preUpdate() {
     // Retire IBOs that are past their FRAMES_IN_FLIGHT lifetime (runs even on
     // skipped frames so the list stays bounded).
     retireFlush();
@@ -607,12 +586,12 @@ static void preUpdate(void) {
 // stable once set (only replaced at world teardown), so it is read directly on
 // the render thread.
 static const PropVariantRange* findVariant(u32 species, u32 variant) {
-    for (u32 i = 0; i < variantCount; i++) {
+    for (u32 i = 0; i < variants.size(); i++) {
         if (variants[i].species == species && variants[i].variant == variant) {
             return &variants[i];
         }
     }
-    return NULL;
+    return nullptr;
 }
 
 // Draw one whole-map instance set (settlement buildings, landmarks), culled by
@@ -622,9 +601,9 @@ static const PropVariantRange* findVariant(u32 species, u32 variant) {
 static void drawGlobalSet(VulkanCommand* cmd, PropGpuGlobal* g, const vec4* planes,
                           bool* loggedOnce, const char* label,
                           VulkanPipe* pipe, bool forShadow, u32 cascadeIndex) {
-    threadLock(&uploadLock);
+    utils::threadLock(&uploadLock);
     bool draw = g->inUse && g->instanceCount > 0;
-    threadUnlock(&uploadLock);
+    utils::threadUnlock(&uploadLock);
     if (!draw) return;
 
     vec3 gmin = {g->aabbMin[0], g->aabbMin[1], g->aabbMin[2]};
@@ -633,7 +612,7 @@ static void drawGlobalSet(VulkanCommand* cmd, PropGpuGlobal* g, const vec4* plan
 
     if (!*loggedOnce) {
         *loggedOnce = true;
-        info("azgaar_props: %s: %u instances in %u ranges (AABB %.0f..%.0f x, %.0f..%.0f y, %.0f..%.0f z)",
+        utils::info("azgaar_props: %s: %u instances in %u ranges (AABB %.0f..%.0f x, %.0f..%.0f y, %.0f..%.0f z)",
              label, g->instanceCount, g->rangeCount,
              (double)gmin[0], (double)gmax[0],
              (double)gmin[1], (double)gmax[1],
@@ -676,17 +655,17 @@ static void drawGlobalSet(VulkanCommand* cmd, PropGpuGlobal* g, const vec4* plan
     }
 }
 
-static void update(void) {
+void VulkanAzgaarPropsPass::update() {
     if (vulkan.skipFrame) return;
     if (!enabled) return;
 
-    threadLock(&uploadLock);
+    utils::threadLock(&uploadLock);
     bool hasMesh = meshVbo.buf && meshIbo.buf && meshVertCount > 0 && meshIdxCount > 0;
-    bool hasVariants = variantCount > 0;
-    u32  tileCount  = arraySize(gpuTiles);
+    bool hasVariants = !variants.empty();
+    u32  tileCount  = static_cast<i32>(gpuTiles.size());
     bool hasGlobal  = gpuGlobal.inUse && gpuGlobal.instanceCount > 0;
     bool hasLandmarks = gpuLandmarks.inUse && gpuLandmarks.instanceCount > 0;
-    threadUnlock(&uploadLock);
+    utils::threadUnlock(&uploadLock);
 
     if (!hasMesh || !hasVariants || (tileCount == 0 && !hasGlobal && !hasLandmarks)) return;
 
@@ -779,13 +758,13 @@ static void update(void) {
 void vulkanAzgaarPropsDrawShadow(VulkanCommand* cmd, u32 cascadeIndex) {
     if (!enabled || !cmd) return;
 
-    threadLock(&uploadLock);
+    utils::threadLock(&uploadLock);
     bool hasMesh = meshVbo.buf && meshIbo.buf && meshVertCount > 0 && meshIdxCount > 0;
-    bool hasVariants = variantCount > 0;
-    u32  tileCount  = arraySize(gpuTiles);
+    bool hasVariants = !variants.empty();
+    u32  tileCount  = static_cast<i32>(gpuTiles.size());
     bool hasGlobal  = gpuGlobal.inUse && gpuGlobal.instanceCount > 0;
     bool hasLandmarks = gpuLandmarks.inUse && gpuLandmarks.instanceCount > 0;
-    threadUnlock(&uploadLock);
+    utils::threadUnlock(&uploadLock);
 
     if (!hasMesh || !hasVariants || (tileCount == 0 && !hasGlobal && !hasLandmarks)) return;
 
@@ -851,13 +830,13 @@ void vulkanAzgaarPropsDrawShadow(VulkanCommand* cmd, u32 cascadeIndex) {
 // libnvidia-glcore.so on vkCmdEndRendering). Same idiom as the heightmap
 // terrain prepass, the water prepass and the shadow pass above.
 void vulkanAzgaarPropsDrawPrepass(void) {
-    threadLock(&uploadLock);
+    utils::threadLock(&uploadLock);
     bool hasMesh = meshVbo.buf && meshIbo.buf && meshVertCount > 0 && meshIdxCount > 0;
-    bool hasVariants = variantCount > 0;
-    u32  tileCount  = arraySize(gpuTiles);
+    bool hasVariants = !variants.empty();
+    u32  tileCount  = static_cast<i32>(gpuTiles.size());
     bool hasGlobal  = gpuGlobal.inUse && gpuGlobal.instanceCount > 0;
     bool hasLandmarks = gpuLandmarks.inUse && gpuLandmarks.instanceCount > 0;
-    threadUnlock(&uploadLock);
+    utils::threadUnlock(&uploadLock);
 
     if (!hasMesh || !hasVariants || (tileCount == 0 && !hasGlobal && !hasLandmarks)) return;
 
@@ -927,52 +906,42 @@ void vulkanAzgaarPropsDrawPrepass(void) {
                   &prepassPipe, false, 0);
 }
 
-static void removed(void) {
+void VulkanAzgaarPropsPass::removed() {
     vulkanAzgaarPropsClearAll();
-    threadLock(&uploadLock);
+    utils::threadLock(&uploadLock);
     if (meshVbo.buf) vulkanDestroyBuffer(&meshVbo, VK_NULL_HANDLE);
     if (meshIbo.buf) vulkanDestroyBuffer(&meshIbo, VK_NULL_HANDLE);
-    meshVbo = VulkanBuffer{0};
-    meshIbo = VulkanBuffer{0};
-    for (u32 i = 0u; i < arraySize(gpuTiles); i++) {
+    meshVbo = VulkanBuffer{};
+    meshIbo = VulkanBuffer{};
+    for (u32 i = 0; i < gpuTiles.size(); i++) {
         if (gpuTiles[i].inUse) gpuTileDestroy(&gpuTiles[i]);
     }
-    arrayFree(gpuTiles);
     // Pending entries carry pre-built instance buffers (never drained after
     // removal) — destroy them here.  Async uploads hand their transient
     // command to the garbage collector; the final cleanup pass below reaps
     // those (and their staging buffers) before the device is destroyed.
-    while (arraySize(pendingTiles) > 0u) {
+    while (!pendingTiles.empty()) {
         if (pendingTiles[0].cmd) vulkanTransientFinish(pendingTiles[0].cmd);
         if (pendingTiles[0].ibo.buf) vulkanDestroyBuffer(&pendingTiles[0].ibo, VK_NULL_HANDLE);
-        memoryFree(pendingTiles[0].ranges);
-        arrayDeleteSlow(pendingTiles, 0);
+        pendingTiles.erase(pendingTiles.begin() + 0);
     }
-    arrayFree(pendingTiles);
     gpuSetDestroy(&gpuGlobal);
-    while (arraySize(pendingGlobals) > 0u) {
+    while (!pendingGlobals.empty()) {
         if (pendingGlobals[0].ibo.buf) vulkanDestroyBuffer(&pendingGlobals[0].ibo, VK_NULL_HANDLE);
-        memoryFree(pendingGlobals[0].ranges);
-        arrayDeleteSlow(pendingGlobals, 0);
+        pendingGlobals.erase(pendingGlobals.begin() + 0);
     }
-    arrayFree(pendingGlobals);
     gpuSetDestroy(&gpuLandmarks);
-    while (arraySize(pendingLandmarks) > 0u) {
+    while (!pendingLandmarks.empty()) {
         if (pendingLandmarks[0].ibo.buf)
             vulkanDestroyBuffer(&pendingLandmarks[0].ibo, VK_NULL_HANDLE);
-        memoryFree(pendingLandmarks[0].ranges);
-        arrayDeleteSlow(pendingLandmarks, 0);
+        pendingLandmarks.erase(pendingLandmarks.begin() + 0);
     }
-    arrayFree(pendingLandmarks);
-    while (arraySize(retiredIbos) > 0u) {
+    while (!retiredIbos.empty()) {
         vulkanDestroyBuffer(&retiredIbos[0], VK_NULL_HANDLE);
-        arrayDeleteSlow(retiredIbos, 0);
+        retiredIbos.erase(retiredIbos.begin() + 0);
     }
-    arrayFree(retiredIbos);
-    memoryFree(variants);
-    variants = NULL;
-    variantCount = 0;
-    threadUnlock(&uploadLock);
+    variants.clear();
+    utils::threadUnlock(&uploadLock);
     // Reap the garbage registered above (finished transient commands, their
     // staging buffers, retired IBOs): the engine's teardown cleanup may not
     // run again before vkDestroyDevice.
@@ -980,4 +949,4 @@ static void removed(void) {
     vulkanDestroyPipe(&pipe);
     vulkanDestroyPipe(&prepassPipe);
     vulkanDestroyPipe(&shadowPipe);
-}
+}}  // namespace engine

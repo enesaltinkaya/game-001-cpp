@@ -12,32 +12,33 @@
 #include "stb/git/stb_image.h"          // IWYU pragma: keep
 #include "stb/git/stb_image_resize2.h"  // IWYU pragma: keep
 
+namespace engine {
 struct WindowBackendApi {
-    const char* name;
-    void (*added)(void);
-    void (*removed)(void);
-    void (*preUpdate)(void);
-    void (*postUpdate)(void);
-    void (*hide)(void);
-    void (*show)(void);
-    void (*toggleFullscreen)(char fullScreen);
-    void (*reloadCursors)(void);
-    void* (*getPointerCursor)(void);
-    void* (*getArrowCursor)(void);
-    void* (*getTextCursor)(void);
-    void (*updateDimensions)(void);
-    void (*warpCenter)(void);
-    void (*warp)(float x, float y);
-    void (*hideCursor)(void);
-    void (*showCursor)(void);
-    bool (*isCursorVisible)(void);
-    void (*getRelativeMouseDelta)(float* dx, float* dy);
-    bool (*isLeftMouseDown)(void);
-    bool (*isRightMouseDown)(void);
-    bool (*isMiddleMouseDown)(void);
-    char const* const* (*getRequiredVulkanExtensions)(u32* extensionCount);
-    bool (*createVulkanSurface)(VkInstance instance, VkSurfaceKHR* surface);
-    SetCursorFn (*getSetCursorFn)(void);
+    const char* name = nullptr;
+    void (*added)(void) = nullptr;
+    void (*removed)(void) = nullptr;
+    void (*preUpdate)(void) = nullptr;
+    void (*postUpdate)(void) = nullptr;
+    void (*hide)(void) = nullptr;
+    void (*show)(void) = nullptr;
+    void (*toggleFullscreen)(char fullScreen) = nullptr;
+    void (*reloadCursors)(void) = nullptr;
+    void* (*getPointerCursor)(void) = nullptr;
+    void* (*getArrowCursor)(void) = nullptr;
+    void* (*getTextCursor)(void) = nullptr;
+    void (*updateDimensions)(void) = nullptr;
+    void (*warpCenter)(void) = nullptr;
+    void (*warp)(float x, float y) = nullptr;
+    void (*hideCursor)(void) = nullptr;
+    void (*showCursor)(void) = nullptr;
+    bool (*isCursorVisible)(void) = nullptr;
+    void (*getRelativeMouseDelta)(float* dx, float* dy) = nullptr;
+    bool (*isLeftMouseDown)(void) = nullptr;
+    bool (*isRightMouseDown)(void) = nullptr;
+    bool (*isMiddleMouseDown)(void) = nullptr;
+    char const* const* (*getRequiredVulkanExtensions)(u32* extensionCount) = nullptr;
+    bool (*createVulkanSurface)(VkInstance instance, VkSurfaceKHR* surface) = nullptr;
+    SetCursorFn (*getSetCursorFn)(void) = nullptr;
 };
 
 static void initSDL(void);
@@ -52,7 +53,7 @@ static void windowSystemPushInputEvent(SDL_Event* event);
 SDL_Event e;
 static SDL_Cursor *cursorArrow, *cursorHand, *cursorText;
 static const char* title = "Mini";
-static Array(SDL_Gamepad*) gamepads;
+static std::vector<SDL_Gamepad*> gamepads;
 
 static void sdlWindowSystemAdded(void);
 static void sdlWindowSystemRemoved(void);
@@ -117,20 +118,18 @@ void sdlWindowSystemAdded(void) {
     SDL_StartTextInput(window.sdlWindowHandle);
 
     const int linked = SDL_GetVersion();
-    debug("windowSystem: window engine SDL %d.%d.%d",
+    utils::debug("windowSystem: window engine SDL %d.%d.%d",
           SDL_VERSIONNUM_MAJOR(linked),
           SDL_VERSIONNUM_MINOR(linked),
           SDL_VERSIONNUM_MICRO(linked));
-    debug("windowSystem: dimensions    %dx%d", window.width, window.height);
+    utils::debug("windowSystem: dimensions    %dx%d", window.width, window.height);
 }
 
 static void windowRemovedDelayed(void* _) {
     // input cleanup
-    foreach (SDL_Gamepad* gamepad, gamepads) {
+    for (SDL_Gamepad* gamepad : gamepads) {
         SDL_CloseGamepad(gamepad);
     }
-    arrayFree(gamepads);
-    arrayFree(input.events);
 
     // window cleanup
     SDL_DestroyCursor(cursorArrow);
@@ -142,7 +141,7 @@ static void windowRemovedDelayed(void* _) {
 
 void sdlWindowSystemRemoved(void) {
     // let render system handle it's freeing first
-    futureTaskAdd(0, windowRemovedDelayed, nullptr);
+    utils::futureTaskAdd(0, windowRemovedDelayed, nullptr);
 }
 
 void initSDL(void) {
@@ -155,7 +154,7 @@ void setDimensions(void) {
     int primaryDisplayId                  = SDL_GetPrimaryDisplay();
     const SDL_DisplayMode* primaryDisplay = SDL_GetCurrentDisplayMode(primaryDisplayId);
 
-    if (settingsGetBool("fullScreen")) {
+    if (utils::settingsGetBool("fullScreen")) {
         window.width  = primaryDisplay->w;
         window.height = primaryDisplay->h;
     } else {
@@ -171,15 +170,15 @@ void setDimensions(void) {
 
 void createWindow(void) {
     SDL_WindowFlags flags = SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE;
-    if (settingsGetBool("fullScreen")) {
+    if (utils::settingsGetBool("fullScreen")) {
         flags |= SDL_WINDOW_BORDERLESS | SDL_WINDOW_FULLSCREEN;
     }
     SDL_SetHint(SDL_HINT_MOUSE_EMULATE_WARP_WITH_RELATIVE, "1");
 
-    double elapsed         = elapsedBegin();
+    double elapsed         = utils::elapsedBegin();
     window.sdlWindowHandle = SDL_CreateWindow(title, window.width, window.height, flags);
-    elapsed                = elapsedEnd(elapsed);
-    info("windowSystem: initialized in %.02f ms", elapsed);
+    elapsed                = utils::elapsedEnd(elapsed);
+    utils::info("windowSystem: initialized in %.02f ms", elapsed);
 
     centerWindow();
 
@@ -187,12 +186,12 @@ void createWindow(void) {
     window.xscale = scale;
     window.yscale = scale;
 
-    if (settingsGetDouble("uiScale") == 0) {
-        settingsSetDouble("uiScale", window.xscale);
+    if (utils::settingsGetDouble("uiScale") == 0) {
+        utils::settingsSetDouble("uiScale", window.xscale);
         if (!window.wayland) {
-            settingsSetDouble("cursorScale", window.xscale);
+            utils::settingsSetDouble("cursorScale", window.xscale);
         }
-        settingsWrite();
+        utils::settingsWrite();
     }
 }
 
@@ -217,14 +216,14 @@ void centerWindow(void) {
 }
 
 SDL_Cursor* loadCursor(const char* path, float xHot, float yHot) {
-    Image image = imageLoadKtx(path, KTX_FORMAT_RGBA32);
+    utils::Image image = utils::imageLoadKtx(path, utils::KTX_FORMAT_RGBA32);
 
-    u64 resizedWidth  = static_cast<int>(image.width / 2.5F * settingsGetDouble("cursorScale"));
-    u64 resizedHeight = static_cast<int>(image.height / 2.5F * settingsGetDouble("cursorScale"));
-    u64 resizedHotX   = static_cast<int>(xHot / 2.5F * settingsGetDouble("cursorScale"));
-    u64 resizedHotY   = static_cast<int>(yHot / 2.5F * settingsGetDouble("cursorScale"));
+    u64 resizedWidth  = static_cast<int>(image.width / 2.5F * utils::settingsGetDouble("cursorScale"));
+    u64 resizedHeight = static_cast<int>(image.height / 2.5F * utils::settingsGetDouble("cursorScale"));
+    u64 resizedHotX   = static_cast<int>(xHot / 2.5F * utils::settingsGetDouble("cursorScale"));
+    u64 resizedHotY   = static_cast<int>(yHot / 2.5F * utils::settingsGetDouble("cursorScale"));
 
-    Image resizedImage = imageResize(&image, resizedWidth, resizedHeight);
+    utils::Image resizedImage = utils::imageResize(&image, resizedWidth, resizedHeight);
 
     SDL_Surface* surface = SDL_CreateSurfaceFrom(resizedWidth,
                                                  resizedHeight,
@@ -233,8 +232,8 @@ SDL_Cursor* loadCursor(const char* path, float xHot, float yHot) {
                                                  4 * resizedWidth);
     SDL_Cursor* cursor   = SDL_CreateColorCursor(surface, resizedHotX, resizedHotY);
 
-    imageDestory(&image);
-    imageDestory(&resizedImage);
+    utils::imageDestory(&image);
+    utils::imageDestory(&resizedImage);
     SDL_DestroySurface(surface);
 
     return cursor;
@@ -329,7 +328,7 @@ void sdlWindowSystemShowCursor(void) {
     cursorVisible = true;
     SDL_SetWindowRelativeMouseMode(window.sdlWindowHandle, false);
     SDL_WarpMouseInWindow(window.sdlWindowHandle, cursorSaveX, cursorSaveY);
-    futureTaskAdd(10, showCursorDelayed, nullptr);
+    utils::futureTaskAdd(10, showCursorDelayed, nullptr);
 }
 
 bool sdlWindowSystemIsCursorVisible(void) {
@@ -531,7 +530,7 @@ static void windowSystemPushInputEvent(SDL_Event* event) {
             return;
     }
 
-    arrayPut(input.events, inputEvent);
+    input.events.push_back(inputEvent);
 }
 
 // ── Input ───────────────────────────────────────────────────────────────────
@@ -543,14 +542,14 @@ static char windowHasFocus(void) {
 void sdlWindowSystemPreUpdate(void) {
     sdlInputReset();
     input.focused = windowHasFocus();
-    arrayClear(input.events);
+    input.events.clear();
 
     SDL_Event event = {};
     while (SDL_PollEvent(&event)) {
         if (event.type == SDL_EVENT_JOYSTICK_ADDED && SDL_IsGamepad(event.adevice.which)) {
             SDL_Gamepad* gamepad = SDL_OpenGamepad(event.adevice.which);
-            arrayPut(gamepads, gamepad);
-            debug("  controller    : %s", SDL_GetGamepadName(gamepad));
+            gamepads.push_back(gamepad);
+            utils::debug("  controller    : %s", SDL_GetGamepadName(gamepad));
         }
 
         if (event.type == SDL_EVENT_KEY_DOWN /* && !event.key.repeat */) {
@@ -622,7 +621,7 @@ void sdlWindowSystemPreUpdate(void) {
         if (event.type == SDL_EVENT_WINDOW_RESIZED) {
             SDL_GetWindowSize(window.sdlWindowHandle, &window.width, &window.height);
             window.ratio = static_cast<float>(window.width) / static_cast<float>(window.height);
-            signalEmit("windowResized", nullptr);
+            utils::signalEmit("windowResized", nullptr);
         }
 
         if (event.type == SDL_EVENT_QUIT) {
@@ -634,9 +633,9 @@ void sdlWindowSystemPreUpdate(void) {
 
     if (input.alt && (input.pressed == KEY_RETURN || input.pressed == KEY_KP_ENTER)) {
         input.skip      = 1;
-        char fullScreen = settingsGetBool("fullScreen");
-        settingsSetBool("fullScreen", !fullScreen);
-        settingsWrite();
+        char fullScreen = utils::settingsGetBool("fullScreen");
+        utils::settingsSetBool("fullScreen", !fullScreen);
+        utils::settingsWrite();
         sdlWindowSystemToggleFullscreen(!fullScreen);
     }
 
@@ -675,3 +674,4 @@ void sdlInputReset(void) {
 char sdlInputShouldProcess(void) {
     return input.focused && !input.skip;
 }
+}  // namespace engine

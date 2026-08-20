@@ -22,6 +22,7 @@
  * locking is needed to read a READY grid.
  */
 
+namespace engine {
 struct HeightmapJob {
     HeightmapTerrain* ht;
     i32 tileX, tileZ;
@@ -30,10 +31,10 @@ struct HeightmapJob {
 static HeightmapTerrain* activeHeightmapTerrain = nullptr;
 static u64 heightmapReadyCounter = 0; // global; bumped per READY publish
 
-static Thread heightmapLock = {.mutex = PTHREAD_MUTEX_INITIALIZER, .cond = PTHREAD_COND_INITIALIZER};
-static Thread* buildWorker  = nullptr;
+static utils::Thread heightmapLock = {.mutex = PTHREAD_MUTEX_INITIALIZER, .cond = PTHREAD_COND_INITIALIZER};
+static utils::Thread* buildWorker  = nullptr;
 static bool workerStarted   = false;
-static Array(HeightmapJob) buildQueue;
+static std::vector<HeightmapJob> buildQueue;
 
 static void* heightmapBuildThreadMain(void* userData);
 
@@ -72,8 +73,7 @@ static float heightmapGridBilinear(const float* grid, u32 dim, float gx, float g
 // ── Tiles ──────────────────────────────────────────────────────────────────
 
 static HeightmapTile* heightmapTerrainCreateTile(HeightmapTerrain* ht, i32 tileX, i32 tileZ) {
-    HeightmapTile* tile = static_cast<HeightmapTile*>(memoryAlloc(sizeof(HeightmapTile)));
-    *tile = HeightmapTile{
+    HeightmapTile* tile = new HeightmapTile{
         .tileX          = tileX,
         .tileZ          = tileZ,
         .originX        = static_cast<float>(tileX) * ht->tileSizeMeters,
@@ -81,15 +81,13 @@ static HeightmapTile* heightmapTerrainCreateTile(HeightmapTerrain* ht, i32 tileX
         .sizeMeters     = ht->tileSizeMeters,
         .state          = HEIGHTMAP_TILE_EMPTY,
         .inWindow       = false,
-        .heights        = nullptr,
-        .physicsHeights = nullptr,
         .genMs          = 0.0,
         .readyStamp     = 0,
         .gpuData        = nullptr,
         .physicsData    = nullptr,
         .lruStamp       = 0,
     };
-    arrayPut(ht->tiles, tile);
+    ht->tiles.push_back(tile);
     return tile;
 }
 
@@ -106,14 +104,12 @@ static void heightmapTerrainFreeTile(HeightmapTile* tile) {
         joltHeightMapDestroy(reinterpret_cast<JoltHeightMap*>(tile->physicsData));
         tile->physicsData = nullptr;
     }
-    if (tile->heights) memoryFree(tile->heights);
-    if (tile->physicsHeights) memoryFree(tile->physicsHeights);
-    memoryFree(tile);
+    delete tile;
 }
 
 HeightmapTile* heightmapTerrainGetTile(HeightmapTerrain* ht, i32 tileX, i32 tileZ) {
     if (!ht || !ht->initialized) return nullptr;
-    foreach (HeightmapTile* tile, ht->tiles) {
+    for (HeightmapTile* tile : ht->tiles) {
         if (tile->tileX == tileX && tile->tileZ == tileZ) return tile;
     }
     return nullptr;
@@ -125,7 +121,7 @@ static HeightmapTile* heightmapTerrainFindTile(HeightmapTerrain* ht, i32 tileX, 
 bool heightmapTerrainHasBodyAt(const HeightmapTerrain* ht, float wx, float wz) {
     if (!ht || !ht->initialized) return false;
 
-    threadLock(&heightmapLock);
+    utils::threadLock(&heightmapLock);
     bool has = false;
     if (ht->registered) {
         HeightmapTile* tile = heightmapTerrainFindTile(const_cast<HeightmapTerrain*>(ht),
@@ -133,7 +129,7 @@ bool heightmapTerrainHasBodyAt(const HeightmapTerrain* ht, float wx, float wz) {
                                                        heightmapWorldToTileCoord(ht, wz));
         has = (tile && tile->physicsData != nullptr);
     }
-    threadUnlock(&heightmapLock);
+    utils::threadUnlock(&heightmapLock);
     return has;
 }
 
@@ -142,12 +138,12 @@ u32 heightmapTerrainSnapshotTiles(HeightmapTerrain* ht,
                                   u32 cap) {
     if (!ht || !ht->initialized || !outViews) return 0;
 
-    threadLock(&heightmapLock);
+    utils::threadLock(&heightmapLock);
     u32 written = 0;
     if (ht->registered) {
-        foreach (HeightmapTile* tile, ht->tiles) {
+        for (HeightmapTile* tile : ht->tiles) {
             if (written >= cap) break;
-            if (tile->state != HEIGHTMAP_TILE_READY || !tile->heights) {
+            if (tile->state != HEIGHTMAP_TILE_READY || tile->heights.empty()) {
                 continue;
             }
             outViews[written] = HeightmapTileView{
@@ -157,12 +153,12 @@ u32 heightmapTerrainSnapshotTiles(HeightmapTerrain* ht,
                 .originX    = tile->originX,
                 .originZ    = tile->originZ,
                 .sizeMeters = tile->sizeMeters,
-                .heights    = tile->heights,
+                .heights    = tile->heights.data(),
             };
             written++;
         }
     }
-    threadUnlock(&heightmapLock);
+    utils::threadUnlock(&heightmapLock);
     return written;
 }
 
@@ -172,22 +168,22 @@ bool heightmapTerrainCopyTile(HeightmapTerrain* ht,
                               float* outHeights) {
     if (!ht || !ht->initialized || !outHeights) return false;
 
-    threadLock(&heightmapLock);
+    utils::threadLock(&heightmapLock);
     bool copied = false;
     if (ht->registered) {
         HeightmapTile* tile = heightmapTerrainFindTile(ht, tileX, tileZ);
-        if (tile && tile->state == HEIGHTMAP_TILE_READY && tile->heights) {
-            memcpy(outHeights, tile->heights, sizeof(float) * static_cast<size_t>(HEIGHTMAP_TEX) * HEIGHTMAP_TEX);
+        if (tile && tile->state == HEIGHTMAP_TILE_READY && !tile->heights.empty()) {
+            memcpy(outHeights, tile->heights.data(), sizeof(float) * static_cast<size_t>(HEIGHTMAP_TEX) * HEIGHTMAP_TEX);
             copied = true;
         }
     }
-    threadUnlock(&heightmapLock);
+    utils::threadUnlock(&heightmapLock);
     return copied;
 }
 
 static HeightmapTile* heightmapTerrainFindTile(HeightmapTerrain* ht, i32 tileX, i32 tileZ) {
     // Caller holds heightmapLock.
-    foreach (HeightmapTile* tile, ht->tiles) {
+    for (HeightmapTile* tile : ht->tiles) {
         if (tile->tileX == tileX && tile->tileZ == tileZ) return tile;
     }
     return nullptr;
@@ -202,9 +198,9 @@ static void heightmapTerrainGenerateGrids(HeightmapTerrain* ht, HeightmapTile* t
     const u32 tex = HEIGHTMAP_TEX;
     const u32 psn = HEIGHTMAP_PHYSICS_PSN;
 
-    double t0 = nanos();
+    double t0 = utils::nanos();
 
-    float* heights = static_cast<float*>(memoryAlloc(sizeof(float) * static_cast<size_t>(tex) * tex));
+    std::vector<float> heights(static_cast<size_t>(tex) * tex);
     float step = tile->sizeMeters / static_cast<float>(tex - 1);
     for (u32 z = 0; z < tex; ++z) {
         float wz = tile->originZ + static_cast<float>(z) * step;
@@ -217,18 +213,18 @@ static void heightmapTerrainGenerateGrids(HeightmapTerrain* ht, HeightmapTile* t
     // Physics grid: bilinear resample of the fine grid. Endpoints coincide
     // with the fine grid's endpoints, so the physics surface shares tile
     // borders exactly (and borders with neighbouring physics grids).
-    float* physics = static_cast<float*>(memoryAlloc(sizeof(float) * static_cast<size_t>(psn) * psn));
+    std::vector<float> physics(static_cast<size_t>(psn) * psn);
     float scale    = static_cast<float>(tex - 1) / static_cast<float>(psn - 1);
     for (u32 z = 0; z < psn; ++z) {
         float gz = static_cast<float>(z) * scale;
         for (u32 x = 0; x < psn; ++x) {
-            physics[static_cast<size_t>(z) * psn + x] = heightmapGridBilinear(heights, tex, static_cast<float>(x) * scale, gz);
+            physics[static_cast<size_t>(z) * psn + x] = heightmapGridBilinear(heights.data(), tex, static_cast<float>(x) * scale, gz);
         }
     }
 
-    tile->heights        = heights;
-    tile->physicsHeights = physics;
-    tile->genMs          = (nanos() - t0) / 1e6;
+    tile->heights        = std::move(heights);
+    tile->physicsHeights = std::move(physics);
+    tile->genMs          = (utils::nanos() - t0) / 1e6;
 }
 
 // Shared-border consistency check between a freshly READY tile and its
@@ -244,7 +240,7 @@ static void heightmapTerrainSeamCheck(HeightmapTerrain* ht, HeightmapTile* tile)
 
     for (int i = 0; i < 2; ++i) {
         HeightmapTile* nb = heightmapTerrainFindTile(ht, tile->tileX + dx[i], tile->tileZ + dz[i]);
-        if (!nb || nb->state != HEIGHTMAP_TILE_READY || !nb->heights) continue;
+        if (!nb || nb->state != HEIGHTMAP_TILE_READY || nb->heights.empty()) continue;
 
         bool bad = false;
         float diff = 0.0f;
@@ -263,7 +259,7 @@ static void heightmapTerrainSeamCheck(HeightmapTerrain* ht, HeightmapTile* tile)
         }
         if (bad) {
             ht->seamFailures++;
-            warn("heightmapTerrain: SEAM MISMATCH vs %s neighbour tile(%d,%d) at tile(%d,%d): diff=%.5f m",
+            utils::warn("heightmapTerrain: SEAM MISMATCH vs %s neighbour tile(%d,%d) at tile(%d,%d): diff=%.5f m",
                  pairs[i],
                  tile->tileX + dx[i],
                  tile->tileZ + dz[i],
@@ -279,28 +275,28 @@ static void heightmapTerrainSeamCheck(HeightmapTerrain* ht, HeightmapTile* tile)
 static void heightmapTerrainQueueJobLocked(HeightmapTerrain* ht, HeightmapTile* tile) {
     if (!ht->registered || tile->state != HEIGHTMAP_TILE_EMPTY) return;
 
-    for (u32 i = 0; i < arraySize(buildQueue); ++i) {
+    for (u32 i = 0; i < buildQueue.size(); ++i) {
         HeightmapJob* job = &buildQueue[i];
         if (job->ht == ht && job->tileX == tile->tileX && job->tileZ == tile->tileZ) return;
     }
 
     HeightmapJob job = {.ht = ht, .tileX = tile->tileX, .tileZ = tile->tileZ};
-    arrayPut(buildQueue, job);
+    buildQueue.push_back(job);
 
     if (!workerStarted) {
         workerStarted = true;
-        buildWorker   = threadNew(heightmapBuildThreadMain, nullptr);
+        buildWorker   = utils::threadNew(heightmapBuildThreadMain, nullptr);
     }
-    threadSignal(&heightmapLock);
+    utils::threadSignal(&heightmapLock);
 }
 
 static void* heightmapBuildThreadMain(void* _) {
     (void)_;
-    threadSetName("heightmapBuild");
+    utils::threadSetName("heightmapBuild");
 
     for (;;) {
-        threadLock(&heightmapLock);
-        while (arraySize(buildQueue) == 0) threadWait(&heightmapLock);
+        utils::threadLock(&heightmapLock);
+        while (static_cast<i32>(buildQueue.size()) == 0) utils::threadWait(&heightmapLock);
 
         // Pop and claim in the same critical section so destroyData cannot
         // unregister/free the tile between the pop and the claim.
@@ -308,7 +304,8 @@ static void* heightmapBuildThreadMain(void* _) {
         HeightmapTerrain* ht = job.ht;
         HeightmapTile* tile  = nullptr;
         bool           claimed = false;
-        arrayDeleteSwap(buildQueue, 0);
+        buildQueue[0] = buildQueue.back();
+        buildQueue.pop_back();
 
         if (ht->registered) {
             tile = heightmapTerrainFindTile(ht, job.tileX, job.tileZ);
@@ -318,13 +315,13 @@ static void* heightmapBuildThreadMain(void* _) {
                 claimed       = true;
             }
         }
-        threadUnlock(&heightmapLock);
+        utils::threadUnlock(&heightmapLock);
 
         if (!claimed) continue;
 
         heightmapTerrainGenerateGrids(ht, tile);
 
-        threadLock(&heightmapLock);
+        utils::threadLock(&heightmapLock);
         ht->inFlight--;
         bool published = (tile->state == HEIGHTMAP_TILE_GENERATING);
         if (published) {
@@ -335,14 +332,12 @@ static void* heightmapBuildThreadMain(void* _) {
             heightmapTerrainSeamCheck(ht, tile);
         } else {
             // Evicted or destroyed while generating: discard the grids.
-            if (tile->heights) memoryFree(tile->heights);
-            if (tile->physicsHeights) memoryFree(tile->physicsHeights);
-            tile->heights        = nullptr;
-            tile->physicsHeights = nullptr;
+            tile->heights.clear();
+            tile->physicsHeights.clear();
             tile->state          = HEIGHTMAP_TILE_EMPTY;
         }
         u32 ready           = ht->tilesReady;
-        u32 resident        = static_cast<u32>(arraySize(ht->tiles));
+        u32 resident        = static_cast<u32>(static_cast<i32>(ht->tiles.size()));
         u32 window          = ht->windowSize;
         u32 seams           = ht->seamFailures;
         u64 total           = ht->generatedTiles;
@@ -350,10 +345,10 @@ static void* heightmapBuildThreadMain(void* _) {
         i32 logTz           = tile->tileZ;
         double logMs        = tile->genMs;
         bool  logSeamsDirty = (seams > 0);
-        threadUnlock(&heightmapLock);
+        utils::threadUnlock(&heightmapLock);
 
         if (published) {
-            info("heightmapTerrain: tile(%d,%d) ready in %.1f ms (ready=%u/%u resident=%u total=%llu)",
+            utils::info("heightmapTerrain: tile(%d,%d) ready in %.1f ms (ready=%u/%u resident=%u total=%llu)",
                  logTx,
                  logTz,
                  static_cast<float>(logMs),
@@ -362,13 +357,13 @@ static void* heightmapBuildThreadMain(void* _) {
                  resident,
                  (unsigned long long)total);
         } else {
-            info("heightmapTerrain: tile(%d,%d) discarded after %.1f ms (evicted while generating)",
+            utils::info("heightmapTerrain: tile(%d,%d) discarded after %.1f ms (evicted while generating)",
                  logTx,
                  logTz,
                  static_cast<float>(logMs));
         }
         if (logSeamsDirty) {
-            warn("heightmapTerrain: %u seam mismatch(es) so far", seams);
+            utils::warn("heightmapTerrain: %u seam mismatch(es) so far", seams);
         }
     }
     return nullptr;
@@ -383,7 +378,7 @@ void heightmapTerrainUpdateWindow(HeightmapTerrain* ht, float anchorX, float anc
     i32 cz   = heightmapWorldToTileCoord(ht, anchorZ);
     i32 half = static_cast<i32>(ht->windowSize / 2);
 
-    threadLock(&heightmapLock);
+    utils::threadLock(&heightmapLock);
 
     // Mark the window and create missing tiles.
     for (i32 z = cz - half; z <= cz + half; ++z) {
@@ -403,7 +398,7 @@ void heightmapTerrainUpdateWindow(HeightmapTerrain* ht, float anchorX, float anc
     {
         HeightmapTile* pending[64];
         u32           pendingCount = 0;
-        foreach (HeightmapTile* tile, ht->tiles) {
+        for (HeightmapTile* tile : ht->tiles) {
             if (tile->inWindow && tile->state == HEIGHTMAP_TILE_EMPTY && pendingCount < 64) {
                 pending[pendingCount++] = tile;
             }
@@ -431,7 +426,7 @@ void heightmapTerrainUpdateWindow(HeightmapTerrain* ht, float anchorX, float anc
     // Evict everything outside the window. GENERATING tiles stay resident
     // until the builder finishes (it may hold their buffers); they are
     // evicted by the next update.
-    for (i32 i = static_cast<i32>(arraySize(ht->tiles)) - 1; i >= 0; --i) {
+    for (i32 i = static_cast<i32>(static_cast<i32>(ht->tiles.size())) - 1; i >= 0; --i) {
         HeightmapTile* tile = ht->tiles[i];
         if (tile->inWindow) {
             tile->inWindow = false;
@@ -440,22 +435,22 @@ void heightmapTerrainUpdateWindow(HeightmapTerrain* ht, float anchorX, float anc
         if (tile->state == HEIGHTMAP_TILE_GENERATING) continue;
         if (tile->state == HEIGHTMAP_TILE_READY) --ht->tilesReady;
         heightmapTerrainFreeTile(tile);
-        arrayDeleteSlow(ht->tiles, i);
+        ht->tiles.erase(ht->tiles.begin() + i);
     }
 
     i32  logCx        = (cx != ht->lastLoggedCx || cz != ht->lastLoggedCz) ? cx : -999999;
     i32  logCz        = (cx != ht->lastLoggedCx || cz != ht->lastLoggedCz) ? cz : -999999;
-    u32  resident     = static_cast<u32>(arraySize(ht->tiles));
+    u32  resident     = static_cast<u32>(static_cast<i32>(ht->tiles.size()));
     u32  ready        = ht->tilesReady;
     u32  inFlightN    = ht->inFlight;
-    u64  queued       = arraySize(buildQueue);
+    u64  queued       = static_cast<i32>(buildQueue.size());
     ht->lastLoggedCx  = cx;
     ht->lastLoggedCz  = cz;
 
-    threadUnlock(&heightmapLock);
+    utils::threadUnlock(&heightmapLock);
 
     if (logCx != -999999) {
-        info("heightmapTerrain: window @ tile(%d,%d) anchor(%.0f,%.0f) resident=%u ready=%u inFlight=%u queued=%llu",
+        utils::info("heightmapTerrain: window @ tile(%d,%d) anchor(%.0f,%.0f) resident=%u ready=%u inFlight=%u queued=%llu",
              logCx,
              logCz,
              anchorX,
@@ -469,10 +464,10 @@ void heightmapTerrainUpdateWindow(HeightmapTerrain* ht, float anchorX, float anc
 
 void heightmapTerrainRequestGeneration(HeightmapTerrain* ht, i32 tileX, i32 tileZ) {
     if (!ht || !ht->initialized) return;
-    threadLock(&heightmapLock);
+    utils::threadLock(&heightmapLock);
     HeightmapTile* tile = heightmapTerrainFindTile(ht, tileX, tileZ);
     if (tile) heightmapTerrainQueueJobLocked(ht, tile);
-    threadUnlock(&heightmapLock);
+    utils::threadUnlock(&heightmapLock);
 }
 
 // ── Component lifecycle ────────────────────────────────────────────────────
@@ -482,7 +477,7 @@ void heightmapTerrainInit(HeightmapTerrain* ht,
                           float tileSizeMeters,
                           u32 windowSize) {
     if (!ht || !source || !source->heightAt) {
-        error("heightmapTerrainInit: invalid args (heightAt is required)");
+        utils::error("heightmapTerrainInit: invalid args (heightAt is required)");
         return;
     }
 
@@ -506,29 +501,31 @@ void heightmapTerrainInit(HeightmapTerrain* ht,
 void heightmapTerrainDestroyData(HeightmapTerrain* ht) {
     if (!ht) return;
 
-    threadLock(&heightmapLock);
+    utils::threadLock(&heightmapLock);
     ht->registered = false;
     // Drop pending jobs for this instance.
-    for (i32 i = static_cast<i32>(arraySize(buildQueue)) - 1; i >= 0; --i) {
-        if (buildQueue[i].ht == ht) arrayDeleteSwap(buildQueue, i);
+    for (i32 i = static_cast<i32>(static_cast<i32>(buildQueue.size())) - 1; i >= 0; --i) {
+        if (buildQueue[i].ht == ht) {
+            buildQueue[i] = buildQueue.back();
+            buildQueue.pop_back();
+        }
     }
-    threadUnlock(&heightmapLock);
+    utils::threadUnlock(&heightmapLock);
 
     // Wait for in-flight generation to finish (the builder holds no lock
     // while generating, so we poll).
     for (;;) {
-        threadLock(&heightmapLock);
+        utils::threadLock(&heightmapLock);
         bool busy = ht->inFlight > 0;
-        threadUnlock(&heightmapLock);
+        utils::threadUnlock(&heightmapLock);
         if (!busy) break;
-        gotoSleepNS(1000000); // 1 ms
+        utils::gotoSleepNS(1000000); // 1 ms
     }
 
-    for (i32 i = static_cast<i32>(arraySize(ht->tiles)) - 1; i >= 0; --i) {
+    for (i32 i = static_cast<i32>(static_cast<i32>(ht->tiles.size())) - 1; i >= 0; --i) {
         heightmapTerrainFreeTile(ht->tiles[i]);
     }
-    arrayFree(ht->tiles);
-    ht->tiles = nullptr;
+    ht->tiles.clear();
     ht->tilesReady   = 0;
     ht->lruCounter   = 0;
     ht->inFlight     = 0;
@@ -555,7 +552,7 @@ void heightmapTileToWorldOrigin(const HeightmapTerrain* ht,
 float heightmapTerrainSample(const HeightmapTerrain* ht, float wx, float wz) {
     if (!ht || !ht->initialized) return 0.0f;
 
-    threadLock(&heightmapLock);
+    utils::threadLock(&heightmapLock);
     float y    = 0.0f;
     bool  have = false;
     if (ht->registered) {
@@ -563,15 +560,15 @@ float heightmapTerrainSample(const HeightmapTerrain* ht, float wx, float wz) {
             heightmapTerrainFindTile(const_cast<HeightmapTerrain*>(ht),
                                      heightmapWorldToTileCoord(ht, wx),
                                      heightmapWorldToTileCoord(ht, wz));
-        if (tile && tile->state == HEIGHTMAP_TILE_READY && tile->heights) {
+        if (tile && tile->state == HEIGHTMAP_TILE_READY && !tile->heights.empty()) {
             // Grid coords in [0, TEX-1]; the grid spans the full tile edge.
             float gx = (wx - tile->originX) / tile->sizeMeters * static_cast<float>(HEIGHTMAP_TEX - 1);
             float gz = (wz - tile->originZ) / tile->sizeMeters * static_cast<float>(HEIGHTMAP_TEX - 1);
-            y        = heightmapGridBilinear(tile->heights, HEIGHTMAP_TEX, gx, gz);
+            y        = heightmapGridBilinear(tile->heights.data(), HEIGHTMAP_TEX, gx, gz);
             have     = true;
         }
     }
-    threadUnlock(&heightmapLock);
+    utils::threadUnlock(&heightmapLock);
 
     return have ? y : ht->source.heightAt(ht->source.userData, wx, wz);
 }
@@ -605,11 +602,11 @@ static void heightmapTerrainSyncPhysics(HeightmapTerrain* ht, float anchorX, flo
     HeightmapPhysicsPending pending[64];
     u32                     count = 0;
 
-    threadLock(&heightmapLock);
+    utils::threadLock(&heightmapLock);
     if (ht->registered) {
-        foreach (HeightmapTile* tile, ht->tiles) {
+        for (HeightmapTile* tile : ht->tiles) {
             if (count >= 64) break;
-            if (tile->state != HEIGHTMAP_TILE_READY || !tile->physicsHeights) continue;
+            if (tile->state != HEIGHTMAP_TILE_READY || tile->physicsHeights.empty()) continue;
             if (tile->physicsData) continue;
             float dx = tile->originX + tile->sizeMeters * 0.5f - anchorX;
             float dz = tile->originZ + tile->sizeMeters * 0.5f - anchorZ;
@@ -618,14 +615,14 @@ static void heightmapTerrainSyncPhysics(HeightmapTerrain* ht, float anchorX, flo
             count++;
         }
     }
-    threadUnlock(&heightmapLock);
+    utils::threadUnlock(&heightmapLock);
 
     if (count == 0) return;
     qsort(pending, count, sizeof(pending[0]), heightmapPhysicsPendingCompare);
 
     static int hitchOn = -1;
     if (hitchOn < 0) hitchOn = getenv("ENGINE_HITCH_DEBUG") != nullptr;
-    double joltT0 = nanos();
+    double joltT0 = utils::nanos();
     u32 created = 0;
     for (u32 i = 0; i < count && created < HEIGHTMAP_PHYSICS_BODIES_PER_FRAME; i++) {
         HeightmapTile* tile = pending[i].tile;
@@ -641,17 +638,17 @@ static void heightmapTerrainSyncPhysics(HeightmapTerrain* ht, float anchorX, flo
         float scale[3]  = {spacing, 1.0f, spacing};
 
         JoltHeightMap* hm =
-            joltCreateHeightShapeNoFile(tile->physicsHeights, pos, rot, offset, scale, HEIGHTMAP_PHYSICS_PSN);
+            joltCreateHeightShapeNoFile(tile->physicsHeights.data(), pos, rot, offset, scale, HEIGHTMAP_PHYSICS_PSN);
         if (!hm) {
-            warn("heightmapTerrain: Jolt heightfield creation failed for tile(%d,%d)", tile->tileX, tile->tileZ);
+            utils::warn("heightmapTerrain: Jolt heightfield creation failed for tile(%d,%d)", tile->tileX, tile->tileZ);
             continue;
         }
         tile->physicsData = hm;
         created++;
     }
-    if (hitchOn && created > 0) info("HITCH: jolt heightfields: %u bodies in %.1f ms", created, (nanos() - joltT0) / 1e6);
+    if (hitchOn && created > 0) utils::info("HITCH: jolt heightfields: %u bodies in %.1f ms", created, (utils::nanos() - joltT0) / 1e6);
     if (created > 0) {
-        info("heightmapTerrain: created %u heightfield bod%s this frame (%u pending)",
+        utils::info("heightmapTerrain: created %u heightfield bod%s this frame (%u pending)",
              created,
              created == 1 ? "y" : "ies",
              count);
@@ -663,12 +660,12 @@ static void heightmapTerrainSyncPhysics(HeightmapTerrain* ht, float anchorX, flo
 // so the active camera transform is final for the frame. Does nothing while
 // no world has an active heightmap terrain (e.g. regular-mesh worlds).
 
-static void added(void) {}
-static void removed(void) {}
-static void preUpdate(void) {}
-static void postUpdate(void) {}
+void HeightmapTerrainSystem::added() {}
+void HeightmapTerrainSystem::removed() {}
+void HeightmapTerrainSystem::preUpdate() {}
+void HeightmapTerrainSystem::postUpdate() {}
 
-static void update(void) {
+void HeightmapTerrainSystem::update() {
     HeightmapTerrain* ht = heightmapTerrainGetActive();
     if (!ht || !ht->initialized) return;
 
@@ -683,15 +680,7 @@ static void update(void) {
     heightmapTerrainSyncPhysics(ht, transform->pos[0], transform->pos[2]);
 }
 
-System heightmapTerrainSystem = {
-    .name                = "heightmapTerrain",
-    .added               = added,
-    .removed             = removed,
-    .preUpdate           = preUpdate,
-    .update              = update,
-    .postUpdate          = postUpdate,
-    .cpuElapsedLastFrame = 0.0,
-    .cpuElapsed          = 0.0,
-    .gpuElapsed          = 0.0,
-    .priority            = 0,
-};
+HeightmapTerrainSystem heightmapTerrainSystem;
+
+HeightmapTerrainSystem::HeightmapTerrainSystem() : System("heightmapTerrain") {}
+}  // namespace engine

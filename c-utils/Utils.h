@@ -1,9 +1,12 @@
 #pragma once
 
 #include "Defines.h"                                    // IWYU pragma: keep
-#include "memorymanager/MemoryManager.h"                // IWYU pragma: keep
-#include "container/Array.h"                            // IWYU pragma: keep
-#include "container/Map.h"                              // IWYU pragma: keep
+#include <cstddef>                                         // IWYU pragma: keep
+#include <cstdlib>                                         // IWYU pragma: keep
+#include <cstring>                                         // IWYU pragma: keep
+#include <string>                                          // IWYU pragma: keep
+#include <unordered_map>                                   // IWYU pragma: keep
+#include <vector>                                          // IWYU pragma: keep
 #include "container/SparseSet/SparseSet.h"              // IWYU pragma: keep
 #include "container/SparseSetSimple/SparseSetSimple.h"  // IWYU pragma: keep
 #include "database/sqlite/Sqlite.h"                     // IWYU pragma: keep
@@ -20,7 +23,8 @@
 #include "thread/Thread.h"                              // IWYU pragma: keep
 #include "timer/Timer.h"                                // IWYU pragma: keep
 
-void utilsInit(MemoryAllocatorType allocatorType);
+namespace utils {
+void utilsInit(void);
 void utilsDestroy(void);
 void terminate(const char* format, ...);
 void gotoSleepMS(long int millis);
@@ -36,3 +40,4 @@ double millies(void);
 bool isDebug(void);
 u32 colorHexToUInt(const char* hex);
 void* customMemmem(const void* haystack, int haystack_len, const void* needle, int needle_len);
+}  // namespace utils

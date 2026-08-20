@@ -2,46 +2,40 @@
 
 // --- String-based signals ---
 
-static StrMap(Array(FnPtr)) signals = NULL;
+namespace utils {
+static std::unordered_map<std::string, std::vector<FnPtr>> signals;
 
 void signalSubscribe(const char* name, FnPtr fn) {
-    Array(FnPtr) list = NULL;
-    if (strmapContainsKey(signals, name)) {
-        list = strmapGet(signals, name);
-    }
-    for (i32 i = 0, s = arraySize(list); i < s; i++) {
-        if (list[i] == fn) {
+    auto& list = signals[name];
+    for (FnPtr existing : list) {
+        if (existing == fn) {
             return;
         }
     }
-    arrayPut(list, fn);
-    strmapPut(signals, name, list);
+    list.push_back(fn);
 }
 
 void signalRemoveSubscription(const char* name, FnPtr fn) {
-    if (!strmapContainsKey(signals, name)) return;
-    Array(FnPtr) list = strmapGet(signals, name);
-    for (i32 i = 0, s = arraySize(list); i < s; i++) {
+    auto it = signals.find(name);
+    if (it == signals.end()) return;
+    auto& list = it->second;
+    for (i32 i = 0, s = static_cast<i32>(list.size()); i < s; i++) {
         if (list[i] == fn) {
-            arrayDeleteSwap(list, i);
-            strmapPut(signals, name, list);
+            list[i] = list.back();
+            list.pop_back();
             return;
         }
     }
 }
 
 void signalEmit(const char* name, void* userData) {
-    if (!strmapContainsKey(signals, name)) return;
-    Array(FnPtr) list = strmapGet(signals, name);
-    for (i32 i = 0, s = arraySize(list); i < s; ++i) {
-        list[i](userData);
+    auto it = signals.find(name);
+    if (it == signals.end()) return;
+    for (FnPtr fn : it->second) {
+        fn(userData);
     }
 }
 
 void signalCleanUp(void) {
-    for (i32 i = 0, s = strmapSize(signals); i < s; i++) {
-        arrayFree(signals[i].value);
-    }
-    strmapFree(signals);
-    signals = NULL;
-}
+    signals.clear();
+}}  // namespace utils

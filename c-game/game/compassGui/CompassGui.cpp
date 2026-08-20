@@ -1,3 +1,4 @@
+#include "CompassGui.h"
 #include "Utils.h"
 #include "ecs/Ecs.h"
 #include "ecs/system/System.h"
@@ -7,22 +8,11 @@
 #include "rmlui/wrapper/src/crmlui.h"
 #include "timer/Timer.h"
 
-static void added(void);
-static void update(void);
-static void removed(void);
+namespace game {
 
-System compassGui = {
-    .name                = "compassGui",
-    .added               = added,
-    .removed             = removed,
-    .preUpdate           = nullptr,
-    .update              = update,
-    .postUpdate          = nullptr,
-    .cpuElapsedLastFrame = 0.0,
-    .cpuElapsed          = 0.0,
-    .gpuElapsed          = 0.0,
-    .priority            = 0,
-};
+CompassGui compassGui;
+
+CompassGui::CompassGui() : engine::System("compassGui") {}
 
 static void* document;
 static void* model;
@@ -60,7 +50,7 @@ static const char* dirNames[NUM_DIRS] = {"N", "NE", "E", "SE", "S", "SW", "W", "
 static const float dirCamDeg[NUM_DIRS] =
     {0.0f, 315.0f, 270.0f, 225.0f, 180.0f, 135.0f, 90.0f, 45.0f};
 
-static void added(void) {
+void CompassGui::added() {
     document = rmlNewDocument("gui/compass/compass.html");
     model    = rmlCreateModel("compass");
 
@@ -101,7 +91,7 @@ static void added(void) {
     rmlShowDocumentWithoutFocus(document);
 }
 
-static void removed(void) {
+void CompassGui::removed() {
     headingInitialized = false;
 
     rmlUnloadDocument(document);
@@ -129,17 +119,17 @@ static float smoothAngleDeg(float currentDeg, float targetDeg) {
     float delta = fmodf(targetDeg - currentDeg + 540.0f, 360.0f) - 180.0f;
     if (fabsf(delta) < 0.05f) return currentDeg;
 
-    float t = 1.0f - expf(-COMPASS_SMOOTH_SPEED * timer.dt);
+    float t = 1.0f - expf(-COMPASS_SMOOTH_SPEED * utils::timer.dt);
     return wrapDeg(currentDeg + delta * t);
 }
 
-static void update(void) {
+void CompassGui::update() {
     float headingYaw = 0.0f;
     if (!playerGetFacingYaw(&headingYaw)) {
-        Entity* camEntity = cameraGetEntity();
+        engine::Entity* camEntity = engine::cameraGetEntity();
         if (!camEntity || !camEntity->scene) return;
 
-        Camera* camera = getComponent(camEntity->scene, Camera, camEntity->id);
+        engine::Camera* camera = getComponent(camEntity->scene, engine::Camera, camEntity->id);
         if (!camera) return;
 
         headingYaw = camera->yaw;
@@ -216,3 +206,4 @@ static void update(void) {
 
     rmlUpdateDirtyAll(model);
 }
+}  // namespace game

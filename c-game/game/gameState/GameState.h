@@ -1,13 +1,13 @@
 #pragma once
 
 #include <stddef.h>
+#include "ecs/system/scene/Scene.h"  // IWYU pragma: keep
 
 /* ── Forward declarations ─────────────────────────────────────────────────── */
 
-struct Scene;
-
 /* ── States ────────────────────────────────────────────────────────────────── */
 
+namespace game {
 enum GameState {
     STATE_NONE,
     STATE_MAIN_MENU,
@@ -63,5 +63,6 @@ GameplayLoadState gameStateGameplayLoadState(void);
 
 /* ── Asset transfer from Loading state to Gameplay state ─────────────────── */
 
-void gameStateSetLoadedScene(Scene* scene);
-void gameStateSetLoadedAnimationsScene(Scene* scene);
+void gameStateSetLoadedScene(engine::Scene* scene);
+void gameStateSetLoadedAnimationsScene(engine::Scene* scene);
+}  // namespace game

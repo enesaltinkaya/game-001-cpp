@@ -1,3 +1,4 @@
+#include "StatsGui.h"
 #include "ecs/Ecs.h"
 #include "ecs/system/System.h"
 #include "ecs/system/window/WindowSystem.h"
@@ -9,22 +10,11 @@
 #include "settings/Settings.h"
 #include "timer/Timer.h"
 
-static void added(void);
-static void update(void);
-static void removed(void);
+namespace engine {
 
-System statsGui = {
-    .name                = "statsGui",
-    .added               = added,
-    .removed             = removed,
-    .preUpdate           = nullptr,
-    .update              = update,
-    .postUpdate          = nullptr,
-    .cpuElapsedLastFrame = 0.0,
-    .cpuElapsed          = 0.0,
-    .gpuElapsed          = 0.0,
-    .priority            = 0,
-};
+StatsGui statsGui;
+
+StatsGui::StatsGui() : System("statsGui") {}
 
 static void* document;
 static void* model;
@@ -40,31 +30,30 @@ static char vsync;
 static float fpsLimit;
 static float uiScale;
 static char isVulkan = 1;
-static char* debugReleaseText;
+static char debugReleaseText[200];
 static char* gpuNamePtr;
 static int swapchainImageCount;
 static double swapchainCpuElapsed;
 
-void added(void) {
-    debugReleaseText  = static_cast<char*>(memoryAlloc(200));
-    strcpy(debugReleaseText, isDebug() ? "debug mode" : "release mode");
+void StatsGui::added() {
+    strcpy(debugReleaseText, utils::isDebug() ? "debug mode" : "release mode");
 
     ecs.showStats = 1;
 
     document = rmlNewDocument("gui/stats/stats.html");
     model    = rmlCreateModel("stats");
 
-    vsync    = settingsGetBool("vsync");
-    fpsLimit = settingsGetDouble("fpsLimit");
-    uiScale  = settingsGetDouble("uiScale");
+    vsync    = utils::settingsGetBool("vsync");
+    fpsLimit = utils::settingsGetDouble("fpsLimit");
+    uiScale  = utils::settingsGetDouble("uiScale");
 
-    rmlBind(model, "fps", &timer.fps);
-    rmlBind(model, "elapsedFull", &timer.elapsedFull);
-    rmlBind(model, "elapsed", &timer.elapsed);
-    rmlBind(model, "ups", &timer.ups);
-    rmlBind(model, "dt", &timer.dt);
-    rmlBind(model, "time", &timer.timeSinceStart);
-    rmlBind(model, "frame", &timer.frameCounter);
+    rmlBind(model, "fps", &utils::timer.fps);
+    rmlBind(model, "elapsedFull", &utils::timer.elapsedFull);
+    rmlBind(model, "elapsed", &utils::timer.elapsed);
+    rmlBind(model, "ups", &utils::timer.ups);
+    rmlBind(model, "dt", &utils::timer.dt);
+    rmlBind(model, "time", &utils::timer.timeSinceStart);
+    rmlBind(model, "frame", &utils::timer.frameCounter);
     rmlBind(model, "isVulkan", &isVulkan);
     rmlBind(model, "drawCalls", &renderer.drawCalls);
     rmlBind(model, "instanceCount", &renderer.instanceCount);
@@ -87,7 +76,7 @@ void added(void) {
     rmlBind(model, "ecsCpu", &ecs.totalCpuElapsed);
     swapchainCpuElapsed = rendererGetSwapchainCpuElapsed();
     rmlBind(model, "swapchainElapsed", &swapchainCpuElapsed);
-    rmlBind(model, "debugReleaseText", &debugReleaseText);
+    rmlBind(model, "debugReleaseText", &debugReleaseText[0]);
 
     static char first = 1;
     if (first) {
@@ -102,29 +91,28 @@ void added(void) {
     rmlShowDocumentWithoutFocus(document);
 }
 
-void removed(void) {
+void StatsGui::removed() {
     ecs.showStats = 0;
-    memoryFree(debugReleaseText);
     rmlUnloadDocument(document);
     rmlUnloadModel(model);
     document = nullptr;  // used for toggling
 }
 
-void update(void) {
-    double now = nanos();
+void StatsGui::update() {
+    double now = utils::nanos();
     if (now > lastUpdate + BILLION / 2.) {  // twice per second
         totalGpuTime = 0;
-        for (size_t i = 0; i < arraySize(renderer.passes); i++) {
+        for (size_t i = 0; i < renderer.passes.size(); i++) {
             totalGpuTime += renderer.passes[i]->gpuElapsed / MILLION;
         }
 
-        heap       = memoryUsage() / 1024;
+        heap       = utils::memoryUsage() / 1024;
         lastUpdate = now;
-        systemSize = arraySize(ecs.systems);
-        passSize   = arraySize(renderer.passes);
-        vsync      = settingsGetBool("vsync");
-        fpsLimit   = settingsGetDouble("fpsLimit");
-        uiScale    = settingsGetDouble("uiScale");
+        systemSize = static_cast<i32>(ecs.systems.size());
+        passSize   = static_cast<i32>(renderer.passes.size());
+        vsync      = utils::settingsGetBool("vsync");
+        fpsLimit   = utils::settingsGetDouble("fpsLimit");
+        uiScale    = utils::settingsGetDouble("uiScale");
 
         swapchainImageCount = rendererGetSwapchainImageCount();
         swapchainCpuElapsed = rendererGetSwapchainCpuElapsed();
@@ -148,7 +136,7 @@ void passInfo(int index, int type, char* out) {
     }
 
     if (type == 1) {
-        struct System* pass = renderer.passes[index];
+        System* pass = renderer.passes[index];
         sprintf(out, "%.2f", pass->cpuElapsed / MILLION);
     }
 
@@ -164,3 +152,4 @@ void statsGuiToggle(void) {
         guiManagerAddGuiNextFrame(&statsGui);
     }
 }
+}  // namespace engine

@@ -1,4 +1,5 @@
 #include "VulkanDecalPass.h"
+#include "VulkanDecalPass.h"
 #include "ecs/system/camera/CameraComponent.h"
 #include "ecs/system/camera/CameraSystem.h"
 #include "renderer/decal/Decal.h"
@@ -10,6 +11,7 @@
 
 #define MAX_GPU_DECALS 8192u
 
+namespace engine {
 typedef struct DecalGpu {
     mat4 model;
     mat4 invModel;
@@ -35,24 +37,10 @@ typedef struct RoadCompositePushConstants {
     u32 height;
 } RoadCompositePushConstants;
 
-static void added(void);
-static void preUpdate(void);
-static void update(void);
-static void postUpdate(void);
-static void removed(void);
 
-System vulkanDecalPass = {
-    .name                = "decal",
-    .added               = added,
-    .removed             = removed,
-    .preUpdate           = preUpdate,
-    .update              = update,
-    .postUpdate          = postUpdate,
-    .cpuElapsedLastFrame = 0.0,
-    .cpuElapsed          = 0.0,
-    .gpuElapsed          = 0.0,
-    .priority            = 0,
-};
+VulkanDecalPass vulkanDecalPass;
+
+VulkanDecalPass::VulkanDecalPass() : System("decal") {}
 
 static VulkanPipe   pipeline;
 static VulkanPipe   roadPipeline;
@@ -62,7 +50,7 @@ static double       elapsedCPU;
 static double       elapsedGPU;
 static u32          bufferIndex;
 
-static void added(void) {
+void VulkanDecalPass::added() {
     pipeline = vulkanCreatePipe(.name = "decal",
                                 .vs = "shaders/pass/decal/spv/decal.vert.spv",
                                 .fs = "shaders/pass/decal/spv/decal.frag.spv",
@@ -94,7 +82,7 @@ static void added(void) {
     }
 }
 
-static void preUpdate(void) {
+void VulkanDecalPass::preUpdate() {
     vulkanResetProfile(vulkan.currentCmd, &pipeline.profile, 0);
 }
 
@@ -159,16 +147,16 @@ static void appendDecals(DecalGpu* dst, u32* count, const DecalInstance* src, si
     }
 }
 
-static void update(void) {
-    elapsedCPU = nanos();
+void VulkanDecalPass::update() {
+    elapsedCPU = utils::nanos();
     elapsedGPU = 0;
-    if (vulkan.skipFrame) { elapsedCPU = nanos() - elapsedCPU; return; }
+    if (vulkan.skipFrame) { elapsedCPU = utils::nanos() - elapsedCPU; return; }
 
     VulkanCommand* cmd = vulkan.currentCmd;
     VulkanImage* sceneColor = vulkanFrameResourcesGetSceneColor();
     VulkanImage* depth = vulkanFrameResourcesGetDepth();
     VulkanImage* normals = vulkanFrameResourcesGetNormals();
-    if (!cmd || !sceneColor || !depth || !normals) { elapsedCPU = nanos() - elapsedCPU; return; }
+    if (!cmd || !sceneColor || !depth || !normals) { elapsedCPU = utils::nanos() - elapsedCPU; return; }
 
     Entity* camEntity = cameraGetEntity();
     Camera* camera = camEntity ? getComponent(camEntity->scene, Camera, camEntity->id) : NULL;
@@ -191,7 +179,7 @@ static void update(void) {
     appendDecals(gpu, &count, transient, nt, camera, false, false);
     u32 otherCount = count - roadCount;
     decalClearTransient();
-    if (!count) { elapsedCPU = nanos() - elapsedCPU; return; }
+    if (!count) { elapsedCPU = utils::nanos() - elapsedCPU; return; }
 
     vulkanTransition(cmd, depth, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
     vulkanTransition(cmd, normals, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
@@ -255,17 +243,18 @@ static void update(void) {
 
     vulkanTransition(cmd, sceneColor, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
 
-    elapsedCPU = nanos() - elapsedCPU;
+    elapsedCPU = utils::nanos() - elapsedCPU;
 }
 
-static void postUpdate(void) {
+void VulkanDecalPass::postUpdate() {
     vulkanDecalPass.cpuElapsed = elapsedCPU;
     vulkanDecalPass.gpuElapsed = elapsedGPU;
 }
 
-static void removed(void) {
+void VulkanDecalPass::removed() {
     for (u32 i = 0; i < FRAMES_IN_FLIGHT; ++i) vulkanDestroyBuffer(&decalBuffer[i], NULL);
     vulkanDestroyPipe(&pipeline);
     vulkanDestroyPipe(&roadPipeline);
     vulkanDestroyPipe(&roadCompositePipe);
 }
+}  // namespace engine

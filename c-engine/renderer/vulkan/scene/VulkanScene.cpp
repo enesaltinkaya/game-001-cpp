@@ -14,6 +14,7 @@
 
 #define ENTITY_SKIN_NOT_SKINNED 0xFFFFFFFF
 
+namespace engine {
 static void unpackNormal(const u8* src, float out[3]) {
     const int16_t* n = (const int16_t*)src;
     out[0]           = (float)n[0] / 32767.0f;
@@ -70,11 +71,10 @@ static void computeBoundingSphere(const float* positions, u32 vertexCount, float
 }
 
 void vulkanSceneCreate(Scene* scene) {
-    VulkanScene* vs = static_cast<VulkanScene*>(memoryAlloc(sizeof(VulkanScene)));
-    memset(vs, 0, sizeof(VulkanScene));
+    VulkanScene* vs = new VulkanScene{};
     scene->backendScene = vs;
 
-    SparseSet* meshes = getComponents(scene, Mesh);
+    utils::SparseSet* meshes = getComponents(scene, Mesh);
     if (!meshes) return;
 
     // First pass: count totals
@@ -83,9 +83,9 @@ void vulkanSceneCreate(Scene* scene) {
     u32 totalDraws    = 0;
 
     for (u32 i = 0; i < meshes->size; i++) {
-        Mesh* mesh             = static_cast<Mesh*>(ssGetDataByIndex(meshes, i));
-        u32 meshInstanceCount = arraySize(mesh->instances);
-        for (u32 p = 0; p < arraySize(mesh->primitives); p++) {
+        Mesh* mesh             = static_cast<Mesh*>(utils::ssGetDataByIndex(meshes, i));
+        u32 meshInstanceCount = static_cast<i32>(mesh->instances.size());
+        for (u32 p = 0; p < mesh->primitives.size(); p++) {
             Primitive* prim = &mesh->primitives[p];
             totalVertices += prim->vertexCount;
             totalIndices += prim->indexCount;
@@ -100,22 +100,22 @@ void vulkanSceneCreate(Scene* scene) {
     vs->totalDraws    = totalDraws;
 
     // Allocate temp CPU buffers
-    SceneVertex* tempVertices = static_cast<SceneVertex*>(memoryAlloc(totalVertices * sizeof(SceneVertex)));
-    u32* tempIndices = static_cast<u32*>(memoryAlloc(totalIndices * sizeof(u32)));
-    GpuDrawInstance* tempDraws = static_cast<GpuDrawInstance*>(memoryAlloc(totalDraws * sizeof(GpuDrawInstance)));
+    std::vector<SceneVertex> tempVertices(totalVertices);
+    std::vector<u32> tempIndices(totalIndices);
+    std::vector<GpuDrawInstance> tempDraws(totalDraws);
 
-    SceneVertex* currVert = tempVertices;
-    u32* currIdx          = tempIndices;
+    SceneVertex* currVert = tempVertices.data();
+    u32* currIdx          = tempIndices.data();
     u32 vertexOffset      = 0;
     u32 indexOffset       = 0;
     u32 drawIndex         = 0;
 
     // Second pass: pack vertices, indices, and build draw instance list
     for (u32 i = 0; i < meshes->size; i++) {
-        Mesh* mesh             = static_cast<Mesh*>(ssGetDataByIndex(meshes, i));
-        u32 meshInstanceCount = arraySize(mesh->instances);
+        Mesh* mesh             = static_cast<Mesh*>(utils::ssGetDataByIndex(meshes, i));
+        u32 meshInstanceCount = static_cast<i32>(mesh->instances.size());
 
-        for (u32 p = 0; p < arraySize(mesh->primitives); p++) {
+        for (u32 p = 0; p < mesh->primitives.size(); p++) {
             Primitive* prim = &mesh->primitives[p];
 
             // Pack vertices
@@ -126,32 +126,32 @@ void vulkanSceneCreate(Scene* scene) {
                 sv.position[2] = prim->positions[v * 3 + 2];
 
                 if (prim->attributeMask & (1 << cgltf_attribute_type_normal)) {
-                    unpackNormal(prim->attributes[cgltf_attribute_type_normal] + v * 8, sv.normal);
+                    unpackNormal(prim->attributes[cgltf_attribute_type_normal].data() + v * 8, sv.normal);
                 }
                 if (prim->attributeMask & (1 << cgltf_attribute_type_tangent)) {
-                    unpackTangent(prim->attributes[cgltf_attribute_type_tangent] + v * 4,
+                    unpackTangent(prim->attributes[cgltf_attribute_type_tangent].data() + v * 4,
                                   sv.tangent);
                 }
                 if (prim->attributeMask & (1 << cgltf_attribute_type_texcoord)) {
-                    unpackUV(prim->attributes[cgltf_attribute_type_texcoord] + v * 4, sv.uv);
+                    unpackUV(prim->attributes[cgltf_attribute_type_texcoord].data() + v * 4, sv.uv);
                 }
                 if (prim->attributeMask & (1 << cgltf_attribute_type_joints)) {
-                    memcpy(&sv.joints, prim->attributes[cgltf_attribute_type_joints] + v * 4, 4);
+                    memcpy(&sv.joints, prim->attributes[cgltf_attribute_type_joints].data() + v * 4, 4);
                 }
                 if (prim->attributeMask & (1 << cgltf_attribute_type_weights)) {
-                    memcpy(&sv.weights, prim->attributes[cgltf_attribute_type_weights] + v * 4, 4);
+                    memcpy(&sv.weights, prim->attributes[cgltf_attribute_type_weights].data() + v * 4, 4);
                 }
 
                 *currVert++ = sv;
             }
 
             // Copy indices (no global offset needed — we use vertexOffset per draw)
-            memcpy(currIdx, prim->indices, prim->indexCount * sizeof(u32));
+            memcpy(currIdx, prim->indices.data(), prim->indexCount * sizeof(u32));
             currIdx += prim->indexCount;
 
             // Compute bounding sphere for this primitive
             float boundingSphere[4];
-            computeBoundingSphere(prim->positions, prim->vertexCount, boundingSphere);
+            computeBoundingSphere(prim->positions.data(), prim->vertexCount, boundingSphere);
 
             // Check material for double-sided / transparent
             bool isSkinned = (prim->attributeMask & (1 << cgltf_attribute_type_joints)) != 0;
@@ -184,32 +184,32 @@ void vulkanSceneCreate(Scene* scene) {
 
     // Create GPU buffers
     vs->vertexBuffer =
-        vulkanCreateGpuBuffer(strtmp("SceneVBO %s", scene->name.data),
+        vulkanCreateGpuBuffer(utils::strtmp("SceneVBO %s", scene->name.data),
                               totalVertices * sizeof(SceneVertex),
                               VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
 
     vs->indexBuffer =
-        vulkanCreateGpuBuffer(strtmp("SceneIBO %s", scene->name.data),
+        vulkanCreateGpuBuffer(utils::strtmp("SceneIBO %s", scene->name.data),
                               totalIndices * sizeof(u32),
                               VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
 
     vs->drawInstanceBuffer = vulkanCreateGpuBuffer(
-        strtmp("SceneDrawInst %s", scene->name.data),
+        utils::strtmp("SceneDrawInst %s", scene->name.data),
         totalDraws * sizeof(GpuDrawInstance),
         VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
 
     // Upload geometry + draw instances
     VulkanCommand* cmd = vulkanTransientBegin();
     vulkanCopy(.cmd         = cmd,
-               .source.data = tempVertices,
+               .source.data = tempVertices.data(),
                .target.buf  = &vs->vertexBuffer,
                .size        = static_cast<u32>(totalVertices * sizeof(SceneVertex)));
     vulkanCopy(.cmd         = cmd,
-               .source.data = tempIndices,
+               .source.data = tempIndices.data(),
                .target.buf  = &vs->indexBuffer,
                .size        = static_cast<u32>(totalIndices * sizeof(u32)));
     vulkanCopy(.cmd         = cmd,
-               .source.data = tempDraws,
+               .source.data = tempDraws.data(),
                .target.buf  = &vs->drawInstanceBuffer,
                .size        = static_cast<u32>(totalDraws * sizeof(GpuDrawInstance)));
     vulkanTransientEnd(cmd, 0);
@@ -218,115 +218,111 @@ void vulkanSceneCreate(Scene* scene) {
     for (int f = 0; f < FRAMES_IN_FLIGHT; f++) {
         // Transform buffers
         vs->transformBuffer[f] =
-            vulkanCreateCpuBuffer(strtmp("SceneTransforms %i %s", f, scene->name.data),
+            vulkanCreateCpuBuffer(utils::strtmp("SceneTransforms %i %s", f, scene->name.data),
                                   sizeof(Transform) * MAX_ENTITIES,
                                   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
         vs->prevTransformBuffer[f] =
-            vulkanCreateCpuBuffer(strtmp("ScenePrevTransforms %i %s", f, scene->name.data),
+            vulkanCreateCpuBuffer(utils::strtmp("ScenePrevTransforms %i %s", f, scene->name.data),
                                   sizeof(Transform) * MAX_ENTITIES,
                                   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
         memset(vs->transformBuffer[f].vmaInfo.pMappedData, 0, sizeof(Transform) * MAX_ENTITIES);
         memset(vs->prevTransformBuffer[f].vmaInfo.pMappedData, 0, sizeof(Transform) * MAX_ENTITIES);
-        vs->transformUploads[f] = nullptr;
+        vs->transformUploads[f].clear();
 
         // Opaque single-sided culling output
         vs->indirectBuffer[f] = vulkanCreateGpuBuffer(
-            strtmp("SceneIndirect %i %s", f, scene->name.data),
+            utils::strtmp("SceneIndirect %i %s", f, scene->name.data),
             totalDraws * sizeof(SceneDrawIndexedCommand),
             VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
                 VK_BUFFER_USAGE_TRANSFER_DST_BIT);
         vs->drawCountBuffer[f] = vulkanCreateGpuBuffer(
-            strtmp("SceneDrawCount %i %s", f, scene->name.data),
+            utils::strtmp("SceneDrawCount %i %s", f, scene->name.data),
             sizeof(u32),
             VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
                 VK_BUFFER_USAGE_TRANSFER_DST_BIT);
         vs->culledBuffer[f] = vulkanCreateGpuBuffer(
-            strtmp("SceneCulled %i %s", f, scene->name.data),
+            utils::strtmp("SceneCulled %i %s", f, scene->name.data),
             totalDraws * sizeof(u32),
             VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
 
         // Double-sided culling output
         vs->dsIndirectBuffer[f] = vulkanCreateGpuBuffer(
-            strtmp("SceneDSIndirect %i %s", f, scene->name.data),
+            utils::strtmp("SceneDSIndirect %i %s", f, scene->name.data),
             totalDraws * sizeof(SceneDrawIndexedCommand),
             VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
                 VK_BUFFER_USAGE_TRANSFER_DST_BIT);
         vs->dsDrawCountBuffer[f] = vulkanCreateGpuBuffer(
-            strtmp("SceneDSDrawCount %i %s", f, scene->name.data),
+            utils::strtmp("SceneDSDrawCount %i %s", f, scene->name.data),
             sizeof(u32),
             VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
                 VK_BUFFER_USAGE_TRANSFER_DST_BIT);
         vs->dsCulledBuffer[f] = vulkanCreateGpuBuffer(
-            strtmp("SceneDSCulled %i %s", f, scene->name.data),
+            utils::strtmp("SceneDSCulled %i %s", f, scene->name.data),
             totalDraws * sizeof(u32),
             VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
 
         // Transparent culling output
         vs->transIndirectBuffer[f] = vulkanCreateGpuBuffer(
-            strtmp("SceneTransIndirect %i %s", f, scene->name.data),
+            utils::strtmp("SceneTransIndirect %i %s", f, scene->name.data),
             totalDraws * sizeof(SceneDrawIndexedCommand),
             VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
                 VK_BUFFER_USAGE_TRANSFER_DST_BIT);
         vs->transDrawCountBuffer[f] = vulkanCreateGpuBuffer(
-            strtmp("SceneTransDrawCount %i %s", f, scene->name.data),
+            utils::strtmp("SceneTransDrawCount %i %s", f, scene->name.data),
             sizeof(u32),
             VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
                 VK_BUFFER_USAGE_TRANSFER_DST_BIT);
         vs->transCulledBuffer[f] = vulkanCreateGpuBuffer(
-            strtmp("SceneTransCulled %i %s", f, scene->name.data),
+            utils::strtmp("SceneTransCulled %i %s", f, scene->name.data),
             totalDraws * sizeof(u32),
             VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
 
         // Visibility buffer (per-draw flags for two-phase occlusion)
         vs->visibilityBuffer[f] = vulkanCreateGpuBuffer(
-            strtmp("SceneVisibility %i %s", f, scene->name.data),
+            utils::strtmp("SceneVisibility %i %s", f, scene->name.data),
             totalDraws * sizeof(u32),
             VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
 
         // Phase 2 occlusion output: opaque single-sided
         vs->phase2IndirectBuffer[f] = vulkanCreateGpuBuffer(
-            strtmp("SceneP2Indirect %i %s", f, scene->name.data),
+            utils::strtmp("SceneP2Indirect %i %s", f, scene->name.data),
             totalDraws * sizeof(SceneDrawIndexedCommand),
             VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
                 VK_BUFFER_USAGE_TRANSFER_DST_BIT);
         vs->phase2DrawCountBuffer[f] = vulkanCreateGpuBuffer(
-            strtmp("SceneP2DrawCount %i %s", f, scene->name.data),
+            utils::strtmp("SceneP2DrawCount %i %s", f, scene->name.data),
             sizeof(u32),
             VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
                 VK_BUFFER_USAGE_TRANSFER_DST_BIT);
         vs->phase2CulledBuffer[f] = vulkanCreateGpuBuffer(
-            strtmp("SceneP2Culled %i %s", f, scene->name.data),
+            utils::strtmp("SceneP2Culled %i %s", f, scene->name.data),
             totalDraws * sizeof(u32),
             VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
 
         // Phase 2 occlusion output: opaque double-sided
         vs->phase2DsIndirectBuffer[f] = vulkanCreateGpuBuffer(
-            strtmp("SceneP2DSIndirect %i %s", f, scene->name.data),
+            utils::strtmp("SceneP2DSIndirect %i %s", f, scene->name.data),
             totalDraws * sizeof(SceneDrawIndexedCommand),
             VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
                 VK_BUFFER_USAGE_TRANSFER_DST_BIT);
         vs->phase2DsDrawCountBuffer[f] = vulkanCreateGpuBuffer(
-            strtmp("SceneP2DSDrawCount %i %s", f, scene->name.data),
+            utils::strtmp("SceneP2DSDrawCount %i %s", f, scene->name.data),
             sizeof(u32),
             VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
                 VK_BUFFER_USAGE_TRANSFER_DST_BIT);
         vs->phase2DsCulledBuffer[f] = vulkanCreateGpuBuffer(
-            strtmp("SceneP2DSCulled %i %s", f, scene->name.data),
+            utils::strtmp("SceneP2DSCulled %i %s", f, scene->name.data),
             totalDraws * sizeof(u32),
             VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
 
         // Stats readback: 8 bytes (drawCalls + triangleCount), host-visible
         vs->statsReadbackBuffer[f] = vulkanCreateReadbackBuffer(
-            strtmp("SceneStatsReadback %i %s", f, scene->name.data),
+            utils::strtmp("SceneStatsReadback %i %s", f, scene->name.data),
             sizeof(u32) * 2,
             VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
     }
 
-    memoryFree(tempVertices);
-    memoryFree(tempIndices);
-    memoryFree(tempDraws);
-
-    info("vulkanScene: created %s — %u verts, %u indices, %u draws",
+    utils::info("vulkanScene: created %s — %u verts, %u indices, %u draws",
          scene->name.data,
          totalVertices,
          totalIndices,
@@ -346,7 +342,6 @@ void vulkanSceneDestroy(Scene* scene) {
     for (int f = 0; f < FRAMES_IN_FLIGHT; f++) {
         vulkanDestroyBuffer(&vs->transformBuffer[f], VK_NULL_HANDLE);
         vulkanDestroyBuffer(&vs->prevTransformBuffer[f], VK_NULL_HANDLE);
-        arrayFree(vs->transformUploads[f]);
 
         vulkanDestroyBuffer(&vs->indirectBuffer[f], VK_NULL_HANDLE);
         vulkanDestroyBuffer(&vs->drawCountBuffer[f], VK_NULL_HANDLE);
@@ -377,7 +372,7 @@ void vulkanSceneDestroy(Scene* scene) {
         vulkanDestroyBuffer(&vs->entitySkinMapBuffer[f], VK_NULL_HANDLE);
     }
 
-    memoryFree(vs);
+    delete vs;
     scene->backendScene = nullptr;
 }
 
@@ -386,7 +381,7 @@ void vulkanSceneUploadTransform(Scene* scene, u32 entity, Transform* transform) 
     VulkanScene* vulkanScene  = static_cast<VulkanScene*>(scene->backendScene);
     for (i32 i = 0; i < FRAMES_IN_FLIGHT; i++) {
         TransformUpload upload = {*transform, entity};
-        arrayPut(vulkanScene->transformUploads[i], upload);
+        vulkanScene->transformUploads[i].push_back(upload);
     }
 }
 
@@ -394,20 +389,20 @@ void vulkanSceneInitSkinning(Scene* scene) {
     if (!scene || !scene->backendScene) return;
     VulkanScene* vs  = static_cast<VulkanScene*>(scene->backendScene);
 
-    SparseSet* skinSet = getComponents(scene, Skin);
+    utils::SparseSet* skinSet = getComponents(scene, Skin);
     if (!skinSet || skinSet->size == 0) return;
 
     u32 totalJointCount         = 0;
     u32 totalSkinnedEntityCount = 0;
     for (u32 i = 0; i < skinSet->size; i++) {
-        Skin* skin  = static_cast<Skin*>(ssGetDataByIndex(skinSet, i));
+        Skin* skin  = static_cast<Skin*>(utils::ssGetDataByIndex(skinSet, i));
         if (!skin) continue;
 
-        u32 jointCount = arraySize(skin->joints);
+        u32 jointCount = static_cast<i32>(skin->joints.size());
         if (jointCount == 0) continue;
 
         if (jointCount > 255) {
-            warn(
+            utils::warn(
                 "Scene '%s' skin %u has %u joints, but vertex joints are uint8 indices; "
                 "truncation/OOB reads may occur",
                 scene->name.data,
@@ -426,17 +421,17 @@ void vulkanSceneInitSkinning(Scene* scene) {
 
     for (int i = 0; i < FRAMES_IN_FLIGHT; i++) {
         vs->jointMatrixBuffer[i] =
-            vulkanCreateCpuBuffer(strtmp("JointMatrices %i %s", i, scene->name.data),
+            vulkanCreateCpuBuffer(utils::strtmp("JointMatrices %i %s", i, scene->name.data),
                                   (u64)totalJointCount * sizeof(mat4),
                                   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
 
         vs->prevJointMatrixBuffer[i] =
-            vulkanCreateCpuBuffer(strtmp("PrevJointMatrices %i %s", i, scene->name.data),
+            vulkanCreateCpuBuffer(utils::strtmp("PrevJointMatrices %i %s", i, scene->name.data),
                                   (u64)totalJointCount * sizeof(mat4),
                                   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
 
         vs->entitySkinMapBuffer[i] =
-            vulkanCreateCpuBuffer(strtmp("EntitySkinMap %i %s", i, scene->name.data),
+            vulkanCreateCpuBuffer(utils::strtmp("EntitySkinMap %i %s", i, scene->name.data),
                                   (u64)MAX_ENTITIES * sizeof(u32),
                                   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
 
@@ -466,7 +461,7 @@ void vulkanSceneFlushJoints(Scene* scene) {
         return;
     }
 
-    SparseSet* skinSet = getComponents(scene, Skin);
+    utils::SparseSet* skinSet = getComponents(scene, Skin);
     if (!skinSet || skinSet->size == 0) return;
 
     mat4* jointMatrices      = static_cast<mat4*>(vs->jointMatrixBuffer[fi].vmaInfo.pMappedData);
@@ -486,20 +481,20 @@ void vulkanSceneFlushJoints(Scene* scene) {
 
     u32 jointCursor = 0;
     for (u32 i = 0; i < skinSet->size; i++) {
-        Skin* skin  = static_cast<Skin*>(ssGetDataByIndex(skinSet, i));
-        u32 entity = ssGetValueByIndex(skinSet, i);
+        Skin* skin  = static_cast<Skin*>(utils::ssGetDataByIndex(skinSet, i));
+        u32 entity = utils::ssGetValueByIndex(skinSet, i);
         if (!skin) continue;
         if (entity >= MAX_ENTITIES) {
-            warn("Scene '%s' skin entity %u exceeds MAX_ENTITIES", scene->name.data, entity);
+            utils::warn("Scene '%s' skin entity %u exceeds MAX_ENTITIES", scene->name.data, entity);
             continue;
         }
 
-        u32 jointCount = arraySize(skin->joints);
-        u32 ibmCount   = arraySize(skin->inverseBindMatrices);
+        u32 jointCount = static_cast<i32>(skin->joints.size());
+        u32 ibmCount   = static_cast<i32>(skin->inverseBindMatrices.size()) / 16;
         if (jointCount == 0) continue;
 
         if (ibmCount < jointCount) {
-            warn(
+            utils::warn(
                 "Scene '%s' skin entity %u has %u joints but only %u inverse bind matrices; "
                 "clamping",
                 scene->name.data,
@@ -511,7 +506,7 @@ void vulkanSceneFlushJoints(Scene* scene) {
         }
 
         if (jointCursor + jointCount > vs->totalSkinJointCount) {
-            warn("Scene '%s' skin entity %u overflows per-scene joint buffer (%u + %u > %u)",
+            utils::warn("Scene '%s' skin entity %u overflows per-scene joint buffer (%u + %u > %u)",
                  scene->name.data,
                  entity,
                  jointCursor,
@@ -532,9 +527,9 @@ void vulkanSceneFlushJoints(Scene* scene) {
             mat4 worldMat;
             if (wt && lt) {
                 Transform lerp = {};
-                quatSlerpShortest(lt->rot, wt->rot, timer.alpha, lerp.rot);
-                glm_vec3_lerp(lt->pos, wt->pos, timer.alpha, lerp.pos);
-                lerp.pos[3] = glm_lerp(lt->pos[3], wt->pos[3], timer.alpha);
+                quatSlerpShortest(lt->rot, wt->rot, utils::timer.alpha, lerp.rot);
+                glm_vec3_lerp(lt->pos, wt->pos, utils::timer.alpha, lerp.pos);
+                lerp.pos[3] = glm_lerp(lt->pos[3], wt->pos[3], utils::timer.alpha);
                 transformToMat4(&lerp, worldMat);
             } else if (wt) {
                 transformToMat4((Transform*)wt, worldMat);
@@ -542,7 +537,7 @@ void vulkanSceneFlushJoints(Scene* scene) {
                 glm_mat4_identity(worldMat);
             }
 
-            glm_mat4_mul(worldMat, skin->inverseBindMatrices[j], jointMatrices[jointCursor + j]);
+            glm_mat4_mul(worldMat, reinterpret_cast<vec4*>(&skin->inverseBindMatrices[j * 16]), jointMatrices[jointCursor + j]);
         }
 
         jointCursor += jointCount;
@@ -553,22 +548,23 @@ void vulkanSceneFlushTransforms(VulkanScene* vulkanScene) {
     int flight                        = renderer.flightIndex;
     VulkanBuffer* transformBuffer     = &vulkanScene->transformBuffer[flight];
     VulkanBuffer* prevTransformBuffer = &vulkanScene->prevTransformBuffer[flight];
-    Array(TransformUpload) uploads    = vulkanScene->transformUploads[flight];
+    std::vector<TransformUpload> uploads    = vulkanScene->transformUploads[flight];
 
     if (transformBuffer->buf == VK_NULL_HANDLE || prevTransformBuffer->buf == VK_NULL_HANDLE) {
-        arrayClear(vulkanScene->transformUploads[flight]);
+        vulkanScene->transformUploads[flight].clear();
         return;
     }
 
     Transform* current   = static_cast<Transform*>(transformBuffer->vmaInfo.pMappedData);
     Transform* previous  = static_cast<Transform*>(prevTransformBuffer->vmaInfo.pMappedData);
 
-    for (i32 j = 0, sj = arraySize(uploads); j < sj; j++) {
+    for (i32 j = 0, sj = static_cast<i32>(uploads.size()); j < sj; j++) {
         TransformUpload* upload = &uploads[j];
         u32 entityId            = upload->entity;
         previous[entityId]      = current[entityId];
         current[entityId]       = upload->transform;
     }
 
-    arrayClear(vulkanScene->transformUploads[flight]);
+    vulkanScene->transformUploads[flight].clear();
 }
+}  // namespace engine

@@ -15,6 +15,7 @@
 #define AZGAAR_ROAD_MAX_GRADE_DEG              34.0f
 
 // ── Geometry ────────────────────────────────────────────────────────────────
+namespace game {
 struct RoadSeg {
     float ax, az;     // world-space endpoint A (XZ)
     float bx, bz;     // world-space endpoint B (XZ)
@@ -28,11 +29,11 @@ struct RoadCorridorGrid {
     float size;
     float invSize;
     u32   cols, rows;
-    u32*  bucketStart;  // length cols*rows + 1 (CSR-style offsets)
-    u32*  bucketSegs;   // segment indices, grouped by bucket
+    std::vector<u32> bucketStart;  // length cols*rows + 1 (CSR-style offsets)
+    std::vector<u32> bucketSegs;   // segment indices, grouped by bucket
 };
 
-static Array(RoadSeg) g_segs;
+static std::vector<RoadSeg> g_segs;
 static RoadCorridorGrid g_grid;
 static bool g_built;
 
@@ -109,7 +110,7 @@ static void buildGrid(void) {
     const float reach = AZGAAR_ROAD_CORRIDOR_HALF_WIDTH_ROAD + AZGAAR_ROAD_CORRIDOR_BLEND_WIDTH;
 
     float minX = FLT_MAX, minZ = FLT_MAX, maxX = -FLT_MAX, maxZ = -FLT_MAX;
-    for (u32 i = 0u; i < arraySize(g_segs); ++i) {
+    for (u32 i = 0; i < g_segs.size(); ++i) {
         const RoadSeg* s = &g_segs[i];
         minX = fminf(minX, fminf(s->ax, s->bx));
         maxX = fmaxf(maxX, fmaxf(s->ax, s->bx));
@@ -128,12 +129,11 @@ static void buildGrid(void) {
     if (g_grid.rows == 0u) g_grid.rows = 1u;
     u32 bucketCount = g_grid.cols * g_grid.rows;
 
-    u32* counts = static_cast<u32*>(memoryAlloc(sizeof(u32) * bucketCount));
-    for (u32 i = 0u; i < bucketCount; ++i) counts[i] = 0u;
+    std::vector<u32> counts(bucketCount, 0u);
 
     // Insert each segment into every bucket its reachable AABB overlaps, so a
     // query only needs to scan the single bucket containing the query point.
-    for (u32 i = 0u; i < arraySize(g_segs); ++i) {
+    for (u32 i = 0; i < g_segs.size(); ++i) {
         i32 bx0, bx1, bz0, bz1;
         segBucketRange(&g_grid, &g_segs[i], reach, &bx0, &bx1, &bz0, &bz1);
         for (i32 z = bz0; z <= bz1; ++z)
@@ -141,17 +141,17 @@ static void buildGrid(void) {
                 ++counts[static_cast<u32>(z) * g_grid.cols + static_cast<u32>(x)];
     }
 
-    g_grid.bucketStart  = static_cast<u32*>(memoryAlloc(sizeof(u32) * (bucketCount + 1u)));
+    g_grid.bucketStart.resize(bucketCount + 1u);
     u32 sum = 0u;
     for (u32 i = 0u; i < bucketCount; ++i) {
         g_grid.bucketStart[i] = sum;
         sum += counts[i];
     }
     g_grid.bucketStart[bucketCount] = sum;
-    g_grid.bucketSegs  = static_cast<u32*>(memoryAlloc(sizeof(u32) * sum));
+    g_grid.bucketSegs.resize(sum);
 
     for (u32 i = 0u; i < bucketCount; ++i) counts[i] = 0u;
-    for (u32 i = 0u; i < arraySize(g_segs); ++i) {
+    for (u32 i = 0; i < g_segs.size(); ++i) {
         i32 bx0, bx1, bz0, bz1;
         segBucketRange(&g_grid, &g_segs[i], reach, &bx0, &bx1, &bz0, &bz1);
         for (i32 z = bz0; z <= bz1; ++z)
@@ -160,12 +160,11 @@ static void buildGrid(void) {
                 g_grid.bucketSegs[g_grid.bucketStart[b] + counts[b]++] = i;
             }
     }
-    memoryFree(counts);
 }
 
 void azgaarRoadCorridorBuild(const AzgaarWorld* world) {
     azgaarRoadCorridorClear();
-    if (!world || !world->routes || world->routeCount == 0u) return;
+    if (!world || world->routes.empty() || world->routeCount == 0u) return;
 
     const float maxGrade = tanf(glm_rad(AZGAAR_ROAD_MAX_GRADE_DEG));
 
@@ -175,9 +174,9 @@ void azgaarRoadCorridorBuild(const AzgaarWorld* world) {
         if (route->pointCount < 2u) continue;
 
         u32 n = route->pointCount;
-        float* H = static_cast<float*>(memoryAlloc(sizeof(float) * n));
+        std::vector<float> H(n);
         for (u32 i = 0u; i < n; ++i) H[i] = controlHeightMeters(world, &route->points[i]);
-        gradeLimitRoute(world, route, H, maxGrade);
+        gradeLimitRoute(world, route, H.data(), maxGrade);
 
         const float hw = AZGAAR_ROAD_CORRIDOR_HALF_WIDTH_ROAD;
         for (u32 i = 0u; i + 1u < n; ++i) {
@@ -188,32 +187,28 @@ void azgaarRoadCorridorBuild(const AzgaarWorld* world) {
                 .ax = ax, .az = az, .bx = bx, .bz = bz,
                 .ha = H[i], .hb = H[i + 1u], .halfWidth = hw,
             };
-            arrayPut(g_segs, s);
+            g_segs.push_back(s);
         }
-        memoryFree(H);
     }
 
-    if (arraySize(g_segs) == 0u) {
+    if (static_cast<i32>(g_segs.size()) == 0u) {
         g_built = true;
         return;
     }
 
     buildGrid();
     g_built = true;
-    info("azgaarRoadCorridor: built %u road segments, max grade %.0f deg, grid %ux%u",
-         static_cast<u32>(arraySize(g_segs)), AZGAAR_ROAD_MAX_GRADE_DEG, g_grid.cols, g_grid.rows);
+    utils::info("azgaarRoadCorridor: built %u road segments, max grade %.0f deg, grid %ux%u",
+         static_cast<u32>(static_cast<i32>(g_segs.size())), AZGAAR_ROAD_MAX_GRADE_DEG, g_grid.cols, g_grid.rows);
 }
 
 void azgaarRoadCorridorClear(void) {
-    arrayFree(g_segs);
-    if (g_grid.bucketStart) memoryFree(g_grid.bucketStart);
-    if (g_grid.bucketSegs)  memoryFree(g_grid.bucketSegs);
     g_grid  = RoadCorridorGrid{};
     g_built = false;
 }
 
 bool azgaarRoadCorridorSample(float worldX, float worldZ, float naturalY, float* outHeight) {
-    if (!g_built || !outHeight || arraySize(g_segs) == 0u) return false;
+    if (!g_built || !outHeight || static_cast<i32>(g_segs.size()) == 0u) return false;
 
     i32 bx = static_cast<i32>(floorf((worldX - g_grid.originX) * g_grid.invSize));
     i32 bz = static_cast<i32>(floorf((worldZ - g_grid.originZ) * g_grid.invSize));
@@ -265,3 +260,4 @@ bool azgaarRoadCorridorSample(float worldX, float worldZ, float naturalY, float*
     *outHeight = y;
     return true;
 }
+}  // namespace game

@@ -2,6 +2,7 @@
 
 #include "renderer/Renderer.h"
 
+namespace engine {
 char vulkanFsrGetRenderResolution(RendererUpscalerMode mode,
                                   u32 displayWidth,
                                   u32 displayHeight,
@@ -12,3 +13,4 @@ void vulkanFsrGetJitterOffset(float* jitterX,
                               float* jitterY,
                               int32_t index,
                               int32_t phaseCount);
+}  // namespace engine

@@ -1,3 +1,4 @@
+#include "SettingsVideoGui.h"
 #include "ecs/system/System.h"
 #include "ecs/system/lua/LuaSystem.h"
 #include "ecs/system/window/WindowSystem.h"
@@ -10,21 +11,11 @@
 #include "timer/Timer.h"
 #include "../SettingsGui.h"
 
-static void added(void);
-static void removed(void);
+namespace game {
 
-System settingsVideoGui = {
-    .name                = "settingsVideoGui",
-    .added               = added,
-    .removed             = removed,
-    .preUpdate           = nullptr,
-    .update              = nullptr,
-    .postUpdate          = nullptr,
-    .cpuElapsedLastFrame = 0.0,
-    .cpuElapsed          = 0.0,
-    .gpuElapsed          = 0.0,
-    .priority            = 0,
-};
+SettingsVideoGui settingsVideoGui;
+
+SettingsVideoGui::SettingsVideoGui() : engine::System("settingsVideoGui") {}
 
 static void* document;
 static void* model;
@@ -48,25 +39,25 @@ static int fpsLimitCheckedChange(void* _);
 static int showFpsChange(void* _);
 static int videoClose(void* _);
 
-void added(void) {
-    signalSubscribe("windowResized", windowResized);
+void SettingsVideoGui::added() {
+    utils::signalSubscribe("windowResized", windowResized);
 
-    luaRegisterFunction("toggleFullScreen", toggleFullScreen);
-    luaRegisterFunction("toggleVsync", toggleVsync);
-    luaRegisterFunction("uiScaleChange", uiScaleChange);
-    luaRegisterFunction("cursorScaleChange", cursorScaleChange);
-    luaRegisterFunction("fpsLimitChange", fpsLimitChange);
-    luaRegisterFunction("fpsLimitCheckedChange", fpsLimitCheckedChange);
-    luaRegisterFunction("showFpsChange", showFpsChange);
-    luaRegisterFunction("videoClose", videoClose);
+    engine::luaRegisterFunction("toggleFullScreen", toggleFullScreen);
+    engine::luaRegisterFunction("toggleVsync", toggleVsync);
+    engine::luaRegisterFunction("uiScaleChange", uiScaleChange);
+    engine::luaRegisterFunction("cursorScaleChange", cursorScaleChange);
+    engine::luaRegisterFunction("fpsLimitChange", fpsLimitChange);
+    engine::luaRegisterFunction("fpsLimitCheckedChange", fpsLimitCheckedChange);
+    engine::luaRegisterFunction("showFpsChange", showFpsChange);
+    engine::luaRegisterFunction("videoClose", videoClose);
 
-    fullScreen      = settingsGetBool("fullScreen");
-    vsync           = settingsGetBool("vsync");
-    showFps         = settingsGetBool("showFps");
-    fpsLimitChecked = settingsGetBool("fpsLimitChecked");
-    fpsLimit        = settingsGetDouble("fpsLimit");
-    uiScale         = settingsGetDouble("uiScale");
-    cursorScale     = settingsGetDouble("cursorScale");
+    fullScreen      = utils::settingsGetBool("fullScreen");
+    vsync           = utils::settingsGetBool("vsync");
+    showFps         = utils::settingsGetBool("showFps");
+    fpsLimitChecked = utils::settingsGetBool("fpsLimitChecked");
+    fpsLimit        = utils::settingsGetDouble("fpsLimit");
+    uiScale         = utils::settingsGetDouble("uiScale");
+    cursorScale     = utils::settingsGetDouble("cursorScale");
 
     document = rmlNewDocument("gui/settings/video/video.html");
     model    = rmlCreateModel("video");
@@ -81,131 +72,132 @@ void added(void) {
     rmlShowDocument(document);
 }
 
-void removed(void) {
+void SettingsVideoGui::removed() {
     rmlUnloadDocument(document);
     rmlUnloadModel(model);
     document = nullptr;
     model    = nullptr;
-    signalRemoveSubscription("windowResized", windowResized);
+    utils::signalRemoveSubscription("windowResized", windowResized);
 }
 
 static void toggleFullScreenLater(void* _) {
-    if (settingsGetBool("fullScreen") == fullScreen) {
+    if (utils::settingsGetBool("fullScreen") == fullScreen) {
         return;
     }
 
-    settingsSetBool("fullScreen", fullScreen);
-    windowSystemToggleFullscreen(fullScreen);
-    settingsWrite();
+    utils::settingsSetBool("fullScreen", fullScreen);
+    engine::windowSystemToggleFullscreen(fullScreen);
+    utils::settingsWrite();
 }
 
 int toggleFullScreen(void* _) {
-    futureTaskAdd(0, toggleFullScreenLater, nullptr);
+    utils::futureTaskAdd(0, toggleFullScreenLater, nullptr);
     return 0;
 }
 
 static void toggleVsyncLater(void* _) {
-    if (settingsGetBool("vsync") == vsync) {
+    if (utils::settingsGetBool("vsync") == vsync) {
         return;
     }
 
-    settingsSetBool("vsync", vsync);
-    rendererSetVsync(vsync);
-    settingsWrite();
+    utils::settingsSetBool("vsync", vsync);
+    engine::rendererSetVsync(vsync);
+    utils::settingsWrite();
 }
 
 int toggleVsync(void* _) {
-    futureTaskAdd(0, toggleVsyncLater, nullptr);
+    utils::futureTaskAdd(0, toggleVsyncLater, nullptr);
     return 0;
 }
 
 static void uiScaleChangeLater(void* _) {
-    if (settingsGetDouble("uiScale") == uiScale) {
+    if (utils::settingsGetDouble("uiScale") == uiScale) {
         return;
     }
 
-    settingsSetDouble("uiScale", uiScale);
-    signalEmit("uiScaleChanged", nullptr);
-    settingsWrite();
+    utils::settingsSetDouble("uiScale", uiScale);
+    utils::signalEmit("uiScaleChanged", nullptr);
+    utils::settingsWrite();
 }
 
 int uiScaleChange(void* _) {
-    futureTaskAdd(0, uiScaleChangeLater, nullptr);
+    utils::futureTaskAdd(0, uiScaleChangeLater, nullptr);
     return 0;
 }
 
 static void cursorScaleChangeLater(void* _) {
-    if (settingsGetDouble("cursorScale") == cursorScale) {
+    if (utils::settingsGetDouble("cursorScale") == cursorScale) {
         return;
     }
 
-    settingsSetDouble("cursorScale", cursorScale);
-    windowSystemReloadCursors();
-    guiManagerUpdateCursors();
-    settingsWrite();
+    utils::settingsSetDouble("cursorScale", cursorScale);
+    engine::windowSystemReloadCursors();
+    engine::guiManagerUpdateCursors();
+    utils::settingsWrite();
 }
 
 int cursorScaleChange(void* _) {
-    futureTaskAdd(0, cursorScaleChangeLater, nullptr);
+    utils::futureTaskAdd(0, cursorScaleChangeLater, nullptr);
     return 0;
 }
 
 static void fpsLimitCheckedChangeLater(void* _) {
-    if (settingsGetBool("fpsLimitChecked") == fpsLimitChecked) {
+    if (utils::settingsGetBool("fpsLimitChecked") == fpsLimitChecked) {
         return;
     }
 
-    settingsSetBool("fpsLimitChecked", fpsLimitChecked);
-    timerInit(settingsGetDouble("fpsLimit"), settingsGetBool("fpsLimitChecked"), 0);
+    utils::settingsSetBool("fpsLimitChecked", fpsLimitChecked);
+    utils::timerInit(utils::settingsGetDouble("fpsLimit"), utils::settingsGetBool("fpsLimitChecked"), 0);
 
     // settingsSetBool("vsync", vsync);
     // rendererSetVsync(vsync);
 
-    settingsWrite();
+    utils::settingsWrite();
 }
 
 int fpsLimitCheckedChange(void* _) {
-    futureTaskAdd(0, fpsLimitCheckedChangeLater, nullptr);
+    utils::futureTaskAdd(0, fpsLimitCheckedChangeLater, nullptr);
     return 0;
 }
 
 static void fpsLimitChangeLater(void* _) {
-    if (settingsGetDouble("fpsLimit") == fpsLimit) {
+    if (utils::settingsGetDouble("fpsLimit") == fpsLimit) {
         return;
     }
 
-    settingsSetDouble("fpsLimit", fpsLimit);
-    timerInit(settingsGetDouble("fpsLimit"), settingsGetBool("fpsLimitChecked"), 0);
-    settingsWrite();
+    utils::settingsSetDouble("fpsLimit", fpsLimit);
+    utils::timerInit(utils::settingsGetDouble("fpsLimit"), utils::settingsGetBool("fpsLimitChecked"), 0);
+    utils::settingsWrite();
 }
 
 int fpsLimitChange(void* _) {
-    futureTaskAdd(0, fpsLimitChangeLater, nullptr);
+    utils::futureTaskAdd(0, fpsLimitChangeLater, nullptr);
     return 0;
 }
 
 static void showFpsChangeLater(void* _) {
-    if (settingsGetBool("showFps") == showFps) {
+    if (utils::settingsGetBool("showFps") == showFps) {
         return;
     }
 
-    settingsSetBool("showFps", showFps);
-    guiManagerToggleShowFps();
-    settingsWrite();
+    utils::settingsSetBool("showFps", showFps);
+    engine::guiManagerToggleShowFps();
+    utils::settingsWrite();
 }
 
 int showFpsChange(void* _) {
-    futureTaskAdd(0, showFpsChangeLater, nullptr);
+    utils::futureTaskAdd(0, showFpsChangeLater, nullptr);
     return 0;
 }
 
 void windowResized(void* _) {
-    fullScreen = settingsGetBool("fullScreen");
+    fullScreen = utils::settingsGetBool("fullScreen");
     rmlUpdateDirtyAll(model);
 }
 
 int videoClose(void* _) {
-    futureTaskAddNoParam(0, settingsGuiShow);
-    guiManagerRemoveGuiNextFrame(&settingsVideoGui);
+    utils::futureTaskAddNoParam(0, settingsGuiShow);
+    engine::guiManagerRemoveGuiNextFrame(&settingsVideoGui);
     return 0;
 }
+}  // namespace game

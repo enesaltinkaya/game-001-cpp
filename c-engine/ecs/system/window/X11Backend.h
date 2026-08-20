@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 // Opaque X11 state — all X11 headers stay in X11Backend.c
+namespace engine {
 struct X11Backend;
 
 // Key/button event data passed back to the engine wrapper
@@ -24,6 +25,8 @@ enum X11EventType {
     X11_EVENT_RAW_MOTION,
 };
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wnested-anon-types"
 struct X11Event {
     X11EventType type;
     union {
@@ -36,6 +39,7 @@ struct X11Event {
         struct { double dx, dy; }                 rawMotion;
     };
 };
+#pragma GCC diagnostic pop
 
 X11Backend* x11BackendCreate(const char* title, int width, int height, bool fullscreen);
 void        x11BackendDestroy(X11Backend* b);
@@ -69,4 +73,5 @@ int         x11BackendPollEvents(X11Backend* b, X11Event* out, int maxEvents);
 const char** x11BackendGetVulkanExtensions(uint32_t* count);
 bool         x11BackendCreateVulkanSurface(X11Backend* b, void* vkInstance, void* vkSurface);
 
+}  // namespace engine
 #endif // __linux__
