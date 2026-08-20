@@ -27,11 +27,13 @@ static float TD_ZOOM_SPEED = 15.0f;  // exponential-smooth interpolation rate
 #define TD_OCCLUDER_FADE_OUT_SPEED 8.0f
 #define TD_OCCLUDER_DONE_ALPHA 0.9999f
 
+static vec3 Y_UP = {0.0f, 1.0f, 0.0f};
+
 static struct {
     u32 followEntityId;
     Scene* followScene;
     vec3 currentPos;
-    char initPos;
+    bool initPos;
     Entity* camEntity;
     Camera* camera;
     Transform* camTransform;
@@ -40,11 +42,11 @@ static struct {
     float distance;        // current (smoothed) orbit distance
 } tdCam;
 
-typedef struct TopDownOccluderFade {
+struct TopDownOccluderFade {
     u32 entity;
     float alpha;
     bool hitThisFrame;
-} TopDownOccluderFade;
+};
 
 static TopDownOccluderFade tdOccluders[TD_OCCLUDER_MAX_STATES];
 static u32 tdOccluderCount;
@@ -59,7 +61,7 @@ static void topDownCameraUpdateOccluders(vec3 cameraPos, vec3 targetPos) {
     viewDir[1] = 0.0f;
     if (glm_vec3_norm(viewDir) > 0.001f) {
         glm_vec3_normalize(viewDir);
-        glm_vec3_cross(viewDir, GLM_YUP, viewRight);
+        glm_vec3_cross(viewDir, Y_UP, viewRight);
         glm_vec3_normalize(viewRight);
     }
 
@@ -83,9 +85,9 @@ static void topDownCameraUpdateOccluders(vec3 cameraPos, vec3 targetPos) {
         glm_vec3_scale(rayDir, 1.0f / rayLen, rayDir);
 
         JoltRayHit hits[16];
-        u32 hitCount = joltCastRayAll((float*)cameraPos, rayDir, rayLen, hits, 16);
+        u32 hitCount = joltCastRayAll(cameraPos, rayDir, rayLen, hits, 16);
         for (u32 i = 0; i < hitCount; i++) {
-            u32 entity = (u32)hits[i].userData;
+            u32 entity = static_cast<u32>(hits[i].userData);
             if (entity == 0 || entity == tdCam.followEntityId) continue;
 
             bool duplicate = false;
@@ -119,7 +121,7 @@ static void topDownCameraUpdateOccluders(vec3 cameraPos, vec3 targetPos) {
         if (stateIndex == TD_OCCLUDER_MAX_STATES && tdOccluderCount < TD_OCCLUDER_MAX_STATES) {
             stateIndex = tdOccluderCount++;
             tdOccluders[stateIndex] =
-                (TopDownOccluderFade){.entity = hitEntities[h], .alpha = 1.0f};
+                TopDownOccluderFade{.entity = hitEntities[h], .alpha = 1.0f, .hitThisFrame = false};
         }
 
         if (stateIndex != TD_OCCLUDER_MAX_STATES) {
@@ -162,9 +164,9 @@ static void topDownCameraUpdateOccluders(vec3 cameraPos, vec3 targetPos) {
 }
 
 void topDownCameraInit(void) {
-    tdCam.followScene    = NULL;
+    tdCam.followScene    = nullptr;
     tdCam.followEntityId = 0;
-    tdCam.initPos        = 0;
+    tdCam.initPos        = false;
     tdCam.yaw            = GLM_PIf / 4.0f;  // 45° default
     tdCam.targetDistance = TD_DISTANCE;
     tdCam.distance       = TD_DISTANCE;
@@ -177,7 +179,7 @@ void topDownCameraInit(void) {
 void topDownCameraSetTarget(Scene* scene, u32 entityId) {
     tdCam.followScene    = scene;
     tdCam.followEntityId = entityId;
-    tdCam.initPos        = 0;
+    tdCam.initPos        = false;
 
     // Immediately snap camera to target so the first frame isn't clipped
     if (!tdCam.camEntity || !tdCam.camera || !tdCam.camTransform) return;
@@ -207,10 +209,10 @@ void topDownCameraSetTarget(Scene* scene, u32 entityId) {
     glm_vec3_copy(desired, tdCam.camTransform->pos);
     glm_vec3_copy(desired, tdCam.currentPos);
     tdCam.camTransform->pos[3] = 1.0f;
-    tdCam.initPos              = 1;
+    tdCam.initPos              = true;
 
     mat4 lookMat;
-    glm_lookat(tdCam.camTransform->pos, lookAt, GLM_YUP, lookMat);
+    glm_lookat(tdCam.camTransform->pos, lookAt, Y_UP, lookMat);
     glm_mat4_quat(lookMat, tdCam.camTransform->rot);
     glm_quat_inv(tdCam.camTransform->rot, tdCam.camTransform->rot);
 
@@ -250,7 +252,7 @@ void topDownCameraPreUpdate(void) {
 
 void topDownCameraUpdate(void) {
     if (!tdCam.camEntity || !tdCam.camera || !tdCam.camTransform) {
-        vulkanResourceSetCameraOccluders(NULL, NULL, 0);
+        vulkanResourceSetCameraOccluders(nullptr, nullptr, 0);
         return;
     }
 
@@ -271,7 +273,7 @@ void topDownCameraUpdate(void) {
         }
     }
     if (!hasTarget) {
-        vulkanResourceSetCameraOccluders(NULL, NULL, 0);
+        vulkanResourceSetCameraOccluders(nullptr, nullptr, 0);
     }
 
     // Look-at point: player feet + chest height
@@ -306,7 +308,7 @@ void topDownCameraUpdate(void) {
     tdCam.camTransform->pos[3] = 1.0f;
 
     mat4 lookMat;
-    glm_lookat(tdCam.camTransform->pos, lookAt, GLM_YUP, lookMat);
+    glm_lookat(tdCam.camTransform->pos, lookAt, Y_UP, lookMat);
     glm_mat4_quat(lookMat, tdCam.camTransform->rot);
     glm_quat_inv(tdCam.camTransform->rot, tdCam.camTransform->rot);
 
@@ -321,8 +323,8 @@ void topDownCameraUnproject(float screenX, float screenY, vec3 outOrigin, vec3 o
 
     // Use window dimensions (not render viewport) because cursor coords
     // are reported in window pixel space, not render resolution space.
-    float viewW = (float)window.width;
-    float viewH = (float)window.height;
+    float viewW = static_cast<float>(window.width);
+    float viewH = static_cast<float>(window.height);
     if (viewW <= 0 || viewH <= 0) return;
 
     // Normalize screen coords to NDC

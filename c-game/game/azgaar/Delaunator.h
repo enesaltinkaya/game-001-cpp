@@ -10,13 +10,13 @@
 // The Voronoi diagram (cell adjacency + circumcenter vertices) is derived from
 // this output by the caller; see AzgaarWorld.c.
 
-typedef struct Delaunator {
+struct Delaunator {
     u32* triangles;  // length == trianglesLen; each group of 3 is one CCW triangle
     i32* halfedges;  // length == trianglesLen; twin half-edge index or -1 on hull
     u32  trianglesLen;
     u32* hull;       // convex hull point indices (CCW)
     u32  hullSize;
-} Delaunator;
+};
 
 // Triangulate `n` points stored as interleaved doubles in `coords`
 // (length must be n * 2).  Returns a Delaunator whose arrays are heap

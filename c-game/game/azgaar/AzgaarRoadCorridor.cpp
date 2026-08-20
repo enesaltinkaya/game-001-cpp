@@ -15,22 +15,22 @@
 #define AZGAAR_ROAD_MAX_GRADE_DEG              34.0f
 
 // ── Geometry ────────────────────────────────────────────────────────────────
-typedef struct RoadSeg {
+struct RoadSeg {
     float ax, az;     // world-space endpoint A (XZ)
     float bx, bz;     // world-space endpoint B (XZ)
     float ha;         // grade-limited height at A (meters)
     float hb;         // grade-limited height at B (meters)
     float halfWidth;  // corridor half-width for this segment (meters)
-} RoadSeg;
+};
 
-typedef struct RoadCorridorGrid {
+struct RoadCorridorGrid {
     float originX, originZ;
     float size;
     float invSize;
     u32   cols, rows;
     u32*  bucketStart;  // length cols*rows + 1 (CSR-style offsets)
     u32*  bucketSegs;   // segment indices, grouped by bucket
-} RoadCorridorGrid;
+};
 
 static Array(RoadSeg) g_segs;
 static RoadCorridorGrid g_grid;
@@ -92,14 +92,14 @@ static void segBucketRange(const RoadCorridorGrid* g,
     float sz0 = (fminf(s->az, s->bz) - reach - g->originZ) * g->invSize;
     float sz1 = (fmaxf(s->az, s->bz) + reach - g->originZ) * g->invSize;
 
-    i32 bx0 = (i32)floorf(sx0);
-    i32 bx1 = (i32)floorf(sx1);
-    i32 bz0 = (i32)floorf(sz0);
-    i32 bz1 = (i32)floorf(sz1);
+    i32 bx0 = static_cast<i32>(floorf(sx0));
+    i32 bx1 = static_cast<i32>(floorf(sx1));
+    i32 bz0 = static_cast<i32>(floorf(sz0));
+    i32 bz1 = static_cast<i32>(floorf(sz1));
     if (bx0 < 0) bx0 = 0;
     if (bz0 < 0) bz0 = 0;
-    if (bx1 >= (i32)g->cols) bx1 = (i32)g->cols - 1;
-    if (bz1 >= (i32)g->rows) bz1 = (i32)g->rows - 1;
+    if (bx1 >= static_cast<i32>(g->cols)) bx1 = static_cast<i32>(g->cols) - 1;
+    if (bz1 >= static_cast<i32>(g->rows)) bz1 = static_cast<i32>(g->rows) - 1;
 
     *outBx0 = bx0; *outBx1 = bx1;
     *outBz0 = bz0; *outBz1 = bz1;
@@ -122,8 +122,8 @@ static void buildGrid(void) {
     g_grid.originZ = minZ;
     g_grid.size    = fmaxf(reach * 2.0f, 1.0f);  // bucket ~= corridor diameter
     g_grid.invSize = 1.0f / g_grid.size;
-    g_grid.cols    = (u32)ceilf((maxX - minX) * g_grid.invSize);
-    g_grid.rows    = (u32)ceilf((maxZ - minZ) * g_grid.invSize);
+    g_grid.cols    = static_cast<u32>(ceilf((maxX - minX) * g_grid.invSize));
+    g_grid.rows    = static_cast<u32>(ceilf((maxZ - minZ) * g_grid.invSize));
     if (g_grid.cols == 0u) g_grid.cols = 1u;
     if (g_grid.rows == 0u) g_grid.rows = 1u;
     u32 bucketCount = g_grid.cols * g_grid.rows;
@@ -138,7 +138,7 @@ static void buildGrid(void) {
         segBucketRange(&g_grid, &g_segs[i], reach, &bx0, &bx1, &bz0, &bz1);
         for (i32 z = bz0; z <= bz1; ++z)
             for (i32 x = bx0; x <= bx1; ++x)
-                ++counts[(u32)z * g_grid.cols + (u32)x];
+                ++counts[static_cast<u32>(z) * g_grid.cols + static_cast<u32>(x)];
     }
 
     g_grid.bucketStart  = static_cast<u32*>(memoryAlloc(sizeof(u32) * (bucketCount + 1u)));
@@ -156,7 +156,7 @@ static void buildGrid(void) {
         segBucketRange(&g_grid, &g_segs[i], reach, &bx0, &bx1, &bz0, &bz1);
         for (i32 z = bz0; z <= bz1; ++z)
             for (i32 x = bx0; x <= bx1; ++x) {
-                u32 b = (u32)z * g_grid.cols + (u32)x;
+                u32 b = static_cast<u32>(z) * g_grid.cols + static_cast<u32>(x);
                 g_grid.bucketSegs[g_grid.bucketStart[b] + counts[b]++] = i;
             }
     }
@@ -201,25 +201,25 @@ void azgaarRoadCorridorBuild(const AzgaarWorld* world) {
     buildGrid();
     g_built = true;
     info("azgaarRoadCorridor: built %u road segments, max grade %.0f deg, grid %ux%u",
-         (u32)arraySize(g_segs), AZGAAR_ROAD_MAX_GRADE_DEG, g_grid.cols, g_grid.rows);
+         static_cast<u32>(arraySize(g_segs)), AZGAAR_ROAD_MAX_GRADE_DEG, g_grid.cols, g_grid.rows);
 }
 
 void azgaarRoadCorridorClear(void) {
     arrayFree(g_segs);
     if (g_grid.bucketStart) memoryFree(g_grid.bucketStart);
     if (g_grid.bucketSegs)  memoryFree(g_grid.bucketSegs);
-    g_grid  = (RoadCorridorGrid){0};
+    g_grid  = RoadCorridorGrid{};
     g_built = false;
 }
 
 bool azgaarRoadCorridorSample(float worldX, float worldZ, float naturalY, float* outHeight) {
     if (!g_built || !outHeight || arraySize(g_segs) == 0u) return false;
 
-    i32 bx = (i32)floorf((worldX - g_grid.originX) * g_grid.invSize);
-    i32 bz = (i32)floorf((worldZ - g_grid.originZ) * g_grid.invSize);
-    if (bx < 0 || bx >= (i32)g_grid.cols || bz < 0 || bz >= (i32)g_grid.rows) return false;
+    i32 bx = static_cast<i32>(floorf((worldX - g_grid.originX) * g_grid.invSize));
+    i32 bz = static_cast<i32>(floorf((worldZ - g_grid.originZ) * g_grid.invSize));
+    if (bx < 0 || bx >= static_cast<i32>(g_grid.cols) || bz < 0 || bz >= static_cast<i32>(g_grid.rows)) return false;
 
-    u32 b  = (u32)bz * g_grid.cols + (u32)bx;
+    u32 b  = static_cast<u32>(bz) * g_grid.cols + static_cast<u32>(bx);
     u32 s0 = g_grid.bucketStart[b];
     u32 s1 = g_grid.bucketStart[b + 1u];
 

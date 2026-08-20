@@ -3,15 +3,15 @@
 #include "renderer/vulkan/resources/VulkanImage.h"
 struct VulkanImage;
 
-typedef struct VulkanSwapchain {
+struct VulkanSwapchain {
     VkFormat swapchainImageFormat;
 
     struct VulkanImage* currentSwapchainImage;
     u32 imageCount;
 
     double cpuElapsed;
-    char vsync;
-} VulkanSwapchain;
+    bool vsync;
+};
 
 extern struct VulkanSwapchain vulkanSwapchain;
 

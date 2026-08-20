@@ -42,12 +42,16 @@ static void postUpdate(void);
 static void removed(void);
 
 System vulkanDecalPass = {
-    .name       = "decal",
-    .added      = added,
-    .preUpdate  = preUpdate,
-    .update     = update,
-    .postUpdate = postUpdate,
-    .removed    = removed,
+    .name                = "decal",
+    .added               = added,
+    .removed             = removed,
+    .preUpdate           = preUpdate,
+    .update              = update,
+    .postUpdate          = postUpdate,
+    .cpuElapsedLastFrame = 0.0,
+    .cpuElapsed          = 0.0,
+    .gpuElapsed          = 0.0,
+    .priority            = 0,
 };
 
 static VulkanPipe   pipeline;
@@ -133,12 +137,12 @@ static void appendDecals(DecalGpu* dst, u32* count, const DecalInstance* src, si
         versor rot = {d->rotation[0], d->rotation[1], d->rotation[2], d->rotation[3]};
         glm_translate_make(t, pos);
         glm_quat_mat4(rot, r);
-        glm_scale_make(s, (vec3){d->halfExtents[0], d->halfExtents[1], d->halfExtents[2]});
+        glm_scale_make(s, vec3{d->halfExtents[0], d->halfExtents[1], d->halfExtents[2]});
         glm_mat4_mul(t, r, m);
         glm_mat4_mul(m, s, m);
         glm_mat4_copy(m, dst[*count].model);
         glm_mat4_inv(m, dst[*count].invModel);
-        glm_vec4_copy((vec4){d->color[0], d->color[1], d->color[2], d->color[3]}, dst[*count].color);
+        glm_vec4_copy(vec4{d->color[0], d->color[1], d->color[2], d->color[3]}, dst[*count].color);
         dst[*count].params0[0] = d->opacity;
         dst[*count].params0[1] = d->normalThreshold;
         dst[*count].params0[2] = d->edgeFeather;

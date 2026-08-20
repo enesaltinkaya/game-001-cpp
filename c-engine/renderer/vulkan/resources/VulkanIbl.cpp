@@ -25,7 +25,7 @@ enum {
     BLUE_NOISE_SIZE = 128,
 };
 
-typedef struct VulkanIblResources {
+struct VulkanIblResources {
     VulkanImage environment;
     VulkanImage irradiance;
     VulkanImage prefilter;
@@ -39,28 +39,28 @@ typedef struct VulkanIblResources {
     vec4 shL1_Mn1;
     vec4 shL1_M0;
     vec4 shL1_Mp1;
-    char hasSH;
+    bool hasSH;
     IblSunLight extractedSun;
     mat4 envRotation;
     u32 tonemapMode;
-    char enabled;
+    bool enabled;
     float intensity;
     float specularIntensity;
-    char ready;
-} VulkanIblResources;
+    bool ready;
+};
 
-typedef struct IblFacePushConstants {
+struct IblFacePushConstants {
     u32 environmentMapIndex;
     u32 faceIndex;
     float roughness;
     float pad;
-} IblFacePushConstants;
+};
 
 static VulkanIblResources ibl;
 static VulkanPipe irradiancePipe;
 static VulkanPipe prefilterPipe;
 static VulkanPipe brdfPipe;
-static char pipesReady;
+static bool pipesReady;
 
 static const float SUN_THRESHOLD = 10.0f;
 
@@ -188,7 +188,7 @@ static void loadEnvironmentFromPath(const char* path) {
 
     int width     = 0;
     int height    = 0;
-    float* pixels = NULL;
+    float* pixels = nullptr;
 
     String probe = {.data = const_cast<char*>(path), .size = static_cast<u32>(strlen(path))};
     if (stringEndsWith(&probe, "exr")) {
@@ -251,7 +251,7 @@ static void loadEnvironmentFromPath(const char* path) {
     pushIblState();
     info("vulkanIbl: loaded %s (%dx%d envLod=%.0f)", path, width, height, ibl.environmentMaxLod);
 
-    signalEmit("iblChanged", NULL);
+    signalEmit("iblChanged", nullptr);
 }
 
 void vulkanIblInit(void) {
@@ -269,13 +269,13 @@ void vulkanIblDestroy(void) {
     destroyImage(&ibl.irradiance);
     destroyImage(&ibl.environment);
     destroyPipelines();
-    ibl = (VulkanIblResources){0};
+    ibl = VulkanIblResources{};
 
     foreach (String s, iblFiles) {
         stringDestroy((String*)&s);
     }
     arrayFree(iblFiles);
-    iblFiles         = (Array(String)){0};
+    iblFiles         = nullptr;
     iblFileListReady = 0;
 }
 
@@ -299,20 +299,20 @@ const char* vulkanIblGetCurrentName(void) {
 }
 
 VulkanImage* vulkanIblGetEnvironmentImage(void) {
-    return ibl.environment.img ? &ibl.environment : NULL;
+    return ibl.environment.img ? &ibl.environment : nullptr;
 }
 
 IblSunLight vulkanIblGetExtractedSun(void) {
     return ibl.extractedSun;
 }
 
-void vulkanIblSetDisabled(char disabled) {
+void vulkanIblSetDisabled(bool disabled) {
     ibl.enabled = !disabled;
     if (!ibl.ready) return;
     pushIblState();
 }
 
-char vulkanIblIsDisabled(void) {
+bool vulkanIblIsDisabled(void) {
     return !ibl.enabled;
 }
 
@@ -343,7 +343,7 @@ void vulkanIblRotateSun(float azimuthDeg, float elevationDeg) {
     if (fabsf(azimuthDeg) > 0.001f) {
         float rad = glm_rad(azimuthDeg);
         mat4 rot;
-        glm_rotate_make(rot, rad, (vec3){0.0f, 1.0f, 0.0f});
+        glm_rotate_make(rot, rad, vec3{0.0f, 1.0f, 0.0f});
         glm_mat4_mul(rot, stepRot, stepRot);
         vec3 tmp;
         glm_mat4_mulv3(rot, dir, 1.0f, tmp);
@@ -356,7 +356,7 @@ void vulkanIblRotateSun(float azimuthDeg, float elevationDeg) {
         float lenXZ = glm_vec3_norm(dirXZ);
         if (lenXZ > 0.001f) {
             vec3 right;
-            glm_vec3_cross((vec3){0.0f, 1.0f, 0.0f}, dirXZ, right);
+            glm_vec3_cross(vec3{0.0f, 1.0f, 0.0f}, dirXZ, right);
             glm_vec3_normalize(right);
             mat4 rot;
             glm_rotate_make(rot, rad, right);
@@ -378,7 +378,7 @@ void vulkanIblRotateSun(float azimuthDeg, float elevationDeg) {
     glm_mat4_copy(combined, ibl.envRotation);
 
     pushIblState();
-    signalEmit("iblChanged", NULL);
+    signalEmit("iblChanged", nullptr);
 }
 
 // ---------------------------------------------------------------------------
@@ -575,7 +575,7 @@ static void precomputeIbl(char includeBrdf) {
     vulkanTransientEnd(cmd, 1);
 
     foreach (VkImageView view, tempViews) {
-        vkDestroyImageView(vulkan.device, view, NULL);
+        vkDestroyImageView(vulkan.device, view, nullptr);
     }
     arrayFree(tempViews);
 }
@@ -590,7 +590,7 @@ static void destroyPipelines(void) {
 
 static void destroyImage(VulkanImage* image) {
     if (image->img) {
-        vulkanDestroyImage(image, NULL);
+        vulkanDestroyImage(image, nullptr);
     }
 }
 
@@ -606,14 +606,14 @@ static VkImageView createAttachmentView(VulkanImage* image, u32 baseMipLevel, u3
     viewInfo.subresourceRange.levelCount     = 1;
     viewInfo.subresourceRange.baseArrayLayer = baseArrayLayer;
     viewInfo.subresourceRange.layerCount     = 1;
-    vkCreateImageView(vulkan.device, &viewInfo, NULL, &view);
+    vkCreateImageView(vulkan.device, &viewInfo, nullptr, &view);
     return view;
 }
 
 static VulkanImage makeAttachmentProxy(VulkanImage* image, VkImageView view, u32 mipLevel) {
     VulkanImage proxy   = *image;
     proxy.view          = view;
-    proxy.views         = NULL;
+    proxy.views         = nullptr;
     proxy.layers        = 1;
     proxy.mipLevels     = 1;
     proxy.extent.width  = std::max(1u, image->extent.width >> mipLevel);
@@ -772,15 +772,15 @@ static void extractSHAndSun(const float* pixels, int width, int height, float su
         }
     }
 
-    glm_vec4_copy((vec4){(float)shL0[0], (float)shL0[1], (float)shL0[2], 0}, ibl.shL0_M0);
-    glm_vec4_copy((vec4){(float)shL1n[0], (float)shL1n[1], (float)shL1n[2], 0}, ibl.shL1_Mn1);
-    glm_vec4_copy((vec4){(float)shL10[0], (float)shL10[1], (float)shL10[2], 0}, ibl.shL1_M0);
-    glm_vec4_copy((vec4){(float)shL1p[0], (float)shL1p[1], (float)shL1p[2], 0}, ibl.shL1_Mp1);
-    ibl.hasSH = 1;
+    glm_vec4_copy(vec4{static_cast<float>(shL0[0]), static_cast<float>(shL0[1]), static_cast<float>(shL0[2]), 0}, ibl.shL0_M0);
+    glm_vec4_copy(vec4{static_cast<float>(shL1n[0]), static_cast<float>(shL1n[1]), static_cast<float>(shL1n[2]), 0}, ibl.shL1_Mn1);
+    glm_vec4_copy(vec4{static_cast<float>(shL10[0]), static_cast<float>(shL10[1]), static_cast<float>(shL10[2]), 0}, ibl.shL1_M0);
+    glm_vec4_copy(vec4{static_cast<float>(shL1p[0]), static_cast<float>(shL1p[1]), static_cast<float>(shL1p[2]), 0}, ibl.shL1_Mp1);
+    ibl.hasSH = true;
 
-    glm_vec3_copy((vec3){0.3f, 0.8f, -0.5f}, ibl.extractedSun.direction);
+    glm_vec3_copy(vec3{0.3f, 0.8f, -0.5f}, ibl.extractedSun.direction);
     glm_vec3_normalize(ibl.extractedSun.direction);
-    glm_vec3_copy((vec3){1, 1, 1}, ibl.extractedSun.color);
+    glm_vec3_copy(vec3{1, 1, 1}, ibl.extractedSun.color);
     ibl.extractedSun.angularRadius = 0.0f;
 
     /* Dominant-hotspot clustering.

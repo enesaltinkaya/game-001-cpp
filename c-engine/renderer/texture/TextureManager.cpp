@@ -11,16 +11,17 @@ static void ensureTextureMapInit(void) {
     }
 }
 
-typedef struct TextureCreateInfo {
-    const char* path;
-    const u8* data;
-    u64 size;
-    const char* mime;
-    const char* name;
-    char nonColor, genMips;
-} TextureCreateInfo;
+struct TextureCreateInfo {
+    const char* path = nullptr;
+    const u8* data = nullptr;
+    u64 size = 0;
+    const char* mime = nullptr;
+    const char* name = nullptr;
+    bool nonColor = false;
+    bool genMips = true;
+};
 
-#define createTexture(...) internalCreateTexture((TextureCreateInfo){.genMips = 1, __VA_ARGS__})
+#define createTexture(...) internalCreateTexture(TextureCreateInfo{__VA_ARGS__})
 
 static Texture* internalCreateTexture(TextureCreateInfo info) {
     const char* key = info.path ? info.path : info.name;
@@ -79,25 +80,25 @@ Texture* getTextureByName(const char* name) {
         return createTexture(.path = name, .genMips = 0);
     }
 
-    return NULL;
+    return nullptr;
 }
 
 Texture* getTextureById(u32 id) {
     threadLock(&textureLock);
-    Texture* t = mapContainsKey(textureIdMap, id) ? mapGet(textureIdMap, id) : NULL;
+    Texture* t = mapContainsKey(textureIdMap, id) ? mapGet(textureIdMap, id) : nullptr;
     threadUnlock(&textureLock);
     return t;
 }
 
 Texture* createTextureFromData(const char* name,
-                               const u8* data,
-                               u64 size,
-                               const char* mime,
-                               char nonColor) {
-    return createTexture(.name     = name,
-                         .data     = data,
+                                const u8* data,
+                                u64 size,
+                                const char* mime,
+                                bool nonColor) {
+    return createTexture(.data     = data,
                          .size     = size,
                          .mime     = mime,
+                         .name     = name,
                          .nonColor = nonColor);
 }
 

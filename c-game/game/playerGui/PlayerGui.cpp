@@ -9,11 +9,17 @@ static void added(void);
 static void update(void);
 static void removed(void);
 
-struct System playerGui = {
-    .name    = "playerGui",
-    .added   = added,
-    .update  = update,
-    .removed = removed,
+System playerGui = {
+    .name                = "playerGui",
+    .added               = added,
+    .removed             = removed,
+    .preUpdate           = nullptr,
+    .update              = update,
+    .postUpdate          = nullptr,
+    .cpuElapsedLastFrame = 0.0,
+    .cpuElapsed          = 0.0,
+    .gpuElapsed          = 0.0,
+    .priority            = 0,
 };
 
 static void* document;
@@ -23,8 +29,8 @@ static char* cellText;
 static char cellTextBuf[32];
 
 static void worldToMap(const AzgaarWorld* world, float wx, float wz, float* outMapX, float* outMapY) {
-    *outMapX = ((-wx) / (float)world->metersPerPixel) + (float)world->widthPx * 0.5f;
-    *outMapY = ((-wz) / (float)world->metersPerPixel) + (float)world->heightPx * 0.5f;
+    *outMapX = ((-wx) / static_cast<float>(world->metersPerPixel)) + static_cast<float>(world->widthPx) * 0.5f;
+    *outMapY = ((-wz) / static_cast<float>(world->metersPerPixel)) + static_cast<float>(world->heightPx) * 0.5f;
 }
 
 static void added(void) {

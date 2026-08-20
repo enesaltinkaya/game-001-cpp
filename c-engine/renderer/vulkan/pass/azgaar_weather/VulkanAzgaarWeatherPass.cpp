@@ -19,12 +19,17 @@ static void preUpdate(void);
 static void update(void);
 static void removed(void);
 
-struct System vulkanAzgaarWeatherPass = {
-    .name      = "azgaar_weather",
-    .added     = added,
-    .preUpdate = preUpdate,
-    .update    = update,
-    .removed   = removed,
+System vulkanAzgaarWeatherPass = {
+    .name                = "azgaar_weather",
+    .added               = added,
+    .removed             = removed,
+    .preUpdate           = preUpdate,
+    .update              = update,
+    .postUpdate          = nullptr,
+    .cpuElapsedLastFrame = 0.0,
+    .cpuElapsed          = 0.0,
+    .gpuElapsed          = 0.0,
+    .priority            = 0,
 };
 
 // Particle pool.  65 536 × 16 B = 1 MB of device-local memory; the dispatch
@@ -141,9 +146,9 @@ static void recreatePipelines(void) {
 
 static void destroyMaskImages(void) {
     if (maskA.img) vulkanDestroyImage(&maskA, NULL);
-    maskA = (VulkanImage){0};
+    maskA = VulkanImage{0};
     if (maskB.img) vulkanDestroyImage(&maskB, NULL);
-    maskB = (VulkanImage){0};
+    maskB = VulkanImage{0};
     maskFrame = 0;
 }
 
@@ -533,7 +538,7 @@ static void update(void) {
 static void removed(void) {
     threadLock(&uploadLock);
     if (particleBuffer.buf) vulkanDestroyBuffer(&particleBuffer, VK_NULL_HANDLE);
-    particleBuffer = (VulkanBuffer){0};
+    particleBuffer = VulkanBuffer{0};
     pendingReseed = false;
     threadUnlock(&uploadLock);
     destroyMaskImages();

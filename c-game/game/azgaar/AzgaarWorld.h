@@ -6,7 +6,7 @@
 #define AZGAAR_BIOME_MAX_ICONS 16
 #define AZGAAR_ICON_NAME_LEN   16
 
-typedef struct AzgaarCell {
+struct AzgaarCell {
     float x;
     float y;
     float height;
@@ -23,38 +23,38 @@ typedef struct AzgaarCell {
     u32   vertexCount;
     u32*  neighbors;
     u32   neighborCount;
-} AzgaarCell;
+};
 
-typedef struct AzgaarVertex {
+struct AzgaarVertex {
     float x;
     float y;
     u32*  cells;
     u32   cellCount;
-} AzgaarVertex;
+};
 
-typedef struct AzgaarCellGrid {
+struct AzgaarCellGrid {
     u32   cols;
     u32   rows;
     float bucketSize;
     float invBucketSize;
     u32*  bucketStart;
     u32*  bucketCells;
-} AzgaarCellGrid;
+};
 
 // A rendered pack cell used for political-zone lookups. Positions are in
 // Azgaar map pixels (same space as AzgaarCell.x/.y). State/province ids use
 // Azgaar's 1-based indexing; 0 means neutral / unclaimed.
-typedef struct AzgaarPackCell {
+struct AzgaarPackCell {
     float x;
     float y;
     u32   state;
     u32   province;
-} AzgaarPackCell;
+};
 
-typedef struct AzgaarNamedRegion {
+struct AzgaarNamedRegion {
     char  name[32];
     float color[3]; // authored region colour ([0,1] RGB) from the section's "color" hex
-} AzgaarNamedRegion;
+};
 
 // FMG biome definition (section 3 of the .map).  `color` is the authored
 // biome tint in [0,1] RGB, converted from the FMG hex string.  Biome ids index
@@ -66,7 +66,7 @@ typedef struct AzgaarNamedRegion {
 // to scatter in this biome, repeated by weight (FMG's icon picker weighs each
 // entry by its repetition, e.g. ["acacia" x8, "palm"] → acacia 8×, palm 1×);
 // `iconsDensity` is the biome's base icon density (0..~250, scaled by /120).
-typedef struct AzgaarBiome {
+struct AzgaarBiome {
     u32   id;
     char  name[32];
     float color[3];
@@ -74,38 +74,38 @@ typedef struct AzgaarBiome {
     u32   iconsDensity;
     u32   iconCount;
     char  icons[AZGAAR_BIOME_MAX_ICONS][AZGAAR_ICON_NAME_LEN];
-} AzgaarBiome;
+};
 
 // Result of a zone query at a map position. Name pointers reference the
 // retained AzgaarWorld and stay valid until azgaarWorldDestroy(). They are
 // "" (empty) when the cell has no such region (e.g. neutral wildlands).
-typedef struct AzgaarZoneInfo {
+struct AzgaarZoneInfo {
     u32         provinceId;
     u32         stateId;
     const char* provinceName;
     const char* stateName;
-} AzgaarZoneInfo;
+};
 
-typedef enum AzgaarRouteGroup {
+enum AzgaarRouteGroup {
     AZGAAR_ROUTE_ROAD,
     AZGAAR_ROUTE_TRAIL,
     AZGAAR_ROUTE_SEAROUTE,
-} AzgaarRouteGroup;
+};
 
-typedef struct AzgaarRoutePoint {
+struct AzgaarRoutePoint {
     float x;
     float y;
     u32   cell;
-} AzgaarRoutePoint;
+};
 
-typedef struct AzgaarRoute {
+struct AzgaarRoute {
     AzgaarRouteGroup group;
     char             name[64];
     AzgaarRoutePoint* points;
     u32              pointCount;
     float            length;
     u32              feature;
-} AzgaarRoute;
+};
 
 // Azgaar river (workstream C, plans/azgaar-world-population.md).  Metadata
 // comes from section 32 JSON; the centerline polyline comes from the SVG
@@ -113,7 +113,7 @@ typedef struct AzgaarRoute {
 // are in map pixels; convert to metres with world->metersPerPixel.  `type`
 // is "River" or "Fork".  When the section 32 entry for a path id is missing
 // the width defaults to 4 m.
-typedef struct AzgaarRiver {
+struct AzgaarRiver {
     u32   id;
     char  name[48];
     u32   source;
@@ -128,13 +128,13 @@ typedef struct AzgaarRiver {
     // Centerline polyline in map px (x,y pairs) from the SVG `d` attribute.
     float*  pointsPx;
     u32     pointCount;
-} AzgaarRiver;
+};
 
 // Named settlement (section 15, workstream D of plans/azgaar-world-population.md).
 // Positions are converted to world space at parse time (azgaarMapToWorld of x,y).
 // `flatY` is the natural terrain height at the centre (sampled before any
 // plateau is applied) and drives the D8 terrain flattening.
-typedef enum AzgaarBurgGroup {
+enum AzgaarBurgGroup {
     AZGAAR_BURG_CAPITAL,
     AZGAAR_BURG_CITY,
     AZGAAR_BURG_TOWN,
@@ -145,7 +145,7 @@ typedef enum AzgaarBurgGroup {
     AZGAAR_BURG_CARAVANSERAI,
     AZGAAR_BURG_TRADING_POST,
     AZGAAR_BURG_GROUP_COUNT,
-} AzgaarBurgGroup;
+};
 
 #define AZGAAR_SETT_FLAG_WALLS    (1u << 0)
 #define AZGAAR_SETT_FLAG_CITADEL  (1u << 1)
@@ -154,7 +154,7 @@ typedef enum AzgaarBurgGroup {
 #define AZGAAR_SETT_FLAG_TEMPLE   (1u << 4)
 #define AZGAAR_SETT_FLAG_SHANTY   (1u << 5)
 
-typedef struct AzgaarSettlement {
+struct AzgaarSettlement {
     u32   id;            // 1-based burg id
     char  name[48];
     float wx, wz;        // world space (azgaarMapToWorld of x,y)
@@ -166,13 +166,13 @@ typedef struct AzgaarSettlement {
     u32   stateId;
     u32   cultureId;
     float stateColor[3]; // from section 14 (state trim/band colour)
-} AzgaarSettlement;
+};
 
 // FMG marker types we render 3D landmarks for (section 35, workstream E of
 // plans/azgaar-world-population.md).  The .map stores plural `type` strings
 // ("volcanoes", "ruins", ...); anything not modelled yet (encounters,
 // dungeons, inns, ...) maps to OTHER and is skipped as Phase-5 gameplay data.
-typedef enum AzgaarMarkerKind {
+enum AzgaarMarkerKind {
     AZGAAR_MARKER_OTHER = 0,
     AZGAAR_MARKER_VOLCANO,
     AZGAAR_MARKER_LIGHTHOUSE,
@@ -182,18 +182,18 @@ typedef enum AzgaarMarkerKind {
     AZGAAR_MARKER_MINE,
     AZGAAR_MARKER_BRIDGE,
     AZGAAR_MARKER_SACRED_FOREST,
-} AzgaarMarkerKind;
+};
 
-typedef struct AzgaarMarker {
+struct AzgaarMarker {
     AzgaarMarkerKind kind;
     u32   id;       // 1-based marker index in section 35
     float x, y;     // map px (FMG marker position)
     float wx, wz;   // world space (azgaarMapToWorld of x,y)
     u32   cell;     // pack cell (informational)
     float size;     // FMG size scalar ~0.2..1.0 (defaults to 1)
-} AzgaarMarker;
+};
 
-typedef struct AzgaarWorld {
+struct AzgaarWorld {
     String jsonData;
     AzgaarCell* cells;
     AzgaarVertex* vertices;
@@ -261,7 +261,7 @@ typedef struct AzgaarWorld {
     // do not reconstruct, but the grid inputs yield the same classification).
     AzgaarBiome* biomes;
     u32          biomeCount;
-} AzgaarWorld;
+};
 
 // Look up a biome's authored colour.  Returns a neutral grey for unknown ids
 // (e.g. when the biome table failed to parse).  Safe to call before the world
@@ -328,12 +328,12 @@ void azgaarWorldSampleBiomeColorSmooth(const AzgaarWorld* world,
 // interpolation (nearest for the biome id).  When the grids are unavailable
 // the per-cell scalars are used as a flat fallback; with no cells at all the
 // sample is neutral (biome 13 = none).
-typedef struct AzgaarClimateSample {
+struct AzgaarClimateSample {
     float temperature;   // degrees C
     float precipitation; // 0..100
     float coastCells;    // + land side / - water side, cell units (0 = n/a)
     u32   biome;         // biome id (13 = none/water fallback)
-} AzgaarClimateSample;
+};
 
 void azgaarWorldSampleClimate(const AzgaarWorld* world,
                               float xPx,
@@ -347,18 +347,18 @@ void azgaarWorldSampleClimate(const AzgaarWorld* world,
 //   A = biome id
 // The bias keeps every channel monotonic across its sign change so bilinear
 // filtering cannot ring (a raw two's-complement Int8 byte would wrap 255<->1
-// at 0).  Returns a memoryAlloc'd W*H*4 buffer (caller frees); NULL when the
+// at 0).  Returns a memoryAlloc'd W*H*4 buffer (caller frees); nullptr when the
 // climate grids are unavailable.
 u8* azgaarWorldPackClimateTexture(const AzgaarWorld* world, u32* outWidth, u32* outHeight);
 
 // Pack biomeColorGrid (RGB u8) into an RGBA8 buffer (A = 255) for GPU upload.
-// memoryAlloc'd W*H*4 buffer (caller frees); NULL when the grid is absent.
+// memoryAlloc'd W*H*4 buffer (caller frees); nullptr when the grid is absent.
 u8* azgaarWorldPackBiomeColorTexture(const AzgaarWorld* world, u32* outWidth, u32* outHeight);
 
 // Samples the political zone (province + state) at a map-space position by
 // finding the nearest pack cell. out->provinceName / out->stateName point into
 // the retained world and are valid until azgaarWorldDestroy().
-// outPackCellIndex (may be NULL) receives the index of the nearest pack cell.
+// outPackCellIndex (may be nullptr) receives the index of the nearest pack cell.
 void azgaarWorldSampleZone(const AzgaarWorld* world,
                            float xPx,
                            float yPx,

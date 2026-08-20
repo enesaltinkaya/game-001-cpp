@@ -13,10 +13,10 @@ void loadingAzgaarOnExit(void);
 
 // Access the loaded Azgaar world. Only valid while it is retained for gameplay
 // streaming (i.e. after a successful loading -> gameplay transition). Returns
-// NULL before load completes, after gameplay releases it, or on the cancel path.
+// nullptr before load completes, after gameplay releases it, or on the cancel path.
 const AzgaarWorld* loadingAzgaarGetWorld(void);
 
-// The AzgaarHeightmapSource backing the active world (NULL before the map is
+// The AzgaarHeightmapSource backing the active world (nullptr before the map is
 // loaded / after release). Its heightAt is the CANONICAL terrain surface
 // (FMG macro heights + seeded fBm detail) — the same function the heightmap
 // pass bakes into its textures and the Jolt heightfields collide against.

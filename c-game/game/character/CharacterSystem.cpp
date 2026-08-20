@@ -16,17 +16,22 @@ static void added(void);
 static void removed(void);
 static void update(void);
 
-struct System characterSystem = {
-    .name     = "character",
-    .added    = added,
-    .removed  = removed,
-    .update   = update,
-    .priority = 1001,
+System characterSystem = {
+    .name                = "character",
+    .added               = added,
+    .removed             = removed,
+    .preUpdate           = nullptr,
+    .update              = update,
+    .postUpdate          = nullptr,
+    .cpuElapsedLastFrame = 0.0,
+    .cpuElapsed          = 0.0,
+    .gpuElapsed          = 0.0,
+    .priority            = 1001,
 };
 
-static struct Sound* combatHitSound;
-static struct Sound* combatDeathSound1;
-static struct Sound* combatDeathSound2;
+static Sound* combatHitSound;
+static Sound* combatDeathSound1;
+static Sound* combatDeathSound2;
 
 static void characterNumberSpawn(Entity* target, float amount, u32 damageType, vec3 position);
 static void combatAudioPlayHit(u32 damageType);
@@ -42,7 +47,7 @@ void applyDamage(Entity* target, float amount, u32 damageType) {
 
     float resistance = 0.0f;
     if (damageType >= DAMAGE_TYPE_FIRE && damageType <= DAMAGE_TYPE_LIGHTNING) {
-        u32 idx = (u32)(damageType - DAMAGE_TYPE_FIRE);
+        u32 idx = static_cast<u32>(damageType - DAMAGE_TYPE_FIRE);
         resistance = stats->elementalResist[idx];
     }
 
@@ -119,7 +124,7 @@ void triggerDeath(Entity* target) {
 }
 
 static void characterNumberSpawn(Entity* target, float amount, u32 damageType, vec3 position) {
-    (void)damageType;
+    static_cast<void>(damageType);
     // Positive = damage dealt to enemy (yellow), negative = damage taken by player (red)
     Enemy* enemy = getComponent(target->scene, Enemy, target->id);
     float signedAmount = enemy ? amount : -amount;
@@ -127,13 +132,13 @@ static void characterNumberSpawn(Entity* target, float amount, u32 damageType, v
 }
 
 static void combatAudioPlayHit(u32 damageType) {
-    (void)damageType;
+    static_cast<void>(damageType);
     if (!combatHitSound) return;
     soundPlay(combatHitSound, settingsGetDouble("effects") / 100.0f, 0);
 }
 
 static void combatAudioPlayDeath(void) {
-    struct Sound* sound = randomU32() % 2 == 0 ? combatDeathSound1 : combatDeathSound2;
+    Sound* sound = randomU32() % 2 == 0 ? combatDeathSound1 : combatDeathSound2;
     if (!sound) return;
     soundPlay(sound, settingsGetDouble("effects") / 100.0f, 0);
 }
@@ -148,9 +153,9 @@ void removed(void) {
     soundDestroy(combatHitSound);
     soundDestroy(combatDeathSound1);
     soundDestroy(combatDeathSound2);
-    combatHitSound      = NULL;
-    combatDeathSound1   = NULL;
-    combatDeathSound2   = NULL;
+    combatHitSound      = nullptr;
+    combatDeathSound1   = nullptr;
+    combatDeathSound2   = nullptr;
 }
 
 void update(void) {

@@ -3,18 +3,18 @@
 #include "VulkanImage.h"
 #include "renderer/Renderer.h"
 
-typedef struct IblSunLight {
+struct IblSunLight {
     vec3 direction; // normalized direction toward the sun
     vec3 color;     // HDR radiance
     float angularRadius; // radians
-} IblSunLight;
+};
 
 void vulkanIblInit(void);
 void vulkanIblDestroy(void);
 VulkanImage* vulkanIblGetEnvironmentImage(void);
 IblSunLight vulkanIblGetExtractedSun(void);
-void vulkanIblSetDisabled(char disabled);
-char vulkanIblIsDisabled(void);
+void vulkanIblSetDisabled(bool disabled);
+bool vulkanIblIsDisabled(void);
 
 // Cycle through available IBL environment maps in studiolights/
 void vulkanIblCycleNext(void);

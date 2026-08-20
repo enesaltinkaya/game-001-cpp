@@ -41,8 +41,8 @@ VulkanPipe r_vulkanCreatePipe(VulkanPipeInfo pipeInfo) {
 }
 
 void vulkanDestroyPipe(VulkanPipe* pipe) {
-    vkDestroyPipeline(vulkan.device, pipe->pipe, NULL);
-    vkDestroyPipelineLayout(vulkan.device, pipe->layout, NULL);
+    vkDestroyPipeline(vulkan.device, pipe->pipe, nullptr);
+    vkDestroyPipelineLayout(vulkan.device, pipe->layout, nullptr);
     vulkanDestroyProfile(&pipe->profile);
 }
 
@@ -50,7 +50,7 @@ void vulkanBindPipe(VulkanCommand* cmd, VulkanPipe* pipe) {
     VkPipelineBindPoint point = pipe->isCompute ? VK_PIPELINE_BIND_POINT_COMPUTE
                                                 : VK_PIPELINE_BIND_POINT_GRAPHICS;
     VulkanDesc* globalSet0    = &vulkanResources.globalSet0[renderer.flightIndex];
-    vkCmdBindDescriptorSets(cmd->cmd, point, pipe->layout, 0, 1, &globalSet0->set, 0, NULL);
+    vkCmdBindDescriptorSets(cmd->cmd, point, pipe->layout, 0, 1, &globalSet0->set, 0, nullptr);
     vkCmdBindPipeline(cmd->cmd, point, pipe->pipe);
 }
 
@@ -100,7 +100,7 @@ void createComputePipe(VulkanPipe* pipe, VulkanPipeInfo info) {
     layoutInfo.pSetLayouts                = setLayouts;
     layoutInfo.pushConstantRangeCount     = 1;
     layoutInfo.pPushConstantRanges        = &pc;
-    vkCreatePipelineLayout(vulkan.device, &layoutInfo, NULL, &pipe->layout);
+    vkCreatePipelineLayout(vulkan.device, &layoutInfo, nullptr, &pipe->layout);
 
     VkShaderModule module                       = vulkanCreateShader(info.comp);
     VkPipelineShaderStageCreateInfo shaderStage = {};
@@ -118,7 +118,7 @@ void createComputePipe(VulkanPipe* pipe, VulkanPipeInfo info) {
     pipelineCreateInfo.stage                       = shaderStage;
 
     VK_CHECK(
-        vkCreateComputePipelines(vulkan.device, NULL, 1, &pipelineCreateInfo, NULL, &pipe->pipe),
+        vkCreateComputePipelines(vulkan.device, nullptr, 1, &pipelineCreateInfo, nullptr, &pipe->pipe),
         "vkCreateComputePipelines");
 
     if (isDebug() && info.name) {
@@ -138,33 +138,33 @@ void createGraphicsPipe(VulkanPipe* pipe, VulkanPipeInfo info) {
     Array(VkDescriptorSetLayout) setLayouts = {};
     arrayPut(setLayouts, vulkanResources.globalSet0[0].layout);
 
-    if (info.clearColor1Enabled) {
-        pipe->clearColor1Enabled = 1;
-        pipe->clearColor1        = (VkClearValue){.color = {{info.clearColor1[0],
-                                                             info.clearColor1[1],
-                                                             info.clearColor1[2],
-                                                             info.clearColor1[3]}}};
+if (info.clearColor1Enabled) {
+        pipe->clearColor1Enabled = true;
+        pipe->clearColor1        = VkClearValue{.color = {info.clearColor1[0],
+                                                          info.clearColor1[1],
+                                                          info.clearColor1[2],
+                                                          info.clearColor1[3]}};
     }
 
     if (info.clearColor2Enabled) {
-        pipe->clearColor2Enabled = 1;
-        pipe->clearColor2        = (VkClearValue){.color = {{info.clearColor2[0],
-                                                             info.clearColor2[1],
-                                                             info.clearColor2[2],
-                                                             info.clearColor2[3]}}};
+        pipe->clearColor2Enabled = true;
+        pipe->clearColor2        = VkClearValue{.color = {info.clearColor2[0],
+                                                          info.clearColor2[1],
+                                                          info.clearColor2[2],
+                                                          info.clearColor2[3]}};
     }
 
     if (info.clearColor3Enabled) {
-        pipe->clearColor3Enabled = 1;
-        pipe->clearColor3        = (VkClearValue){.color = {{info.clearColor3[0],
-                                                             info.clearColor3[1],
-                                                             info.clearColor3[2],
-                                                             info.clearColor3[3]}}};
+        pipe->clearColor3Enabled = true;
+        pipe->clearColor3        = VkClearValue{.color = {info.clearColor3[0],
+                                                          info.clearColor3[1],
+                                                          info.clearColor3[2],
+                                                          info.clearColor3[3]}};
     }
 
     if (info.clearDepthEnabled) {
-        pipe->clearDepthEnabled = 1;
-        pipe->clearDepth = (VkClearValue){.depthStencil = {info.clearDepth[0], static_cast<uint32_t>(info.clearDepth[1])}};
+        pipe->clearDepthEnabled = true;
+        pipe->clearDepth = VkClearValue{.depthStencil = {info.clearDepth[0], static_cast<uint32_t>(info.clearDepth[1])}};
     }
 
     if (info.set1) {
@@ -191,7 +191,7 @@ void createGraphicsPipe(VulkanPipe* pipe, VulkanPipeInfo info) {
     layoutInfo.pSetLayouts                = setLayouts;
     layoutInfo.pushConstantRangeCount     = 1;
     layoutInfo.pPushConstantRanges        = &pc;
-    vkCreatePipelineLayout(vulkan.device, &layoutInfo, NULL, &pipe->layout);
+    vkCreatePipelineLayout(vulkan.device, &layoutInfo, nullptr, &pipe->layout);
 
     VkPipelineRenderingCreateInfo renderingInfo = {};
     renderingInfo.sType                         = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
@@ -432,7 +432,7 @@ void createGraphicsPipe(VulkanPipe* pipe, VulkanPipeInfo info) {
     VkGraphicsPipelineCreateInfo pipelineCreateInfo = {};
     pipelineCreateInfo.sType               = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
     pipelineCreateInfo.layout              = pipe->layout;
-    pipelineCreateInfo.renderPass          = NULL;
+    pipelineCreateInfo.renderPass          = nullptr;
     pipelineCreateInfo.flags               = 0;
     pipelineCreateInfo.basePipelineIndex   = -1;
     pipelineCreateInfo.basePipelineHandle  = VK_NULL_HANDLE;
@@ -449,7 +449,7 @@ void createGraphicsPipe(VulkanPipe* pipe, VulkanPipeInfo info) {
     pipelineCreateInfo.pVertexInputState   = &vertexInput;
     pipelineCreateInfo.pTessellationState  = &tess;
     VK_CHECK(
-        vkCreateGraphicsPipelines(vulkan.device, NULL, 1, &pipelineCreateInfo, NULL, &pipe->pipe),
+        vkCreateGraphicsPipelines(vulkan.device, nullptr, 1, &pipelineCreateInfo, nullptr, &pipe->pipe),
         "vkCreateGraphicsPipelines");
 
     if (isDebug()) {
@@ -486,7 +486,7 @@ VkShaderModule vulkanCreateShader(const char* path) {
     moduleCreateInfo.sType                    = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
     moduleCreateInfo.codeSize                 = fileContents.size;
     moduleCreateInfo.pCode                     = static_cast<const uint32_t*>((void*)fileContents.data);
-    VK_CHECK(vkCreateShaderModule(vulkan.device, &moduleCreateInfo, NULL, &module),
+    VK_CHECK(vkCreateShaderModule(vulkan.device, &moduleCreateInfo, nullptr, &module),
              "vkCreateShaderModule");
     stringDestroy(&fileContents);
 
@@ -499,7 +499,7 @@ VkShaderModule vulkanCreateShader(const char* path) {
 }
 
 void vulkanDestroyShader(VkShaderModule module) {
-    vkDestroyShaderModule(vulkan.device, module, NULL);
+    vkDestroyShaderModule(vulkan.device, module, nullptr);
 }
 
 void r_vulkanBeginRender(VulkanBeginRenderInfo beginRenderInfo) {

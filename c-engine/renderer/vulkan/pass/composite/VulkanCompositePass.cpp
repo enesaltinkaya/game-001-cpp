@@ -19,12 +19,16 @@ static double     elapsedCPU;
 static double     elapsedGPU;
 
 System vulkanCompositePass = {
-    .name       = "composite",
-    .added      = added,
-    .preUpdate  = preUpdate,
-    .update     = update,
-    .postUpdate = postUpdate,
-    .removed    = removed,
+    .name                = "composite",
+    .added               = added,
+    .removed             = removed,
+    .preUpdate           = preUpdate,
+    .update              = update,
+    .postUpdate          = postUpdate,
+    .cpuElapsedLastFrame = 0.0,
+    .cpuElapsed          = 0.0,
+    .gpuElapsed          = 0.0,
+    .priority            = 0,
 };
 
 typedef struct CompositePushConstants {

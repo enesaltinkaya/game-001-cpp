@@ -4,23 +4,23 @@
 #include "ecs/system/transform/TransformComponent.h"
 #include "renderer/Renderer.h"
 
-typedef struct TransformUpload {
+struct TransformUpload {
     Transform transform;
     u32 entity;
-} TransformUpload;
+};
 
 // Interleaved vertex for the scene VBO
-typedef struct SceneVertex {
+struct SceneVertex {
     float position[3];   // 12 bytes
     float normal[3];     // 12 bytes
     float tangent[4];    // 16 bytes
     float uv[2];         // 8 bytes
     uint32_t joints;     // 4 bytes — 4x uint8 joint indices
     uint32_t weights;    // 4 bytes — 4x unorm8 bone weights
-} SceneVertex;            // 56 bytes
+};                        // 56 bytes
 
 // GPU-side draw instance (one per SceneDraw, lives on GPU)
-typedef struct GpuDrawInstance {
+struct GpuDrawInstance {
     u32 firstIndex;
     u32 indexCount;
     i32 vertexOffset;
@@ -30,22 +30,22 @@ typedef struct GpuDrawInstance {
     u32 _pad0;
     u32 _pad1;
     float boundingSphere[4]; // xyz = local center, w = local radius
-} GpuDrawInstance;
+};
 
 // VkDrawIndexedIndirectCommand compatible struct
-typedef struct SceneDrawIndexedCommand {
+struct SceneDrawIndexedCommand {
     u32 indexCount;
     u32 instanceCount;
     u32 firstIndex;
     i32 vertexOffset;
     u32 firstInstance;
-} SceneDrawIndexedCommand;
+};
 
 #define DRAW_FLAG_DOUBLE_SIDED 1u
 #define DRAW_FLAG_TRANSPARENT  2u
 #define DRAW_FLAG_SKINNED      4u
 
-typedef struct VulkanScene {
+struct VulkanScene {
     // Geometry buffers
     VulkanBuffer vertexBuffer;   // SceneVertex[]
     VulkanBuffer indexBuffer;    // u32[]
@@ -99,7 +99,7 @@ typedef struct VulkanScene {
     u32 totalVertices;
     u32 totalIndices;
     u32 totalDraws;
-} VulkanScene;
+};
 
 void vulkanSceneCreate(struct Scene* scene);
 void vulkanSceneDestroy(struct Scene* scene);

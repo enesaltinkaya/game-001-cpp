@@ -2,13 +2,13 @@
 
 #include "ecs/system/scene/SceneSystem.h"
 
-typedef struct RcNavMesh RcNavMesh;
-typedef struct DtNavMeshQuery DtNavMeshQuery;
+struct RcNavMesh;
+struct DtNavMeshQuery;
 
-typedef struct NavMeshData {
+struct NavMeshData {
     RcNavMesh*     navMesh;
     DtNavMeshQuery* query;
-} NavMeshData;
+};
 
 extern struct System navMeshSystem;
 
@@ -24,5 +24,5 @@ uint32_t navMeshFindPath(Scene* scene,
 /// Returns 1 on success.
 int navMeshClosestPoint(Scene* scene, const float* pos, float* outPoint);
 
-/// Get the loaded navmesh (for debug visualization). Returns NULL if not loaded.
+/// Get the loaded navmesh (for debug visualization). Returns nullptr if not loaded.
 RcNavMesh* navMeshGetMesh(void);

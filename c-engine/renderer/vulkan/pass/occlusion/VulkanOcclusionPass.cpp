@@ -23,12 +23,16 @@ static double elapsedCPU;
 static double elapsedGPU;
 
 System vulkanOcclusionPass = {
-    .name       = "occlusion",
-    .added      = added,
-    .preUpdate  = preUpdate,
-    .update     = update,
-    .postUpdate = postUpdate,
-    .removed    = removed,
+    .name                = "occlusion",
+    .added               = added,
+    .removed             = removed,
+    .preUpdate           = preUpdate,
+    .update              = update,
+    .postUpdate          = postUpdate,
+    .cpuElapsedLastFrame = 0.0,
+    .cpuElapsed          = 0.0,
+    .gpuElapsed          = 0.0,
+    .priority            = 0,
 };
 
 #define MAX_HIZ_MIPS 16
@@ -159,7 +163,7 @@ static void destroyEarlyHiZ(void) {
     }
     if (earlyHiZImage.img) {
         vulkanDestroyImage(&earlyHiZImage, NULL);
-        earlyHiZImage = (VulkanImage){0};
+        earlyHiZImage = VulkanImage{0};
     }
     earlyMipCount = 0;
 }

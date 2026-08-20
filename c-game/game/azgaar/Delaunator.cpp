@@ -86,7 +86,7 @@ static inline bool inCircle(double ax, double ay,
 
 #define DELAUNATOR_EDGE_STACK 512
 
-typedef struct {
+struct DelaunayCtx {
     const double* coords;
     u32 n;
 
@@ -109,11 +109,11 @@ typedef struct {
     u32  hullSize;
 
     u32 edgeStack[DELAUNATOR_EDGE_STACK];
-} DelaunayCtx;
+};
 
 static void ctxLink(DelaunayCtx* c, u32 a, i32 b) {
     c->halfedges[a] = b;
-    if (b != -1) c->halfedges[(u32)b] = (i32)a;
+    if (b != -1) c->halfedges[static_cast<u32>(b)] = static_cast<i32>(a);
 }
 
 static u32 ctxAddTriangle(DelaunayCtx* c, u32 i0, u32 i1, u32 i2, i32 a, i32 b, i32 cEdge) {
@@ -129,8 +129,8 @@ static u32 ctxAddTriangle(DelaunayCtx* c, u32 i0, u32 i1, u32 i2, i32 a, i32 b, 
 }
 
 static inline u32 ctxHashKey(const DelaunayCtx* c, double x, double y) {
-    i32 k = (i32)floor(pseudoAngle(x - c->cx, y - c->cy) * (double)c->hashSize) % (i32)c->hashSize;
-    return (u32)(k < 0 ? k + (i32)c->hashSize : k);
+    i32 k = static_cast<i32>(floor(pseudoAngle(x - c->cx, y - c->cy) * static_cast<double>(c->hashSize))) % static_cast<i32>(c->hashSize);
+    return static_cast<u32>(k < 0 ? k + static_cast<i32>(c->hashSize) : k);
 }
 
 static u32 ctxLegalize(DelaunayCtx* c, u32 a) {
@@ -149,9 +149,9 @@ static u32 ctxLegalize(DelaunayCtx* c, u32 a) {
             continue;
         }
 
-        u32 b0 = (u32)b - (u32)b % 3;
+        u32 b0 = static_cast<u32>(b) - static_cast<u32>(b) % 3;
         u32 al = a0 + (a + 1) % 3;
-        u32 bl = b0 + ((u32)b + 2) % 3;
+        u32 bl = b0 + (static_cast<u32>(b) + 2) % 3;
 
         u32 p0 = c->triangles[ar];
         u32 pr = c->triangles[a];
@@ -166,7 +166,7 @@ static u32 ctxLegalize(DelaunayCtx* c, u32 a) {
 
         if (illegal) {
             c->triangles[a] = p1;
-            c->triangles[(u32)b] = p0;
+            c->triangles[static_cast<u32>(b)] = p0;
 
             i32 hbl = c->halfedges[bl];
 
@@ -182,10 +182,10 @@ static u32 ctxLegalize(DelaunayCtx* c, u32 a) {
                 } while (e != c->hullStart);
             }
             ctxLink(c, a, hbl);
-            ctxLink(c, (u32)b, c->halfedges[ar]);
-            ctxLink(c, ar, (i32)bl);
+            ctxLink(c, static_cast<u32>(b), c->halfedges[ar]);
+            ctxLink(c, ar, static_cast<i32>(bl));
 
-            u32 br = b0 + ((u32)b + 1) % 3;
+            u32 br = b0 + (static_cast<u32>(b) + 1) % 3;
             if (i < DELAUNATOR_EDGE_STACK) c->edgeStack[i++] = br;
         } else {
             if (i == 0) break;
@@ -219,10 +219,10 @@ static void quicksortIds(u32* ids, const double* dists, i32 left, i32 right) {
         i32 median = (left + right) >> 1;
         i32 i = left + 1;
         i32 j = right;
-        swapU32(ids, (u32)median, (u32)i);
-        if (dists[ids[left]] > dists[ids[right]]) swapU32(ids, (u32)left, (u32)right);
-        if (dists[ids[i]] > dists[ids[right]]) swapU32(ids, (u32)i, (u32)right);
-        if (dists[ids[left]] > dists[ids[i]]) swapU32(ids, (u32)left, (u32)i);
+        swapU32(ids, static_cast<u32>(median), static_cast<u32>(i));
+        if (dists[ids[left]] > dists[ids[right]]) swapU32(ids, static_cast<u32>(left), static_cast<u32>(right));
+        if (dists[ids[i]] > dists[ids[right]]) swapU32(ids, static_cast<u32>(i), static_cast<u32>(right));
+        if (dists[ids[left]] > dists[ids[i]]) swapU32(ids, static_cast<u32>(left), static_cast<u32>(i));
 
         u32 temp = ids[i];
         double tempDist = dists[temp];
@@ -230,7 +230,7 @@ static void quicksortIds(u32* ids, const double* dists, i32 left, i32 right) {
             do i++; while (dists[ids[i]] < tempDist);
             do j--; while (dists[ids[j]] > tempDist);
             if (j < i) break;
-            swapU32(ids, (u32)i, (u32)j);
+            swapU32(ids, static_cast<u32>(i), static_cast<u32>(j));
         }
         ids[left + 1] = ids[j];
         ids[j] = temp;
@@ -302,7 +302,7 @@ static void delaunatorUpdate(DelaunayCtx* c) {
             c->dists[i] = (coords[2 * i] - coords[0]);
             if (c->dists[i] == 0.0) c->dists[i] = coords[2 * i + 1] - coords[1];
         }
-        quicksortIds(c->ids, c->dists, 0, (i32)n - 1);
+        quicksortIds(c->ids, c->dists, 0, static_cast<i32>(n) - 1);
         c->hullSize = 0;
         double d0 = -HUGE_VAL;
         for (u32 i = 0; i < n; i++) {
@@ -330,7 +330,7 @@ static void delaunatorUpdate(DelaunayCtx* c) {
     for (u32 i = 0; i < n; i++) {
         c->dists[i] = delaunatorDist(coords[2 * i], coords[2 * i + 1], centerX, centerY);
     }
-    quicksortIds(c->ids, c->dists, 0, (i32)n - 1);
+    quicksortIds(c->ids, c->dists, 0, static_cast<i32>(n) - 1);
 
     c->hullStart = i0;
     u32 hullSize = 3;
@@ -344,9 +344,9 @@ static void delaunatorUpdate(DelaunayCtx* c) {
     c->hullTri[i2] = 2;
 
     for (u32 i = 0; i < c->hashSize; i++) c->hullHash[i] = -1;
-    c->hullHash[ctxHashKey(c, i0x, i0y)] = (i32)i0;
-    c->hullHash[ctxHashKey(c, i1x, i1y)] = (i32)i1;
-    c->hullHash[ctxHashKey(c, i2x, i2y)] = (i32)i2;
+    c->hullHash[ctxHashKey(c, i0x, i0y)] = static_cast<i32>(i0);
+    c->hullHash[ctxHashKey(c, i1x, i1y)] = static_cast<i32>(i1);
+    c->hullHash[ctxHashKey(c, i2x, i2y)] = static_cast<i32>(i2);
 
     c->trianglesLen = 0;
     ctxAddTriangle(c, i0, i1, i2, -1, -1, -1);
@@ -369,7 +369,7 @@ static void delaunatorUpdate(DelaunayCtx* c) {
         bool found = false;
         for (u32 j = 0; j < c->hashSize; j++) {
             i32 hv = c->hullHash[(key0 + j) % c->hashSize];
-            if (hv != -1 && (u32)hv != c->hullNext[(u32)hv]) { start = (u32)hv; found = true; break; }
+            if (hv != -1 && static_cast<u32>(hv) != c->hullNext[static_cast<u32>(hv)]) { start = static_cast<u32>(hv); found = true; break; }
         }
         if (!found) {
             // fall back to hullStart if hash lookup fails entirely
@@ -389,7 +389,7 @@ static void delaunatorUpdate(DelaunayCtx* c) {
         }
         if (e == (u32)-1) continue;  // likely a near-duplicate point
 
-        u32 t = ctxAddTriangle(c, e, i, c->hullNext[e], -1, -1, (i32)c->hullTri[e]);
+        u32 t = ctxAddTriangle(c, e, i, c->hullNext[e], -1, -1, static_cast<i32>(c->hullTri[e]));
         c->hullTri[i] = ctxLegalize(c, t + 2);
         c->hullTri[e] = t;
         hullSize++;
@@ -399,7 +399,7 @@ static void delaunatorUpdate(DelaunayCtx* c) {
         while (true) {
             u32 q = c->hullNext[nn];
             if (orient2d(x, y, coords[2 * nn], coords[2 * nn + 1], coords[2 * q], coords[2 * q + 1]) < 0.0) {
-                t = ctxAddTriangle(c, nn, i, q, (i32)c->hullTri[i], -1, (i32)c->hullTri[nn]);
+                t = ctxAddTriangle(c, nn, i, q, static_cast<i32>(c->hullTri[i]), -1, static_cast<i32>(c->hullTri[nn]));
                 c->hullTri[i] = ctxLegalize(c, t + 2);
                 c->hullNext[nn] = nn;  // mark removed
                 hullSize--;
@@ -414,7 +414,7 @@ static void delaunatorUpdate(DelaunayCtx* c) {
             while (true) {
                 u32 q = c->hullPrev[e];
                 if (orient2d(x, y, coords[2 * q], coords[2 * q + 1], coords[2 * e], coords[2 * e + 1]) < 0.0) {
-                    t = ctxAddTriangle(c, q, i, e, -1, (i32)c->hullTri[e], (i32)c->hullTri[q]);
+                    t = ctxAddTriangle(c, q, i, e, -1, static_cast<i32>(c->hullTri[e]), static_cast<i32>(c->hullTri[q]));
                     ctxLegalize(c, t + 2);
                     c->hullTri[q] = t;
                     c->hullNext[e] = e;  // mark removed
@@ -432,8 +432,8 @@ static void delaunatorUpdate(DelaunayCtx* c) {
         c->hullPrev[nn] = i;
         c->hullNext[i] = nn;
 
-        c->hullHash[ctxHashKey(c, x, y)] = (i32)i;
-        c->hullHash[ctxHashKey(c, coords[2 * e], coords[2 * e + 1])] = (i32)e;
+        c->hullHash[ctxHashKey(c, x, y)] = static_cast<i32>(i);
+        c->hullHash[ctxHashKey(c, coords[2 * e], coords[2 * e + 1])] = static_cast<i32>(e);
     }
 
     // Reconstruct the convex hull by walking hullNext links for the tracked
@@ -456,12 +456,12 @@ Delaunator delaunatorFrom(const double* coords, u32 n) {
     if (maxTriangles < 2) maxTriangles = 2;
 
     DelaunayCtx* c = static_cast<DelaunayCtx*>(memoryAlloc(sizeof(DelaunayCtx)));
-    *c = (DelaunayCtx){0};
+    *c = DelaunayCtx{0};
     c->coords    = coords;
     c->n         = n;
     c->triangles  = static_cast<u32*>(memoryAlloc(sizeof(u32) * maxTriangles * 3));
     c->halfedges  = static_cast<i32*>(memoryAlloc(sizeof(i32) * maxTriangles * 3));
-    c->hashSize  = (u32)ceil(sqrt((double)n));
+    c->hashSize  = static_cast<u32>(ceil(sqrt(static_cast<double>(n))));
     if (c->hashSize < 1) c->hashSize = 1;
     c->hullPrev  = static_cast<u32*>(memoryAlloc(sizeof(u32) * n));
     c->hullNext  = static_cast<u32*>(memoryAlloc(sizeof(u32) * n));
@@ -496,5 +496,5 @@ void delaunatorDestroy(Delaunator* d) {
     memoryFree(d->triangles);
     memoryFree(d->halfedges);
     memoryFree(d->hull);
-    *d = (Delaunator){0};
+    *d = Delaunator{0};
 }

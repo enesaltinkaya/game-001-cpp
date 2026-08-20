@@ -10,11 +10,11 @@
 // functions become no-ops.
 
 // A river-point hit from the spatial hash (10 m buckets).
-typedef struct AzgaarRiverNearHit {
+struct AzgaarRiverNearHit {
     float wx, wz;   // world position of the river point
     u32   riverId;  // which river (section 32 id)
     float widthM;   // local ribbon width in metres
-} AzgaarRiverNearHit;
+};
 
 // Build the ribbon mesh + hash + wet-strip decals and upload the mesh.
 // No-op when the kill switch is set or there is no river geometry.

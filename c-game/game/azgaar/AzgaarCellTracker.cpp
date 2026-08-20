@@ -17,10 +17,16 @@ static void removed(void);
 // systems (zone banner, biome hints, encounters, ...) can react without each
 // running their own per-frame cell scan.
 System azgaarCellTrackerSystem = {
-    .name    = "azgaarCellTracker",
-    .added   = added,
-    .update  = update,
-    .removed = removed,
+    .name                = "azgaarCellTracker",
+    .added               = added,
+    .removed             = removed,
+    .preUpdate           = nullptr,
+    .update              = update,
+    .postUpdate          = nullptr,
+    .cpuElapsedLastFrame = 0.0,
+    .cpuElapsed          = 0.0,
+    .gpuElapsed          = 0.0,
+    .priority            = 0,
 };
 
 #define AZGAAR_CELL_ENTERED_SIGNAL "azgaarCellEntered"
@@ -58,14 +64,14 @@ static void update(void) {
     if (!playerGetPosition(playerPos)) return;
 
     // World meters -> Azgaar map pixels (map centre is the world origin; axes mirrored).
-    float invMpp = 1.0f / (float)world->metersPerPixel;
-    float mapX   = -playerPos[0] * invMpp + (float)world->widthPx  * 0.5f;
-    float mapY   = -playerPos[2] * invMpp + (float)world->heightPx * 0.5f;
+    float invMpp = 1.0f / static_cast<float>(world->metersPerPixel);
+    float mapX   = -playerPos[0] * invMpp + static_cast<float>(world->widthPx)  * 0.5f;
+    float mapY   = -playerPos[2] * invMpp + static_cast<float>(world->heightPx) * 0.5f;
 
     // Lazy + safe cache of the re-sample threshold from the world's own metrics.
     if (moveThresholdPx <= 0.0f && world->packCellCount > 0u) {
-        float area    = (float)world->widthPx * (float)world->heightPx;
-        float spacing = sqrtf(area / (float)world->packCellCount);
+        float area    = static_cast<float>(world->widthPx) * static_cast<float>(world->heightPx);
+        float spacing = sqrtf(area / static_cast<float>(world->packCellCount));
         moveThresholdPx = spacing * AZGAAR_MOVE_RESAMPLE_FRACTION;
         if (moveThresholdPx < 1.0f) moveThresholdPx = 1.0f;
     }
@@ -90,7 +96,7 @@ static void update(void) {
         lastPackCellIndex = packCellIndex;
         initialized       = true;
 
-        payload = (AzgaarCellEvent){
+        payload = AzgaarCellEvent{
             .world         = world,
             .packCellIndex = packCellIndex,
             .zone          = zone,

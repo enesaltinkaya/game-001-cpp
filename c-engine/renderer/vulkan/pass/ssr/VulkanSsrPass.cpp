@@ -41,12 +41,16 @@ static void clearReflectionColor(VulkanCommand *cmd, VulkanImage *reflColor) {
 }
 
 System vulkanSsrPass = {
-    .name       = "ssr",
-    .added      = added,
-    .preUpdate  = preUpdate,
-    .update     = update,
-    .postUpdate = postUpdate,
-    .removed    = removed,
+    .name                = "ssr",
+    .added               = added,
+    .removed             = removed,
+    .preUpdate           = preUpdate,
+    .update              = update,
+    .postUpdate          = postUpdate,
+    .cpuElapsedLastFrame = 0.0,
+    .cpuElapsed          = 0.0,
+    .gpuElapsed          = 0.0,
+    .priority            = 0,
 };
 
 typedef struct SsrPushConstants {

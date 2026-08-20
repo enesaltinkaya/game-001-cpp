@@ -63,9 +63,9 @@ void gameStateSetLoadedAnimationsScene(Scene* scene) {
 // ── Registration ─────────────────────────────────────────────────────────────
 
 void gameStateRegisterInternal(GameState state, StateCallbacks callbacks) {
-    if (state >= STATE_TABLE_SIZE) {
+    if (static_cast<int>(state) >= STATE_TABLE_SIZE) {
         error("gameStateRegisterInternal: state %d out of bounds (max %d)",
-              state,
+              static_cast<int>(state),
               STATE_TABLE_SIZE - 1);
         return;
     }
@@ -77,32 +77,32 @@ void gameStateRegisterInternal(GameState state, StateCallbacks callbacks) {
 void gameStateInit(void) {
     transitionProgress      = 1.0f;
     gameplayLoadState       = GAMEPLAY_LOADED_NONE;
-    gameplayScene           = NULL;
-    gameplayAnimationsScene = NULL;
-    gameplayPlayerScene     = NULL;
+    gameplayScene           = nullptr;
+    gameplayAnimationsScene = nullptr;
+    gameplayPlayerScene     = nullptr;
 
     gameStateRegisterInternal(STATE_MAIN_MENU,
-                              (StateCallbacks){
+                              StateCallbacks{
                                   .enter  = gameStateMainMenuEnter,
                                   .exit   = gameStateMainMenuExit,
                                   .update = gameStateMainMenuUpdate,
                               });
 
     gameStateRegisterInternal(STATE_LOADING_AZGAAR,
-                              (StateCallbacks){
+                              StateCallbacks{
                                   .enter  = gameStateLoadingAzgaarEnter,
                                   .exit   = gameStateLoadingAzgaarExit,
                                   .update = gameStateLoadingAzgaarUpdate,
                               });
 
     gameStateRegisterInternal(STATE_GAMEPLAY,
-                              (StateCallbacks){
+                              StateCallbacks{
                                   .enter  = gameStateGameplayEnter,
                                   .exit   = gameStateGameplayExit,
                                   .update = gameStateGameplayUpdate,
                               });
 
-    testReentryActive = getenv("ENGINE_TEST_REENTRY") != NULL;
+    testReentryActive = getenv("ENGINE_TEST_REENTRY") != nullptr;
 
     signalSubscribe("rendererInitialized", gameStateRendererInitialized);
 }
@@ -112,7 +112,7 @@ static void gameStateSkipToLoading(void) {
 }
 
 static void gameStateRendererInitialized(void* _) {
-    (void)_;
+    static_cast<void>(_);
     // Auto-skip main menu for automated testing (screenshots, logs, etc.)
     if (getenv("ENGINE_SKIP_MAIN_MENU")) {
         futureTaskAddNoParam(500, gameStateSkipToLoading);
@@ -127,7 +127,7 @@ void gameStateTransition(GameState target) {
     // a transition into it is still in progress.  A double click on "Enter
     // World" used to re-run the loading state's enter() mid-transition:
     // systems were added to the ECS twice and the in-flight world load was
-    // torn down while async workers were still using it (SIGSEGV).
+    // torn down while async workers were still using it static_cast<SIGSEGV>(.)
     if (target == currentState) return;
 
     prevState          = currentState;
@@ -221,7 +221,7 @@ void gameStateLoadingAzgaarUpdate(void) {
 void gameStateGameplayEnter(void) {
     gameplayLoadState = GAMEPLAY_LOADED_READY;
     flyingCameraLoadForGameplay();
-    signalEmit("gameLoaded", NULL);
+    signalEmit("gameLoaded", nullptr);
     // playerSystem was already added during STATE_LOADING
     systemAdd(gameSystem.priority + 1, &characterSystem);
     systemAdd(gameSystem.priority + 1, &combatSystem);
@@ -251,15 +251,15 @@ void gameStateGameplayExit(void) {
     if (gameplayAnimationsScene) {
         rendererSceneDestroy(gameplayAnimationsScene);
         sceneDestroy(gameplayAnimationsScene);
-        gameplayAnimationsScene = NULL;
+        gameplayAnimationsScene = nullptr;
     }
     if (gameplayScene) {
         rendererSceneDestroy(gameplayScene);
         sceneDestroy(gameplayScene);
-        gameplayScene = NULL;
+        gameplayScene = nullptr;
     }
     // gameplayPlayerScene is owned by playerSystem; it cleans up itself.
-    gameplayPlayerScene = NULL;
+    gameplayPlayerScene = nullptr;
 
     // Free the world data retained for streaming during gameplay (also
     // detaches the heightmap and destroys grass/water/roads).

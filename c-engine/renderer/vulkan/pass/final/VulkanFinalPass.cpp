@@ -19,12 +19,16 @@ static void removed(void);
 static double elapsedGPU;
 
 System vulkanFinalPass = {
-    .name       = "final",
-    .added      = added,
-    .preUpdate  = preUpdate,
-    .update     = update,
-    .postUpdate = postUpdate,
-    .removed    = removed,
+    .name                = "final",
+    .added               = added,
+    .removed             = removed,
+    .preUpdate           = preUpdate,
+    .update              = update,
+    .postUpdate          = postUpdate,
+    .cpuElapsedLastFrame = 0.0,
+    .cpuElapsed          = 0.0,
+    .gpuElapsed          = 0.0,
+    .priority            = 0,
 };
 
 static VulkanPipe pipeline;

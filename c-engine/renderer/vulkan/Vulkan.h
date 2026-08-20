@@ -2,7 +2,7 @@
 
 struct VulkanCommand;
 
-typedef struct Vulkan {
+struct Vulkan {
     VkInstance instance;
     VkDevice device;
     VkPhysicalDevice physicalDevice;
@@ -14,8 +14,8 @@ typedef struct Vulkan {
     VkDebugUtilsMessengerEXT debugMessenger;
     struct VulkanCommand* currentCmd;  // current cmd in flight
     u32 graphicsFamilyIndex;
-    char skipFrame;
-} Vulkan;
+    bool skipFrame;
+};
 
 extern struct Vulkan vulkan;
 
@@ -26,7 +26,7 @@ void vulkanInit(void);
 void vulkanDestroy(void);
 void vulkanPostUpdate(void);
 
-void vulkanSetVsync(char vsync);
+void vulkanSetVsync(bool vsync);
 
 // Access pass profiling data (for stats GUI)
 struct VulkanProfile* vulkanGetPassProfiles(void);

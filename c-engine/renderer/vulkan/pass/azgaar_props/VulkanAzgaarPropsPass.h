@@ -26,7 +26,7 @@ typedef struct PropsVertex {
     uint32_t texId;      // 4 bytes — texture-array index (NO_PROPS_TEX = none)
     float color[3];      // 12 bytes — per-part colour (white = tintable)
 } PropsVertex;          // 72 bytes
-_Static_assert(sizeof(PropsVertex) == 72, "PropsVertex must be 72 bytes");
+static_assert(sizeof(PropsVertex) == 72, "PropsVertex must be 72 bytes");
 
 /*
  * VulkanAzgaarPropsPass
@@ -64,7 +64,7 @@ typedef struct PropInstance {
     u32   variant; // mesh-variant index within the species (0 for single-variant species)
 } PropInstance;
 
-_Static_assert(sizeof(PropInstance) == 44, "PropInstance must be 44 bytes");
+static_assert(sizeof(PropInstance) == 44, "PropInstance must be 44 bytes");
 
 // Per-(species, variant) mesh metadata, flattened to what the shader needs.
 // `indexOffset`/`indexCount` select this variant's sub-range of the merged mesh

@@ -10,10 +10,17 @@
 static void added(void);
 static void removed(void);
 
-struct System settingsGui = {
-    .name    = "settingsGui",
-    .added   = added,
-    .removed = removed,
+System settingsGui = {
+    .name                = "settingsGui",
+    .added               = added,
+    .removed             = removed,
+    .preUpdate           = nullptr,
+    .update              = nullptr,
+    .postUpdate          = nullptr,
+    .cpuElapsedLastFrame = 0.0,
+    .cpuElapsed          = 0.0,
+    .gpuElapsed          = 0.0,
+    .priority            = 0,
 };
 
 static void* document;
@@ -36,7 +43,7 @@ void added(void) {
 
 void removed(void) {
     rmlUnloadDocument(document);
-    document = NULL;
+    document = nullptr;
 }
 
 void settingsGuiHide(void) {
@@ -71,5 +78,5 @@ int showGraphicsSettings(void* _) {
 }
 
 char settingsGuiIsShowing(void) {
-    return document != NULL;
+    return document != nullptr;
 }

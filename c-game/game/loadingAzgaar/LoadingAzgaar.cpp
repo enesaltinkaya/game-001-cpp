@@ -29,21 +29,27 @@ static void added(void);
 static void removed(void);
 static void update(void);
 
-struct System loadingAzgaarSystem = {
-    .name    = "loadingAzgaar",
-    .added   = added,
-    .removed = removed,
-    .update  = update,
+System loadingAzgaarSystem = {
+    .name                = "loadingAzgaar",
+    .added               = added,
+    .removed             = removed,
+    .preUpdate           = nullptr,
+    .update              = update,
+    .postUpdate          = nullptr,
+    .cpuElapsedLastFrame = 0.0,
+    .cpuElapsed          = 0.0,
+    .gpuElapsed          = 0.0,
+    .priority            = 0,
 };
 
-typedef enum {
+enum AzgaarLoadStage {
     AZGAAR_LOAD_STAGE_MAP,
     AZGAAR_LOAD_STAGE_WORLD_DATA,
     AZGAAR_LOAD_STAGE_TERRAIN,
     AZGAAR_LOAD_STAGE_ANIMATIONS,
     AZGAAR_LOAD_STAGE_READY,
     AZGAAR_LOAD_STAGE_ERROR,
-} AzgaarLoadStage;
+};
 
 static const char* const stageTexts[] = {
     [AZGAAR_LOAD_STAGE_MAP]        = "Loading Azgaar map...",
@@ -98,19 +104,19 @@ static void emitAnimationsLoadedIfTerrainReady(void) {
     if (!loadedAnimationsScene) return;
 
     animationsSignalEmitted = 1;
-    signalEmit("animationsLoaded", NULL);
+    signalEmit("animationsLoaded", nullptr);
 }
 
 static void checkReady(void) {
     emitAnimationsLoadedIfTerrainReady();
     if (loadStage == AZGAAR_LOAD_STAGE_ANIMATIONS && loadedAnimationsScene &&
-        getPlayerScene() != NULL) {
+        getPlayerScene() != nullptr) {
         loadStage = AZGAAR_LOAD_STAGE_READY;
     }
 }
 
 static void azgaarAnimationsLoaded(Scene* scene, void* _) {
-    (void)_;
+    static_cast<void>(_);
     if (cancelled) {
         rendererSceneDestroy(scene);
         sceneDestroy(scene);
@@ -128,11 +134,11 @@ const char* loadingAzgaarStageText(void) {
 }
 
 const AzgaarWorld* loadingAzgaarGetWorld(void) {
-    return worldLoaded ? &azgaarWorld : NULL;
+    return worldLoaded ? &azgaarWorld : nullptr;
 }
 
 AzgaarHeightmapSource* loadingAzgaarGetHeightmapSource(void) {
-    return worldLoaded ? &azgaarHeightmapSrc : NULL;
+    return worldLoaded ? &azgaarHeightmapSrc : nullptr;
 }
 
 // ── Climate textures + terrain climate state (workstream A) ────────────
@@ -143,8 +149,8 @@ AzgaarHeightmapSource* loadingAzgaarGetHeightmapSource(void) {
 static void azgaarClimateDestroy(void) {
     if (climateBiomeColorImg.img) vulkanDestroyImage(&climateBiomeColorImg, VK_NULL_HANDLE);
     if (climateFieldImg.img) vulkanDestroyImage(&climateFieldImg, VK_NULL_HANDLE);
-    climateBiomeColorImg = (VulkanImage){0};
-    climateFieldImg      = (VulkanImage){0};
+    climateBiomeColorImg = VulkanImage{};
+    climateFieldImg      = VulkanImage{};
     // Clear the SceneBuffer slots so nothing samples stale (freed) pool
     // indices after the world is gone.
     vulkanResourceSetTerrainClimateTextures(0, 0);
@@ -172,7 +178,7 @@ static VulkanImage azgaarClimateUploadTexture(const char* name,
     vulkanCopy(.cmd        = cmd,
                .source.data = (void*)pixels,
                .target.img  = &img,
-               .size        = (u32)width * height * 4u);
+               .size        = static_cast<u32>(width) * height * 4u);
     vulkanTransition(cmd, &img, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
     vulkanTransientEnd(cmd, 1);
     return img;
@@ -181,7 +187,7 @@ static VulkanImage azgaarClimateUploadTexture(const char* name,
 static float azgaarEnvFloat(const char* name, float fallback) {
     const char* v = getenv(name);
     if (!v || !*v) return fallback;
-    float f = (float)atof(v);
+    float f = static_cast<float>(atof(v));
     return f;
 }
 
@@ -236,8 +242,8 @@ static void azgaarClimateUpload(const AzgaarWorld* world) {
     // Map bounds in world space: the terrain pass derives the map-UV (for
     // both climate textures) and the altitude rock band (worldMax.y) from
     // these.  azgaarMapToWorld centres the map at the world origin.
-    float halfW = (float)(world->widthPx * 0.5) * (float)world->metersPerPixel;
-    float halfH = (float)(world->heightPx * 0.5) * (float)world->metersPerPixel;
+    float halfW = static_cast<float>(world->widthPx * 0.5) * static_cast<float>(world->metersPerPixel);
+    float halfH = static_cast<float>(world->heightPx * 0.5) * static_cast<float>(world->metersPerPixel);
     vulkanResourceSetTerrainBounds(-halfW,
                                    -AZGAAR_OCEAN_DEPTH_METERS,
                                    -halfH,
@@ -333,7 +339,7 @@ static void azgaarHeightmapAttach(void) {
 
     // The initial window takes ~1.2 s to generate on the builder thread;
     // verify the grid-vs-source agreement once it is ready.
-    futureTaskAdd(4000, azgaarHeightmapVerifyGrid, NULL);
+    futureTaskAdd(4000, azgaarHeightmapVerifyGrid, nullptr);
 }
 
 // Free the tile data and clear the active pointer (the host struct itself is
@@ -343,13 +349,13 @@ static void azgaarHeightmapAttach(void) {
 // coordinates (grid vertices store the source value verbatim, so the
 // bilinear sampler must return it exactly). Catches coordinate-mapping bugs
 // in tile origin / grid spacing before GPU and physics phases build on top.
-typedef struct HmVerifyPoint {
+struct HmVerifyPoint {
     i32 tileX, tileZ;
     i32 texX, texZ;
-} HmVerifyPoint;
+};
 
 static void azgaarHeightmapVerifyGrid(void* _) {
-    (void)_;
+    static_cast<void>(_);
     HeightmapTerrain* ht = heightmapTerrainGetActive();
     if (!ht) {
         warn("azgaarHeightmap: verify skipped (no active heightmap terrain)");
@@ -366,9 +372,9 @@ static void azgaarHeightmapVerifyGrid(void* _) {
 
     int failures = 0;
     for (int i = 0; i < 5; ++i) {
-        float step = HEIGHTMAP_TILE_SIZE_M / (float)(HEIGHTMAP_TEX - 1);
-        float wx   = (float)points[i].tileX * HEIGHTMAP_TILE_SIZE_M + (float)points[i].texX * step;
-        float wz   = (float)points[i].tileZ * HEIGHTMAP_TILE_SIZE_M + (float)points[i].texZ * step;
+        float step = HEIGHTMAP_TILE_SIZE_M / static_cast<float>(HEIGHTMAP_TEX - 1);
+        float wx   = static_cast<float>(points[i].tileX) * HEIGHTMAP_TILE_SIZE_M + static_cast<float>(points[i].texX) * step;
+        float wz   = static_cast<float>(points[i].tileZ) * HEIGHTMAP_TILE_SIZE_M + static_cast<float>(points[i].texZ) * step;
 
         float yGrid = heightmapTerrainSample(ht, wx, wz);
         float ySrc  = azgaarHeightmapSrc.vtable.heightAt(&azgaarHeightmapSrc, wx, wz);
@@ -394,7 +400,7 @@ static void azgaarHeightmapVerifyGrid(void* _) {
 
 static void azgaarHeightmapDetach(void) {
     if (heightmapTerrainGetActive() == &loadHeightmap) {
-        heightmapTerrainSetActive(NULL);
+        heightmapTerrainSetActive(nullptr);
     }
     // Safe on a never-initialized host (zeroed struct: the drain loop exits
     // immediately).
@@ -407,8 +413,8 @@ void loadingAzgaarOnEnter(void) {
     enterTime = timer.timeSinceStart;
     loadStage = AZGAAR_LOAD_STAGE_MAP;
     loadingAzgaarReleaseWorld();  // free any previously retained world
-    azgaarWorld             = (AzgaarWorld){0};
-    loadedAnimationsScene   = NULL;
+    azgaarWorld             = AzgaarWorld{};
+    loadedAnimationsScene   = nullptr;
     animationsSignalEmitted = 0;
     keepAssetsOnExit        = 0;
 
@@ -418,7 +424,7 @@ void loadingAzgaarOnEnter(void) {
         return;
     }
     worldLoaded = true;
-    signalEmit("azgaarMapLoaded", NULL);
+    signalEmit("azgaarMapLoaded", nullptr);
     azgaarHeightmapSourceInit(&azgaarHeightmapSrc, &azgaarWorld, azgaarWorld.mapName);
 
     // Build the settlement building clusters and upload them to the
@@ -460,7 +466,7 @@ void loadingAzgaarOnEnter(void) {
 
     loadStage = AZGAAR_LOAD_STAGE_TERRAIN;
 
-    sceneLoadCb("models/animations.dat", azgaarAnimationsLoaded, NULL);
+    sceneLoadCb("models/animations.dat", azgaarAnimationsLoaded, nullptr);
 }
 
 void loadingAzgaarOnExit(void) {
@@ -470,7 +476,7 @@ void loadingAzgaarOnExit(void) {
         if (loadedAnimationsScene) {
             rendererSceneDestroy(loadedAnimationsScene);
             sceneDestroy(loadedAnimationsScene);
-            loadedAnimationsScene = NULL;
+            loadedAnimationsScene = nullptr;
         }
         // Cancel path: free the world now. On the gameplay path the world is
         // retained for streaming and released by gameplay teardown instead.
@@ -492,15 +498,15 @@ void removed(void) {
         if (loadedAnimationsScene) {
             rendererSceneDestroy(loadedAnimationsScene);
             sceneDestroy(loadedAnimationsScene);
-            loadedAnimationsScene = NULL;
+            loadedAnimationsScene = nullptr;
         }
         loadingAzgaarReleaseWorld();
     }
 
     rmlUnloadDocument(document);
-    document = NULL;
+    document = nullptr;
     rmlUnloadModel(model);
-    model = NULL;
+    model = nullptr;
 }
 
 // Use the player's saved position as-is. No snapping or height adjustment.
@@ -566,7 +572,7 @@ void update(void) {
             azgaarHeightmapAttach();
         }
         gameStateSetLoadedAnimationsScene(loadedAnimationsScene);
-        loadedAnimationsScene = NULL;
+        loadedAnimationsScene = nullptr;
         gameStateTransition(STATE_GAMEPLAY);
     }
 }

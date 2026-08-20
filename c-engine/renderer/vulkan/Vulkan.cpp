@@ -88,7 +88,7 @@ static void vulkanScreenshotPath(char* out, int outSize, int index) {
     // present, and append the shot index.
     char base[1024];
     snprintf(base, sizeof(base), "%s", screenshotPathBuf);
-    int baseLen = (int)strlen(base);
+    int baseLen = static_cast<int>(strlen(base));
     if (baseLen > 5 && !strncmp(base + baseLen - 5, ".jpeg", 5)) {
         base[baseLen - 5] = '\0';
     } else if (baseLen > 4 && !strncmp(base + baseLen - 4, ".jpg", 4)) {
@@ -133,16 +133,16 @@ static void vulkanDebugDumpFrameImages(const char* shotPath) {
 
     char base[1024];
     snprintf(base, sizeof(base), "%s", shotPath);
-    int baseLen = (int)strlen(base);
+    int baseLen = static_cast<int>(strlen(base));
     if (baseLen > 4 && !strncmp(base + baseLen - 4, ".jpg", 4)) {
         baseLen -= 4;
     }
     char path[1100];
 
-    char* saveptr = NULL;
+    char* saveptr = nullptr;
     for (char* tok = strtok_r(dumpNames, ",", &saveptr); tok;
-         tok = strtok_r(NULL, ",", &saveptr)) {
-        VulkanImage* img = NULL;
+         tok = strtok_r(nullptr, ",", &saveptr)) {
+        VulkanImage* img = nullptr;
         if (!strcmp(tok, "velocity")) {
             img = vulkanFrameResourcesGetVelocity();
         } else if (!strcmp(tok, "depth")) {
@@ -258,13 +258,13 @@ static void vulkanDestroyDelayed(void* _) {
     }
     arrayFree(passProfiles);
     vulkanDestroyProfile(&overallProfile);
-    vkDestroySurfaceKHR(vulkan.instance, vulkan.surface, NULL);
+    vkDestroySurfaceKHR(vulkan.instance, vulkan.surface, nullptr);
     vmaDestroyAllocator(vulkan.vmaAllocator);
-    vkDestroyDevice(vulkan.device, NULL);
+    vkDestroyDevice(vulkan.device, nullptr);
     if (isDebug()) {
         vkDestroyDebugUtilsMessengerEXT(vulkan.instance, vulkan.debugMessenger, 0);
     }
-    vkDestroyInstance(vulkan.instance, NULL);
+    vkDestroyInstance(vulkan.instance, nullptr);
 }
 
 void vulkanDestroy(void) {
@@ -348,7 +348,7 @@ void vulkanPostUpdate(void) {
                 passGpuAccumCount++;
             }
             if (passGpuLogFrame == 1200) {
-                info("pass-gpu: total=%.2f ms (avg of %u frames) fps=%.1f", passGpuAccumTotal / passGpuAccumCount / MILLION, (u32)passGpuAccumCount, timer.fps);
+                info("pass-gpu: total=%.2f ms (avg of %u frames) fps=%.1f", passGpuAccumTotal / passGpuAccumCount / MILLION, static_cast<u32>(passGpuAccumCount), timer.fps);
                 for (size_t i = 0; i < n; i++) {
                     info("pass-gpu:   %-20s %6.2f", renderer.passes[i]->name, passGpuAccum[i] / passGpuAccumCount / MILLION);
                 }
@@ -367,12 +367,12 @@ void vulkanPostUpdate(void) {
     // so temporal artifacts (e.g. TAA shimmer) are visible across the
     // sequence.
     VulkanBuffer screenshotReadback = {};
-    VulkanImage* screenshotImg      = NULL;
+    VulkanImage* screenshotImg      = nullptr;
     char         shotPath[1024]     = {};
     char         screenshotRecorded = 0;
     if (screenshotArmed && !vulkan.skipFrame && screenshotIndex < screenshotCount) {
         screenshotImg = vulkanSwapchain.currentSwapchainImage;
-        vulkanScreenshotPath(shotPath, (int)sizeof(shotPath), screenshotIndex + 1);
+        vulkanScreenshotPath(shotPath, static_cast<int>(sizeof(shotPath)), screenshotIndex + 1);
         vulkanScreenshotRecord(screenshotImg, &screenshotReadback);
         screenshotRecorded = screenshotReadback.buf != 0;
     }
@@ -382,7 +382,7 @@ void vulkanPostUpdate(void) {
     if (screenshotRecorded) {
         vulkanSwapchainWaitCurrentFlight();
         vulkanScreenshotWriteJpg(&screenshotReadback, screenshotImg, shotPath);
-        vulkanDestroyBuffer(&screenshotReadback, NULL);
+        vulkanDestroyBuffer(&screenshotReadback, nullptr);
         vulkanDebugDumpFrameImages(shotPath);
         screenshotIndex++;
         if (screenshotIndex >= screenshotCount) {
@@ -425,7 +425,7 @@ void initInstance(void) {
     bool hasValidationLayers       = false;
     if (isDebug()) {
         u32 layerCount = 0;
-        vkEnumerateInstanceLayerProperties(&layerCount, NULL);
+        vkEnumerateInstanceLayerProperties(&layerCount, nullptr);
         Array(VkLayerProperties) layerProps = {};
         arraySetSize(layerProps, layerCount);
         if (layerCount > 0) {
@@ -444,7 +444,7 @@ void initInstance(void) {
         }
     }
 
-    if (vkCreateInstance(&instanceCreateInfo, NULL, &vulkan.instance) != VK_SUCCESS) {
+    if (vkCreateInstance(&instanceCreateInfo, nullptr, &vulkan.instance) != VK_SUCCESS) {
         terminate("vulkanCore: failed to initialize vulkan instance!");
     }
 
@@ -461,7 +461,7 @@ void initInstance(void) {
         messengerInfo.pfnUserCallback = vulkanValidationLog;
         vkCreateDebugUtilsMessengerEXT(vulkan.instance,
                                        &messengerInfo,
-                                       NULL,
+                                       nullptr,
                                        &vulkan.debugMessenger);
     }
 }
@@ -471,7 +471,7 @@ void initPhysicalDevice(void) {
     // vulkanSelectDeviceGui();
 
     u32 deviceCount = 0;
-    vkEnumeratePhysicalDevices(vulkan.instance, &deviceCount, NULL);
+    vkEnumeratePhysicalDevices(vulkan.instance, &deviceCount, nullptr);
     if (deviceCount == 0) {
         terminate("vulkanCore: could not find any GPUs with vulkan support!");
     }
@@ -524,11 +524,11 @@ void initLogicalDevice(void) {
     // Safe to do unconditionally — the extension is only present on AMD GPUs,
     // and we only request it when the physical device reports availability.
     u32 extCount = 0;
-    vkEnumerateDeviceExtensionProperties(vulkan.physicalDevice, NULL, &extCount, NULL);
+    vkEnumerateDeviceExtensionProperties(vulkan.physicalDevice, NULL, &extCount, nullptr);
     Array(VkExtensionProperties) exts = {};
     if (extCount > 0) {
         arraySetSize(exts, extCount);
-        vkEnumerateDeviceExtensionProperties(vulkan.physicalDevice, NULL, &extCount, exts);
+        vkEnumerateDeviceExtensionProperties(vulkan.physicalDevice, nullptr, &extCount, exts);
         for (u32 i = 0; i < extCount; i++) {
             if (strcmp(exts[i].extensionName, VK_AMD_DEVICE_COHERENT_MEMORY_EXTENSION_NAME) == 0) {
                 arrayPut(extensions, VK_AMD_DEVICE_COHERENT_MEMORY_EXTENSION_NAME);
@@ -539,7 +539,7 @@ void initLogicalDevice(void) {
     arrayFree(exts);
 
     u32 queueFamilyCount = 0;
-    vkGetPhysicalDeviceQueueFamilyProperties(vulkan.physicalDevice, &queueFamilyCount, NULL);
+    vkGetPhysicalDeviceQueueFamilyProperties(vulkan.physicalDevice, &queueFamilyCount, nullptr);
     Array(VkQueueFamilyProperties) queueFamilyProperties = {};
     arraySetSize(queueFamilyProperties, queueFamilyCount);
     vkGetPhysicalDeviceQueueFamilyProperties(vulkan.physicalDevice,
@@ -690,7 +690,7 @@ void initLogicalDevice(void) {
     deviceCreateInfo.enabledExtensionCount   = arraySize(extensions);
     deviceCreateInfo.ppEnabledExtensionNames = extensions;
     VkResult result =
-        vkCreateDevice(vulkan.physicalDevice, &deviceCreateInfo, NULL, &vulkan.device);
+        vkCreateDevice(vulkan.physicalDevice, &deviceCreateInfo, nullptr, &vulkan.device);
     if (result != VK_SUCCESS) {
         terminate("vulkanCore: failed to create logical device! code: %d", result);
     }
@@ -700,7 +700,7 @@ void initLogicalDevice(void) {
     vkGetDeviceQueue(vulkan.device, graphicsFamily, 0, &vulkan.graphicsQueue);
     vulkan.graphicsFamilyIndex = graphicsFamily;
     if (isDebug()) {
-        vulkanUtilsSetName((u64)vulkan.graphicsQueue, VK_OBJECT_TYPE_QUEUE, "queue graphics");
+        vulkanUtilsSetName(reinterpret_cast<u64>(vulkan.graphicsQueue), VK_OBJECT_TYPE_QUEUE, "queue graphics");
     }
 
     arrayFree(queueFamilyProperties);
@@ -941,7 +941,7 @@ char checkOtherGpus(Array(VkPhysicalDevice) devices) {
     return 0;
 }
 
-void vulkanSetVsync(char vsync) {
+void vulkanSetVsync(bool vsync) {
     (void)vsync;
     vulkanSwapchainRecreate();
 }

@@ -9,7 +9,7 @@
 
 // ── State ───────────────────────────────────────────────────────────────────
 
-static const AzgaarWorld* g_world       = NULL;
+static const AzgaarWorld* g_world       = nullptr;
 static bool g_initialized               = false;
 static bool g_debug                     = false;
 static AzgaarWeatherCondition g_forced  = AZGAAR_WEATHER_NONE;  // env override
@@ -49,9 +49,9 @@ static void setVec4(vec4 dst, float x, float y, float z, float w) {
 // value feeds the weather particles, the props sway and the water ripples.
 static void updateGust(double t) {
     float deg = (g_world && g_world->winds[0] != 0.0f) ? g_world->winds[0] : 45.0f;
-    float ang = deg * (float)M_PI / 180.0f + 0.12f * sinf((float)t * 0.05f + 1.3f);
-    float g1  = 0.5f + 0.5f * sinf((float)t * 0.13f);
-    float g2  = 0.5f + 0.5f * sinf((float)t * 0.071f + 2.1f);
+    float ang = deg * static_cast<float>(M_PI) / 180.0f + 0.12f * sinf(static_cast<float>(t) * 0.05f + 1.3f);
+    float g1  = 0.5f + 0.5f * sinf(static_cast<float>(t) * 0.13f);
+    float g2  = 0.5f + 0.5f * sinf(static_cast<float>(t) * 0.071f + 2.1f);
     g_gustDirX  = cosf(ang);
     g_gustDirZ  = sinf(ang);
     g_gustSpeed = 3.5f * (0.75f + 0.25f * (0.6f * g1 + 0.4f * g2));
@@ -79,10 +79,10 @@ static AzgaarWeatherCondition sampleCondition(float camX, float camZ) {
     if (!g_world) return AZGAAR_WEATHER_NONE;
 
     AzgaarClimateSample s = {};
-    float mpp = (float)g_world->metersPerPixel;
+    float mpp = static_cast<float>(g_world->metersPerPixel);
     if (mpp <= 0.0f) mpp = 1.0f;
-    float mapX = (float)g_world->widthPx * 0.5f - camX / mpp;
-    float mapY = (float)g_world->heightPx * 0.5f - camZ / mpp;
+    float mapX = static_cast<float>(g_world->widthPx) * 0.5f - camX / mpp;
+    float mapY = static_cast<float>(g_world->heightPx) * 0.5f - camZ / mpp;
     azgaarWorldSampleClimate(g_world, mapX, mapY, &s);
 
     if (s.temperature < -1.0f) return AZGAAR_WEATHER_SNOW;
@@ -122,10 +122,10 @@ static void buildTarget(AzgaarWeatherCondition c, float camX, float camZ) {
             // Dust is tinted by the local biome colour (desert sand).
             float biome[3] = {0.76f, 0.66f, 0.46f};
             if (g_world) {
-                float mpp = (float)g_world->metersPerPixel;
+                float mpp = static_cast<float>(g_world->metersPerPixel);
                 if (mpp <= 0.0f) mpp = 1.0f;
-                float mapX = (float)g_world->widthPx * 0.5f - camX / mpp;
-                float mapY = (float)g_world->heightPx * 0.5f - camZ / mpp;
+                float mapX = static_cast<float>(g_world->widthPx) * 0.5f - camX / mpp;
+                float mapY = static_cast<float>(g_world->heightPx) * 0.5f - camZ / mpp;
                 azgaarWorldSampleBiomeColorSmooth(g_world, mapX, mapY, biome);
             }
             setVec4(t.tint, biome[0], biome[1], biome[2], 0.0f);
@@ -156,7 +156,7 @@ void azgaarWeatherInit(const AzgaarWorld* world) {
     azgaarWeatherDestroy();
 
     g_world       = world;
-    g_debug       = getenv("ENGINE_AZGAAR_WEATHER_DEBUG") != NULL;
+    g_debug       = getenv("ENGINE_AZGAAR_WEATHER_DEBUG") != nullptr;
     g_forced      = AZGAAR_WEATHER_NONE;
     g_forcedActive = false;
 
@@ -166,7 +166,7 @@ void azgaarWeatherInit(const AzgaarWorld* world) {
     if (forcedEnv && *forcedEnv) {
         int v = atoi(forcedEnv);
         if (v >= 0 && v <= 4) {
-            g_forced       = (AzgaarWeatherCondition)v;
+            g_forced       = static_cast<AzgaarWeatherCondition>(v);
             g_forcedActive = true;
         }
     }
@@ -194,13 +194,13 @@ void azgaarWeatherInit(const AzgaarWorld* world) {
 }
 
 void azgaarWeatherUpdate(float camX, float camY, float camZ) {
-    (void)camY;
+    static_cast<void>(camY);
     if (!g_initialized) return;
 
     // timer.timeSinceStart counts NANOseconds; everything below (gust
     // sines, dt clamp, 500 ms sampling) assumes seconds.
     double now = timer.timeSinceStart / BILLION;
-    float dt = (float)(now - g_lastFrameTime);
+    float dt = static_cast<float>(now - g_lastFrameTime);
     g_lastFrameTime = now;
     if (dt < 0.0f) dt = 0.0f;
     if (dt > 0.1f) dt = 0.1f;
@@ -279,10 +279,10 @@ void azgaarWeatherUpdate(float camX, float camY, float camZ) {
             info("azgaarWeather: cond=%s types=(%.2f %.2f %.2f %.2f) dens=%.2f "
                  "opac=%.2f wind=(%.2f %.2f @ %.1f m/s)",
                  conditionName(g_condition),
-                 (double)cur.types[0], (double)cur.types[1],
-                 (double)cur.types[2], (double)cur.types[3],
-                 (double)cur.params[2], (double)cur.look[0],
-                 (double)cur.wind[0], (double)cur.wind[1], (double)cur.wind[2]);
+                 static_cast<double>(cur.types[0]), static_cast<double>(cur.types[1]),
+                 static_cast<double>(cur.types[2]), static_cast<double>(cur.types[3]),
+                 static_cast<double>(cur.params[2]), static_cast<double>(cur.look[0]),
+                 static_cast<double>(cur.wind[0]), static_cast<double>(cur.wind[1]), static_cast<double>(cur.wind[2]));
         }
     }
 }
@@ -298,7 +298,7 @@ void azgaarWeatherDestroy(void) {
     };
     vulkanResourceSetWeather(&defaultWeather);
     g_initialized = false;
-    g_world = NULL;
+    g_world = nullptr;
     g_condition = AZGAAR_WEATHER_NONE;
     g_reseeded = false;
 }

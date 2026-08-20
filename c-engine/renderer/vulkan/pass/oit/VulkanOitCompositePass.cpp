@@ -15,12 +15,16 @@ static double     elapsedCPU;
 static double     elapsedGPU;
 
 System vulkanOitCompositePass = {
-    .name       = "oit_composite",
-    .added      = added,
-    .preUpdate  = preUpdate,
-    .update     = update,
-    .postUpdate = postUpdate,
-    .removed    = removed,
+    .name                = "oit_composite",
+    .added               = added,
+    .removed             = removed,
+    .preUpdate           = preUpdate,
+    .update              = update,
+    .postUpdate          = postUpdate,
+    .cpuElapsedLastFrame = 0.0,
+    .cpuElapsed          = 0.0,
+    .gpuElapsed          = 0.0,
+    .priority            = 0,
 };
 
 typedef struct OitCompositePushConstants {

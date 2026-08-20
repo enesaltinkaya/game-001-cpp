@@ -43,11 +43,17 @@ static RendererAASettings aaSettings     = {
 static TonemapMode tonemapMode = TONEMAP_AGX_PUNCHY;
 static float renderScale       = 1.0f;
 
-struct System renderSystem = {
-    .name       = "renderer",
-    .added      = added,
-    .removed    = removed,
-    .postUpdate = postUpdate,
+System renderSystem = {
+    .name                = "renderer",
+    .added               = added,
+    .removed             = removed,
+    .preUpdate           = nullptr,
+    .update              = nullptr,
+    .postUpdate          = postUpdate,
+    .cpuElapsedLastFrame = 0.0,
+    .cpuElapsed          = 0.0,
+    .gpuElapsed          = 0.0,
+    .priority            = 0,
 };
 
 void added(void) {
@@ -62,7 +68,7 @@ void added(void) {
     /* taaEnabled is authoritative for TAA; a stale aaMode value must not
      * re-enable it. */
     rendererSetAAMode(settingsGetBool("taaEnabled") ? AA_TAA : AA_OFF);
-    rendererSetAASettings((RendererAASettings){
+    rendererSetAASettings(RendererAASettings{
         .casStrength = (float)(settingsGetDouble("aaCasStrength") / 100.0),
         .taaWeight   = (float)settingsGetDouble("taaWeight"),
         .taaGhost    = (float)settingsGetDouble("taaGhost"),
@@ -100,7 +106,7 @@ void added(void) {
     }
 
     debug("renderer: renderer bridge initialized");
-    signalEmit("rendererInitialized", NULL);
+    signalEmit("rendererInitialized", nullptr);
 }
 
 void removed(void) {
@@ -129,7 +135,7 @@ void rendererWaitIdle(const char* reason) {
     vulkanWaitIdle(reason);
 }
 
-void rendererSetVsync(char vsync) {
+void rendererSetVsync(bool vsync) {
     vulkanSetVsync(vsync);
 }
 
@@ -145,7 +151,7 @@ AAMode rendererGetAAMode(void) {
     return aaMode;
 }
 
-char rendererIsTAAEnabled(void) {
+bool rendererIsTAAEnabled(void) {
     return aaMode == AA_TAA;
 }
 
@@ -182,17 +188,17 @@ RendererUpscalerMode rendererGetUpscalerMode(void) {
     return upscalerMode;
 }
 
-char rendererIsUpscalerEnabled(void) {
+bool rendererIsUpscalerEnabled(void) {
     return upscalerMode != RENDERER_UPSCALER_OFF;
 }
 
-void rendererUploadTexture(Texture* texture, char nonColor, char genMips) {
+void rendererUploadTexture(Texture* texture, bool nonColor, bool genMips) {
     if (!vulkan.device) return;  // vulkan not initialized yet
     vulkanLoadTexture(texture, nonColor, genMips);
 }
 
 void rendererDestroyTexture(Texture* texture) {
-    vulkanDestroyImage(static_cast<VulkanImage*>(texture->backendImg), NULL);
+    vulkanDestroyImage(static_cast<VulkanImage*>(texture->backendImg), nullptr);
 }
 
 void rendererUploadMaterial(Material* material) {

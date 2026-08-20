@@ -2,22 +2,22 @@
 
 extern struct System renderSystem;
 
-typedef struct Material Material;
-typedef struct Texture Texture;
-typedef struct Mesh Mesh;
-typedef struct Skin Skin;
-typedef struct Camera Camera;
-typedef struct GpuLight GpuLight;
-typedef struct DirectionalLightUbo DirectionalLightUbo;
-typedef struct LightUbo LightUbo;
-typedef struct Transform Transform;
-typedef struct Scene Scene;
+struct Material;
+struct Texture;
+struct Mesh;
+struct Skin;
+struct Camera;
+struct GpuLight;
+struct DirectionalLightUbo;
+struct LightUbo;
+struct Transform;
+struct Scene;
 
-typedef struct RendererSunLight {
+struct RendererSunLight {
     vec3 direction;
     vec3 color;
     float angularRadius;
-} RendererSunLight;
+};
 
 #define MAX_MATERIALS 256
 #define MAX_JOINTS 80
@@ -37,7 +37,7 @@ typedef struct RendererSunLight {
 #define IBL_SPEC_INTENSITY 0.5
 #define CONTRAST 1.0
 
-typedef struct Renderer {
+struct Renderer {
     Array(struct System*) passes;
     u32 drawCalls;
     u32 instanceCount;
@@ -45,7 +45,7 @@ typedef struct Renderer {
     double rendererElapsedCpu;
     double rendererElapsedGpu;
     int flightIndex;
-} Renderer;
+};
 
 extern struct Renderer renderer;
 
@@ -62,7 +62,7 @@ extern struct Renderer renderer;
  */
 
 void rendererWaitIdle(const char* reason);
-void rendererSetVsync(char vsync);
+void rendererSetVsync(bool vsync);
 
 typedef enum AAMode {
     AA_OFF = 0,
@@ -75,14 +75,14 @@ typedef enum AAMode {
  * forces TAA off. */
 void rendererSetAAMode(AAMode mode);
 AAMode rendererGetAAMode(void);
-char rendererIsTAAEnabled(void);
+bool rendererIsTAAEnabled(void);
 
-typedef struct RendererAASettings {
+struct RendererAASettings {
     float casStrength;
     float taaWeight;      // temporal blend factor (0.5–0.95, default 0.9)
     float taaGhost;       // color ghost rejection threshold (0.3–1.0, default 1.0)
     float taaDepth;       // temporal depth rejection threshold (0.01–0.5, default 0.06)
-} RendererAASettings;
+};
 
 void rendererSetAASettings(RendererAASettings settings);
 RendererAASettings rendererGetAASettings(void);
@@ -103,7 +103,7 @@ typedef enum RendererUpscalerMode {
 // upscaler
 void rendererSetUpscalerMode(RendererUpscalerMode mode);
 RendererUpscalerMode rendererGetUpscalerMode(void);
-char rendererIsUpscalerEnabled(void);
+bool rendererIsUpscalerEnabled(void);
 
 // render scale
 float rendererNormalizeRenderScale(float scale);
@@ -114,7 +114,7 @@ void rendererApplyRenderScale(void);
 
 /////////////////////
 /// resource lifetime
-void rendererUploadTexture(Texture* texture, char nonColor, char genMips);
+void rendererUploadTexture(Texture* texture, bool nonColor, bool genMips);
 void rendererDestroyTexture(Texture* texture);
 
 void rendererUploadMaterial(Material* material);

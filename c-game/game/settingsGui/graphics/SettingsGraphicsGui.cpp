@@ -24,10 +24,17 @@ static void applyUpscalerModeLater(void* _);
 static void flushPendingTasks(void);
 static void renderScaleApply(void* _);
 
-struct System settingsGraphicsGui = {
-    .name    = "settingsGraphicsGui",
-    .added   = added,
-    .removed = removed,
+System settingsGraphicsGui = {
+    .name                = "settingsGraphicsGui",
+    .added               = added,
+    .removed             = removed,
+    .preUpdate           = nullptr,
+    .update              = nullptr,
+    .postUpdate          = nullptr,
+    .cpuElapsedLastFrame = 0.0,
+    .cpuElapsed          = 0.0,
+    .gpuElapsed          = 0.0,
+    .priority            = 0,
 };
 
 static void* document;
@@ -143,8 +150,8 @@ void removed(void) {
     flushPendingTasks();
     rmlUnloadDocument(document);
     rmlUnloadModel(model);
-    document = NULL;
-    model    = NULL;
+    document = nullptr;
+    model    = nullptr;
 }
 
 static void syncAAUi(void) {
@@ -200,8 +207,8 @@ static void persistAASettings(void* _) {
     aaSettings = rendererGetAASettings();
     syncAAUi();
 
-    settingsSetDouble("aaMode", (double)AA_OFF);
-    settingsSetDouble("aaCasStrength", (double)casStrengthPercent);
+    settingsSetDouble("aaMode", static_cast<double>(AA_OFF));
+    settingsSetDouble("aaCasStrength", static_cast<double>(casStrengthPercent));
     settingsWrite();
 
     if (model) {
@@ -213,7 +220,7 @@ static void queueAAPersist(void) {
     if (aaTaskKey != -1) {
         futureTaskRemove(aaTaskKey);
     }
-    aaTaskKey = futureTaskAdd(500, persistAASettings, NULL);
+    aaTaskKey = futureTaskAdd(500, persistAASettings, nullptr);
 }
 
 static void applyUpscalerModeLater(void* _) {
@@ -230,7 +237,7 @@ static void applyUpscalerModeLater(void* _) {
     upscalerMode = rendererGetUpscalerMode();
     syncAAUi();
 
-    settingsSetDouble("upscalerMode", (double)upscalerMode);
+    settingsSetDouble("upscalerMode", static_cast<double>(upscalerMode));
     /* Enabling the upscaler forces TAA off; persist that so TAA does not
      * silently re-enable itself after a restart. */
     settingsSetBool("taaEnabled", rendererIsTAAEnabled());
@@ -246,26 +253,26 @@ static void applyUpscalerModeLater(void* _) {
 int upscalerPrev(void* _) {
     int cur      = (int)upscalerMode;
     cur          = (cur + RENDERER_UPSCALER_COUNT - 1) % RENDERER_UPSCALER_COUNT;
-    upscalerMode = (RendererUpscalerMode)cur;
+    upscalerMode = static_cast<RendererUpscalerMode>(cur);
     syncAAUi();
     rmlUpdateDirtyAll(model);
     if (upscalerTaskKey != -1) {
         futureTaskRemove(upscalerTaskKey);
     }
-    upscalerTaskKey = futureTaskAdd(500, applyUpscalerModeLater, NULL);
+    upscalerTaskKey = futureTaskAdd(500, applyUpscalerModeLater, nullptr);
     return 0;
 }
 
 int upscalerNext(void* _) {
     int cur      = (int)upscalerMode;
     cur          = (cur + 1) % RENDERER_UPSCALER_COUNT;
-    upscalerMode = (RendererUpscalerMode)cur;
+    upscalerMode = static_cast<RendererUpscalerMode>(cur);
     syncAAUi();
     rmlUpdateDirtyAll(model);
     if (upscalerTaskKey != -1) {
         futureTaskRemove(upscalerTaskKey);
     }
-    upscalerTaskKey = futureTaskAdd(500, applyUpscalerModeLater, NULL);
+    upscalerTaskKey = futureTaskAdd(500, applyUpscalerModeLater, nullptr);
     return 0;
 }
 
@@ -285,7 +292,7 @@ static void renderScaleApply(void* _) {
     float requestedScale = renderScalePercent / 100.0f;
     float appliedScale   = rendererNormalizeRenderScale(requestedScale);
     char scaleChanged    = rendererGetRenderScale() != appliedScale;
-    char settingsChanged = settingsGetDouble("renderScale") != (double)appliedScale;
+    char settingsChanged = settingsGetDouble("renderScale") != static_cast<double>(appliedScale);
 
     renderScalePercent = appliedScale * 100.0f;
 
@@ -294,7 +301,7 @@ static void renderScaleApply(void* _) {
         rendererApplyRenderScale();
     }
     if (settingsChanged) {
-        settingsSetDouble("renderScale", (double)appliedScale);
+        settingsSetDouble("renderScale", static_cast<double>(appliedScale));
         settingsWrite();
     }
     if (model) {
@@ -312,7 +319,7 @@ int renderScaleChange(void* _) {
     }
     /* Give the bound model value time to update, then debounce expensive
      * render-target recreation until the slider settles. */
-    renderScaleTaskKey = futureTaskAdd(500, renderScaleApply, NULL);
+    renderScaleTaskKey = futureTaskAdd(500, renderScaleApply, nullptr);
     return 0;
 }
 
@@ -324,15 +331,15 @@ static void flushPendingTasks(void) {
      * are not reset by the recreate. */
     if (upscalerTaskKey != -1) {
         futureTaskRemove(upscalerTaskKey);
-        applyUpscalerModeLater(NULL);
+        applyUpscalerModeLater(nullptr);
     }
     if (renderScaleTaskKey != -1) {
         futureTaskRemove(renderScaleTaskKey);
-        renderScaleApply(NULL);
+        renderScaleApply(nullptr);
     }
     if (aaTaskKey != -1) {
         futureTaskRemove(aaTaskKey);
-        persistAASettings(NULL);
+        persistAASettings(nullptr);
     }
 }
 
@@ -365,7 +372,7 @@ static void persistEffectSettings(void) {
     settingsSetBool("ssrDisabled", vulkanSsrPassIsDisabled());
     settingsSetBool("bloomDisabled", vulkanBloomPassIsDisabled());
     settingsSetBool("contactShadowDisabled", vulkanContactShadowPassIsDisabled());
-    settingsSetDouble("fogMode", (double)fogMode);
+    settingsSetDouble("fogMode", static_cast<double>(fogMode));
     settingsWrite();
 
     /* Apply fog mode to engine */
@@ -440,7 +447,7 @@ int toggleTaa(void* _) {
     syncAAUi();
     rmlUpdateDirtyAll(model);
     settingsSetBool("taaEnabled", rendererIsTAAEnabled());
-    settingsSetDouble("upscalerMode", (double)upscalerMode);
+    settingsSetDouble("upscalerMode", static_cast<double>(upscalerMode));
     settingsWrite();
     return 0;
 }

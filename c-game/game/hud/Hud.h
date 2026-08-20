@@ -1,6 +1,6 @@
 #pragma once
 
-typedef struct System System;
+struct System;
 
 extern System hud;
 

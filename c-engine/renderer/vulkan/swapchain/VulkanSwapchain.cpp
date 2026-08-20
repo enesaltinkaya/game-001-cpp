@@ -12,11 +12,11 @@
 #include "renderer/vulkan/resources/VulkanResourceManager.h"
 #include "settings/Settings.h"
 
-typedef struct FlightItem {
+struct FlightItem {
     VkCommandPool pool;
     struct VulkanCommand cmd;
     VkSemaphore acquired;
-} FlightItem;
+};
 
 static Array(struct FlightItem) flightItems;
 
@@ -43,27 +43,27 @@ void vulkanSwapchainInit(void) {
 }
 
 void vulkanSwapchainDestroy(void) {
-    vulkan.currentCmd = NULL;
+    vulkan.currentCmd = nullptr;
     for (i32 i = 0, si = FRAMES_IN_FLIGHT; i < si; i++) {
         struct FlightItem* item = &flightItems[i];
-        vkDestroyCommandPool(vulkan.device, item->pool, NULL);
-        vkDestroyFence(vulkan.device, item->cmd.fence, NULL);
-        vkDestroySemaphore(vulkan.device, item->acquired, NULL);
+        vkDestroyCommandPool(vulkan.device, item->pool, nullptr);
+        vkDestroyFence(vulkan.device, item->cmd.fence, nullptr);
+        vkDestroySemaphore(vulkan.device, item->acquired, nullptr);
 
-        item->cmd.cmd = NULL;
+        item->cmd.cmd = nullptr;
     }
     arrayFree(flightItems);
 
     foreach (VkSemaphore semaphore, submitSemaphores) {
-        vkDestroySemaphore(vulkan.device, semaphore, NULL);
+        vkDestroySemaphore(vulkan.device, semaphore, nullptr);
     }
     arrayFree(submitSemaphores);
 
     foreachptr(struct VulkanImage * img, swapchainImages) {
-        vkDestroyImageView(vulkan.device, img->view, NULL);
+        vkDestroyImageView(vulkan.device, img->view, nullptr);
     }
 
-    vkDestroySwapchainKHR(vulkan.device, swapchain, NULL);
+    vkDestroySwapchainKHR(vulkan.device, swapchain, nullptr);
     arrayFree(swapchainImages);
 }
 
@@ -79,7 +79,7 @@ void vulkanSwapchainBegin(void) {
 
     {
         static int hitchOn = -1;
-        if (hitchOn < 0) hitchOn = getenv("ENGINE_HITCH_DEBUG") != NULL;
+        if (hitchOn < 0) hitchOn = getenv("ENGINE_HITCH_DEBUG") != nullptr;
         double tw0 = nanos();
         vulkanFenceWait(&item->cmd);
         double twms = (nanos() - tw0) / 1e6;
@@ -90,9 +90,9 @@ void vulkanSwapchainBegin(void) {
     VkResult result = vkAcquireNextImageKHR(vulkan.device,
                                             swapchain,
                                             UINT64_MAX,
-                                            item->acquired,
-                                            NULL,
-                                            &swapchainImageIndex);
+item->acquired,
+                                             nullptr,
+                                             &swapchainImageIndex);
 
     if (vulkanCheckQueueError(result, "vkAcquireNextImageKHR")) {
         vulkan.skipFrame = 1;
@@ -130,9 +130,9 @@ void vulkanSwapchainEnd(void) {
                      1);
     vulkanEnd(&item->cmd);
 
-    vulkanSubmit(.cmd    = &item->cmd,
-                 .wait   = item->acquired,
-                 .signal = submitSemaphores[swapchainImageIndex]);
+    vulkanSubmit(.wait   = item->acquired,
+                 .signal = submitSemaphores[swapchainImageIndex],
+                 .cmd    = &item->cmd);
 
     vulkanPresent(&swapchain, &swapchainImageIndex, &submitSemaphores[swapchainImageIndex]);
 
@@ -220,9 +220,9 @@ void createSwapchain(void) {
     createInfo.sType                    = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
     createInfo.surface                  = vulkan.surface;
     createInfo.minImageCount            = requestedImageCount;
-    createInfo.imageFormat              = (VkFormat)vulkanSwapchain.swapchainImageFormat;
+    createInfo.imageFormat              = static_cast<VkFormat>(vulkanSwapchain.swapchainImageFormat);
     createInfo.imageColorSpace          = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
-    createInfo.imageExtent      = (VkExtent2D){.width = static_cast<uint32_t>(window.width), .height = static_cast<uint32_t>(window.height)};
+    createInfo.imageExtent      = VkExtent2D{static_cast<uint32_t>(window.width), static_cast<uint32_t>(window.height)};
     createInfo.imageArrayLayers = 1;
     createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
     createInfo.imageSharingMode      = VK_SHARING_MODE_EXCLUSIVE;
@@ -235,25 +235,25 @@ void createSwapchain(void) {
     createInfo.oldSwapchain          = old;
 
     VkResult scResult =
-        vkCreateSwapchainKHR(vulkan.device, &createInfo, NULL, &swapchain);
+        vkCreateSwapchainKHR(vulkan.device, &createInfo, nullptr, &swapchain);
     if (scResult != VK_SUCCESS) {
         terminate("vulkanSwapchain: failed to create swapchain!");
     }
 
     if (old) {
-        vkDestroySwapchainKHR(vulkan.device, old, NULL);
+        vkDestroySwapchainKHR(vulkan.device, old, nullptr);
     }
 
     static VkImage imagesKHR[10] = {};
-    vkGetSwapchainImagesKHR(vulkan.device, swapchain, &vulkanSwapchain.imageCount, NULL);
+    vkGetSwapchainImagesKHR(vulkan.device, swapchain, &vulkanSwapchain.imageCount, nullptr);
     vkGetSwapchainImagesKHR(vulkan.device, swapchain, &vulkanSwapchain.imageCount, imagesKHR);
 
     foreachptr(struct VulkanImage * img, swapchainImages) {
-        vkDestroyImageView(vulkan.device, img->view, NULL);
+        vkDestroyImageView(vulkan.device, img->view, nullptr);
     }
 
     foreachptr(VkSemaphore * semaphore, submitSemaphores) {
-        vkDestroySemaphore(vulkan.device, *semaphore, NULL);
+        vkDestroySemaphore(vulkan.device, *semaphore, nullptr);
     }
 
     arraySetSize(swapchainImages, vulkanSwapchain.imageCount);
@@ -262,13 +262,13 @@ void createSwapchain(void) {
     foreachptr(VkSemaphore * semaphore, submitSemaphores) {
         VkSemaphoreCreateInfo info = {};
         info.sType                 = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
-        VK_CHECK(vkCreateSemaphore(vulkan.device, &info, NULL, semaphore),
+        VK_CHECK(vkCreateSemaphore(vulkan.device, &info, nullptr, semaphore),
                  "vkCreateSemaphore(submit)");
     }
 
     for (i32 i = 0, si = vulkanSwapchain.imageCount; i < si; i++) {
         struct VulkanImage* swapchainImage = &swapchainImages[i];
-        *swapchainImage                    = (struct VulkanImage){0};
+        *swapchainImage                    = VulkanImage{};
         swapchainImage->mipLevels          = 1;
         swapchainImage->layers             = 1;
         swapchainImage->img                = imagesKHR[i];
@@ -276,7 +276,7 @@ void createSwapchain(void) {
         swapchainImage->format             = vulkanSwapchain.swapchainImageFormat;
         swapchainImage->usage              = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
         swapchainImage->extent =
-            (VkExtent3D){.width = static_cast<uint32_t>(window.width), .height = static_cast<uint32_t>(window.height), .depth = 1};
+            VkExtent3D{static_cast<uint32_t>(window.width), static_cast<uint32_t>(window.height), 1};
         swapchainImage->layout = VK_IMAGE_LAYOUT_UNDEFINED;
 
         VkImageViewCreateInfo createInfo           = {};
@@ -293,7 +293,7 @@ void createSwapchain(void) {
         createInfo.subresourceRange.levelCount     = 1;
         createInfo.subresourceRange.baseArrayLayer = 0;
         createInfo.subresourceRange.layerCount     = 1;
-        vkCreateImageView(vulkan.device, &createInfo, NULL, &swapchainImage->view);
+        vkCreateImageView(vulkan.device, &createInfo, nullptr, &swapchainImage->view);
 
         if (isDebug()) {
             vulkanUtilsSetName((uint64_t)swapchainImage->img,
@@ -325,15 +325,15 @@ void createSwapchain(void) {
     arrayFree(pPresentModes);
     arrayFree(vkSurfaceFormats);
 
-    signalEmit("swapchainCreated", NULL);
+    signalEmit("swapchainCreated", nullptr);
 }
 
 void createPerFlightItems(void) {
     for (i32 i = 0, si = arraySize(flightItems); i < si; i++) {
         struct FlightItem* item = &flightItems[i];
-        vkDestroyFence(vulkan.device, item->cmd.fence, NULL);
-        vkDestroyCommandPool(vulkan.device, item->pool, NULL);
-        vkDestroySemaphore(vulkan.device, item->acquired, NULL);
+        vkDestroyFence(vulkan.device, item->cmd.fence, nullptr);
+        vkDestroyCommandPool(vulkan.device, item->pool, nullptr);
+        vkDestroySemaphore(vulkan.device, item->acquired, nullptr);
     }
 
     arraySetSize(flightItems, FRAMES_IN_FLIGHT);
@@ -347,7 +347,7 @@ void createPerFlightItems(void) {
         poolInfo.sType                   = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
         poolInfo.flags                   = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
         poolInfo.queueFamilyIndex        = vulkan.graphicsFamilyIndex;
-        VK_CHECK(vkCreateCommandPool(vulkan.device, &poolInfo, NULL, &item->pool),
+        VK_CHECK(vkCreateCommandPool(vulkan.device, &poolInfo, nullptr, &item->pool),
                  "vkCreateCommandPool");
 
         VkCommandBufferAllocateInfo allocInfo = {};
@@ -367,12 +367,12 @@ void createPerFlightItems(void) {
         VkFenceCreateInfo fenceCreateInfo = {};
         fenceCreateInfo.sType             = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
         fenceCreateInfo.flags             = VK_FENCE_CREATE_SIGNALED_BIT;
-        VK_CHECK(vkCreateFence(vulkan.device, &fenceCreateInfo, NULL, &item->cmd.fence),
+        VK_CHECK(vkCreateFence(vulkan.device, &fenceCreateInfo, nullptr, &item->cmd.fence),
                  "vkCreateFence");
 
         VkSemaphoreCreateInfo info = {};
         info.sType                 = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
-        VK_CHECK(vkCreateSemaphore(vulkan.device, &info, NULL, &item->acquired),
+        VK_CHECK(vkCreateSemaphore(vulkan.device, &info, nullptr, &item->acquired),
                  "vkCreateSemaphore(acquired)");
     }
 }
@@ -408,6 +408,6 @@ void recreateSwapchain(void) {
     }
 
     if (millies() > recreateStart + 400) {
-        futureTaskAdd(0, endSkipFrame, NULL);
+        futureTaskAdd(0, endSkipFrame, nullptr);
     }
 }

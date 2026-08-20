@@ -18,12 +18,16 @@ static double elapsedCPU;
 static double elapsedGPU;
 
 System vulkanHiZPass = {
-    .name       = "hiz",
-    .added      = added,
-    .preUpdate  = preUpdate,
-    .update     = update,
-    .postUpdate = postUpdate,
-    .removed    = removed,
+    .name                = "hiz",
+    .added               = added,
+    .removed             = removed,
+    .preUpdate           = preUpdate,
+    .update              = update,
+    .postUpdate          = postUpdate,
+    .cpuElapsedLastFrame = 0.0,
+    .cpuElapsed          = 0.0,
+    .gpuElapsed          = 0.0,
+    .priority            = 0,
 };
 
 #define MAX_HIZ_MIPS 16
@@ -106,7 +110,7 @@ static void destroyHiZ(int imageIndex) {
     destroyMipViews(imageIndex);
     if (hizImages[imageIndex].img) {
         vulkanDestroyImage(&hizImages[imageIndex], NULL);
-        hizImages[imageIndex] = (VulkanImage){0};
+        hizImages[imageIndex] = VulkanImage{0};
     }
 }
 

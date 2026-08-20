@@ -13,11 +13,17 @@ static void added(void);
 static void update(void);
 static void removed(void);
 
-struct System statsGui = {
-    .name    = "statsGui",
-    .added   = added,
-    .update  = update,
-    .removed = removed,
+System statsGui = {
+    .name                = "statsGui",
+    .added               = added,
+    .removed             = removed,
+    .preUpdate           = nullptr,
+    .update              = update,
+    .postUpdate          = nullptr,
+    .cpuElapsedLastFrame = 0.0,
+    .cpuElapsed          = 0.0,
+    .gpuElapsed          = 0.0,
+    .priority            = 0,
 };
 
 static void* document;
@@ -101,7 +107,7 @@ void removed(void) {
     memoryFree(debugReleaseText);
     rmlUnloadDocument(document);
     rmlUnloadModel(model);
-    document = NULL;  // used for toggling
+    document = nullptr;  // used for toggling
 }
 
 void update(void) {

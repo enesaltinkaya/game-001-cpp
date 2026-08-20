@@ -32,19 +32,19 @@ static u32 azgaarHmHash(u32 x, u32 y, u32 seed) {
 // Hash lattice value noise, output in [-1, 1]. Lattice cells are 1 unit;
 // callers pre-scale coordinates by 1/wavelength.
 static float azgaarHmValueNoise(float x, float y, u32 seed) {
-    i32 xi = (i32)floorf(x);
-    i32 yi = (i32)floorf(y);
-    float xf = x - (float)xi;
-    float yf = y - (float)yi;
+    i32 xi = static_cast<i32>(floorf(x));
+    i32 yi = static_cast<i32>(floorf(y));
+    float xf = x - static_cast<float>(xi);
+    float yf = y - static_cast<float>(yi);
     float u  = xf * xf * (3.0f - 2.0f * xf);
     float v  = yf * yf * (3.0f - 2.0f * yf);
 
-    u32 kx = (u32)xi;
-    u32 ky = (u32)yi;
-    float a = (float)azgaarHmHash(kx, ky, seed);
-    float b = (float)azgaarHmHash(kx + 1, ky, seed);
-    float c = (float)azgaarHmHash(kx, ky + 1, seed);
-    float d = (float)azgaarHmHash(kx + 1, ky + 1, seed);
+    u32 kx = static_cast<u32>(xi);
+    u32 ky = static_cast<u32>(yi);
+    float a = static_cast<float>(azgaarHmHash(kx, ky, seed));
+    float b = static_cast<float>(azgaarHmHash(kx + 1, ky, seed));
+    float c = static_cast<float>(azgaarHmHash(kx, ky + 1, seed));
+    float d = static_cast<float>(azgaarHmHash(kx + 1, ky + 1, seed));
     a      *= 1.0f / 4294967295.0f;
     b      *= 1.0f / 4294967295.0f;
     c      *= 1.0f / 4294967295.0f;
@@ -59,7 +59,7 @@ static float azgaarHmDetail(const AzgaarHeightmapSource* src, float wx, float wz
     float sum = 0.0f;
     for (i32 i = 0; i < AZGAAR_HM_DETAIL_OCTAVES; ++i) {
         float inv = 1.0f / azgaarHmDetailWavelengths[i];
-        u32 seed  = src->noiseSeed + (u32)(i + 1) * 1013904223u;
+        u32 seed  = src->noiseSeed + static_cast<u32>(i + 1) * 1013904223u;
         sum += azgaarHmDetailAmplitudes[i] * azgaarHmValueNoise(wx * inv, wz * inv, seed);
     }
     return sum;
@@ -73,8 +73,8 @@ static float azgaarHeightmapHeightAt(void* userData, float wx, float wz) {
     if (!world) return 0.0f;
 
     // World -> map pixels (inverse of azgaarMapToWorld).
-    float mapX = (float)world->widthPx * 0.5f - wx / (float)world->metersPerPixel;
-    float mapY = (float)world->heightPx * 0.5f - wz / (float)world->metersPerPixel;
+    float mapX = static_cast<float>(world->widthPx) * 0.5f - wx / static_cast<float>(world->metersPerPixel);
+    float mapY = static_cast<float>(world->heightPx) * 0.5f - wz / static_cast<float>(world->metersPerPixel);
 
     float h      = azgaarWorldSampleHeightSmooth(world, mapX, mapY);
     float meters = azgaarHeightToMeters(world, h);
@@ -104,7 +104,7 @@ static u32 azgaarHeightmapSourceSeed(const char* name) {
     u32 h = 2166136261u; // FNV-1a
     if (name) {
         for (const char* p = name; *p; ++p) {
-            h ^= (u32)(unsigned char)*p;
+            h ^= static_cast<u32>(static_cast<unsigned char>(*p));
             h *= 16777619u;
         }
     }

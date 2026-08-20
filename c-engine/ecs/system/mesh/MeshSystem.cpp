@@ -9,10 +9,17 @@ static void destroyMesh(u32 entity, void* pMesh);
 static void added(void);
 static void postUpdate(void);
 
-struct System meshSystem = {
-    .name       = "mesh",
-    .added      = added,
-    .postUpdate = postUpdate,
+System meshSystem = {
+    .name                = "mesh",
+    .added               = added,
+    .removed             = nullptr,
+    .preUpdate           = nullptr,
+    .update              = nullptr,
+    .postUpdate          = postUpdate,
+    .cpuElapsedLastFrame = 0.0,
+    .cpuElapsed          = 0.0,
+    .gpuElapsed          = 0.0,
+    .priority            = 0,
 };
 
 void added(void) {}

@@ -16,11 +16,17 @@ static void added(void);
 static void removed(void);
 static void update(void);
 
-struct System azgaarStreamingSystem = {
-    .name    = "azgaarStreaming",
-    .added   = added,
-    .removed = removed,
-    .update  = update,
+System azgaarStreamingSystem = {
+    .name                = "azgaarStreaming",
+    .added               = added,
+    .removed             = removed,
+    .preUpdate           = nullptr,
+    .update              = update,
+    .postUpdate          = nullptr,
+    .cpuElapsedLastFrame = 0.0,
+    .cpuElapsed          = 0.0,
+    .gpuElapsed          = 0.0,
+    .priority            = 0,
 };
 
 static const AzgaarWorld* streamWorld;
@@ -31,7 +37,7 @@ static const AzgaarWorld* streamWorld;
 // screenshots.  Y is the desired camera height; the player is placed 40 m
 // below it and physics settles it onto the terrain.
 static void tempCameraTeleport(void) {
-    static char* env = NULL;
+    static char* env = nullptr;
     if (!env) env = getenv("ENGINE_CAM_TELEPORT");
     if (!env || !*env) return;
     static double startMs = -1;
@@ -45,7 +51,7 @@ static void tempCameraTeleport(void) {
     vec3 pos = {x, y - 40.0f, z};
     if (playerTeleportTo(pos)) {
         done = 1;
-        info("TEMP player teleport -> (%.0f,%.0f,%.0f)", (double)x, (double)y, (double)z);
+        info("TEMP player teleport -> (%.0f,%.0f,%.0f)", static_cast<double>(x), static_cast<double>(y), static_cast<double>(z));
     }
 
     // Also snap the camera itself so the view (and the streaming window)
@@ -74,7 +80,7 @@ static void added(void) {
 
 static void removed(void) {
     azgaarPropsDestroy();
-    streamWorld = NULL;
+    streamWorld = nullptr;
 }
 
 static void update(void) {

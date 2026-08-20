@@ -2,8 +2,8 @@
 
 #include "ecs/system/System.h"
 
-typedef struct Entity Entity;
-typedef struct Scene Scene;
+struct Entity;
+struct Scene;
 
 extern struct System combatSystem;
 

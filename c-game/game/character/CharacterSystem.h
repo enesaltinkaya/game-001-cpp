@@ -2,7 +2,7 @@
 
 #include "ecs/system/System.h"
 
-typedef struct Entity Entity;
+struct Entity;
 
 extern struct System characterSystem;
 

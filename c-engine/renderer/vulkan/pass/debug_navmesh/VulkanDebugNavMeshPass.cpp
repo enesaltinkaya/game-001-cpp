@@ -34,10 +34,16 @@ static void update(void);
 static void removed(void);
 
 System vulkanDebugNavMeshPass = {
-    .name    = "debug_navmesh",
-    .added   = added,
-    .update  = update,
-    .removed = removed,
+    .name                = "debug_navmesh",
+    .added               = added,
+    .removed             = removed,
+    .preUpdate           = nullptr,
+    .update              = update,
+    .postUpdate          = nullptr,
+    .cpuElapsedLastFrame = 0.0,
+    .cpuElapsed          = 0.0,
+    .gpuElapsed          = 0.0,
+    .priority            = 0,
 };
 
 static VulkanPipe fillPipeline;
@@ -79,19 +85,19 @@ static void recreatePipelines(void) {
                                     .blend               = 1,
                                     .noCull              = 1,
                                     .in1attr =
-                                        (VkVertexInputAttributeDescription){
+                                        VkVertexInputAttributeDescription{
                                             .location = 0,
                                             .binding  = 0,
                                             .format   = VK_FORMAT_R32G32B32A32_SFLOAT,
                                             .offset   = 0,
                                         },
                                     .in1bind =
-                                        (VkVertexInputBindingDescription){
+                                        VkVertexInputBindingDescription{
                                             .binding   = 0,
                                             .stride    = sizeof(DebugVertex),
                                             .inputRate = VK_VERTEX_INPUT_RATE_VERTEX,
                                         },
-                                    .in2attr = (VkVertexInputAttributeDescription){
+                                    .in2attr = VkVertexInputAttributeDescription{
                                         .location = 1,
                                         .binding  = 0,
                                         .format   = VK_FORMAT_R32G32B32A32_SFLOAT,

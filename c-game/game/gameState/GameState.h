@@ -4,24 +4,24 @@
 
 /* ── Forward declarations ─────────────────────────────────────────────────── */
 
-typedef struct Scene   Scene;
+struct Scene;
 
 /* ── States ────────────────────────────────────────────────────────────────── */
 
-typedef enum {
+enum GameState {
     STATE_NONE,
     STATE_MAIN_MENU,
     STATE_LOADING_AZGAAR,
     STATE_GAMEPLAY,
-} GameState;
+};
 
 /* ── Callbacks per state ───────────────────────────────────────────────────── */
 
-typedef struct {
+struct StateCallbacks {
     void (*enter)(void);
     void (*exit)(void);
     void (*update)(void);
-} StateCallbacks;
+};
 
 /* ── Public API ────────────────────────────────────────────────────────────── */
 
@@ -53,11 +53,11 @@ void gameStateGameplayUpdate(void);
 
 /* ── Load state for async transitions ──────────────────────────────────────── */
 
-typedef enum {
+enum GameplayLoadState {
     GAMEPLAY_LOADED_NONE,
     GAMEPLAY_LOADED_ANIMATIONS,
     GAMEPLAY_LOADED_READY,
-} GameplayLoadState;
+};
 
 GameplayLoadState gameStateGameplayLoadState(void);
 

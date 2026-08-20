@@ -37,22 +37,30 @@
 #define ENEMY_TURN_SPEED 8.0f
 #define ENEMY_DEATH_ROT_DURATION 0.4f  // time to rotate onto ground
 
+static vec3 Y_UP = {0.0f, 1.0f, 0.0f};
+static vec3 X_AXIS = {1.0f, 0.0f, 0.0f};
+
 static void added(void);
 static void removed(void);
 static void update(void);
 
-struct System enemySystem = {
-    .name     = "enemy",
-    .added    = added,
-    .removed  = removed,
-    .update   = update,
-    .priority = 1200,
+System enemySystem = {
+    .name                = "enemy",
+    .added               = added,
+    .removed             = removed,
+    .preUpdate           = nullptr,
+    .update              = update,
+    .postUpdate          = nullptr,
+    .cpuElapsedLastFrame = 0.0,
+    .cpuElapsed          = 0.0,
+    .gpuElapsed          = 0.0,
+    .priority            = 1200,
 };
 
 // ── State transition helpers ────────────────────────────────────────────────
 
 static void enemySetState(Enemy* enemy, Entity* entity, EnemyState newState) {
-    (void)entity;
+    static_cast<void>(entity);
     if (enemy->state == newState) return;
 
     enemy->state           = newState;
@@ -87,7 +95,7 @@ static void enemySetState(Enemy* enemy, Entity* entity, EnemyState newState) {
 // ── Target detection ────────────────────────────────────────────────────────
 
 static Entity* enemyGetTarget(Enemy* enemy) {
-    if (!enemy->targetScene || !enemy->targetEntityId) return NULL;
+    if (!enemy->targetScene || !enemy->targetEntityId) return nullptr;
     return getEntity(enemy->targetScene, enemy->targetEntityId);
 }
 
@@ -148,7 +156,7 @@ static void enemyRotateToward(vec3 enemyPos, vec3 targetPos, Enemy* enemy, Trans
 
     float targetYaw = atan2f(dir[0], dir[2]);
     versor yawQuat;
-    glm_quatv(yawQuat, targetYaw, (vec3){0.0f, 1.0f, 0.0f});
+    glm_quatv(yawQuat, targetYaw, Y_UP);
 
     versor targetRot;
     glm_quat_mul(yawQuat, enemy->baseRot, targetRot);
@@ -211,7 +219,7 @@ static void enemyApplySeparation(vec3 pos, vec3 desiredVel) {
 static void enemyStateIdle(Enemy* enemy, Entity* entity, Transform* transform, vec3 pos) {
     // Check for player aggro
     if (enemyIsPlayerInRange(enemy, pos)) {
-        enemy->targetScene = NULL;  // will be set by combatGetPlayerEntity path
+        enemy->targetScene = nullptr;  // will be set by combatGetPlayerEntity path
         Entity* player     = combatGetPlayerEntity();
         if (player) {
             enemy->targetScene           = player->scene;
@@ -316,7 +324,7 @@ static void enemyStateChase(Enemy* enemy, Entity* entity, Transform* transform, 
                 float distSq = glm_vec3_norm2(dir);
                 if (distSq > enemy->loseTargetRange * enemy->loseTargetRange) {
                     enemy->targetEntityId    = 0;
-                    enemy->targetScene       = NULL;
+                    enemy->targetScene       = nullptr;
                     enemy->pathWaypointCount = 0;
                     enemySetState(enemy, entity, ENEMY_STATE_IDLE);
                     return;
@@ -454,7 +462,7 @@ static void enemyStateRetreat(Enemy* enemy, Entity* entity, Transform* transform
     // Check if far enough from player
     if (enemyIsFarEnoughToRegain(enemy, pos)) {
         enemy->targetEntityId = 0;
-        enemy->targetScene    = NULL;
+        enemy->targetScene    = nullptr;
         enemySetState(enemy, entity, ENEMY_STATE_IDLE);
         return;
     }
@@ -595,7 +603,7 @@ static void update(void) {
                     if (enemy->stateTimer < 0.001f) {
                         glm_vec4_copy(dT->rot, enemy->deathRotStart);
                         versor tiltRot = {};
-                        glm_quatv(tiltRot, glm_rad(90.0f), (vec3){1.0f, 0.0f, 0.0f});
+                        glm_quatv(tiltRot, glm_rad(90.0f), X_AXIS);
                         glm_quat_mul(enemy->deathRotStart, tiltRot, enemy->deathRotTarget);
                     }
                     float t = enemy->stateTimer / ENEMY_DEATH_ROT_DURATION;
@@ -682,10 +690,10 @@ Enemy* enemyCreate(Entity* entity,
                    float attackCooldown,
                    float moveSpeed,
                    float retreatThreshold) {
-    if (!entity) return NULL;
+    if (!entity) return nullptr;
 
     Enemy* enemy = createComponent(entity->scene, Enemy, entity->id);
-    if (!enemy) return NULL;
+    if (!enemy) return nullptr;
 
     // Default values
     enemy->state      = ENEMY_STATE_IDLE;
@@ -698,7 +706,7 @@ Enemy* enemyCreate(Entity* entity,
     enemy->regainRange      = 10.0f;
 
     enemy->targetEntityId        = 0;
-    enemy->targetScene           = NULL;
+    enemy->targetScene           = nullptr;
     enemy->lastKnownTargetPos[0] = 0.0f;
     enemy->lastKnownTargetPos[1] = 0.0f;
     enemy->lastKnownTargetPos[2] = 0.0f;
@@ -716,7 +724,7 @@ Enemy* enemyCreate(Entity* entity,
 
     enemy->moveSpeed = moveSpeed;
 
-    enemy->character         = NULL;
+    enemy->character         = nullptr;
     enemy->capsuleHalfHeight = 0.0f;
     enemy->capsuleRadius     = 0.0f;
 
@@ -733,7 +741,7 @@ Enemy* enemyCreate(Entity* entity,
     // Initialize patrol wait with random duration
     enemy->patrolWaitDuration =
         ENEMY_PATROL_WAIT_MIN +
-        (float)rand() / (float)RAND_MAX * (ENEMY_PATROL_WAIT_MAX - ENEMY_PATROL_WAIT_MIN);
+        static_cast<float>(rand()) / static_cast<float>(RAND_MAX) * (ENEMY_PATROL_WAIT_MAX - ENEMY_PATROL_WAIT_MIN);
 
     // Start with idle animation
     animationPlayBlended(entity, ENEMY_ANIM_IDLE, 1.0f, true, 0.15f);
@@ -763,7 +771,7 @@ static Mesh* enemyFindMesh(Entity* entity) {
         mesh          = getComponent(child->scene, Mesh, child->id);
         if (mesh) return mesh;
     }
-    return NULL;
+    return nullptr;
 }
 
 static void enemySetupComponents(Scene* scene,
@@ -925,7 +933,7 @@ static void added(void) {
     // alwaysVisible = true ensures it is never CPU-frustum-culled regardless
     // of where enemies move.  hasBounds = false means AABB tests are skipped.
     runtimeScene                 = static_cast<Scene*>(memoryAlloc(sizeof(Scene)));
-    *runtimeScene               = (Scene){0};
+    *runtimeScene               = Scene{};
     runtimeScene->alwaysVisible = true;
     arrayPut(ecs.scenes, runtimeScene);
     info("enemy: created runtime scene for dynamic entities");
@@ -977,13 +985,13 @@ static void added(void) {
                 // Spread instances in a ring around the player
                 float spawnDistMin = 20.0f;
                 float spawnDistMax = 30.0f;
-                float anglePerInst = (2.0f * GLM_PI) / (float)ENEMY_INSTANCES_PER_MODEL;
+                float anglePerInst = (2.0f * GLM_PI) / static_cast<float>(ENEMY_INSTANCES_PER_MODEL);
                 float angleOffset =
-                    (float)enemyTemplateCount * anglePerInst * 0.37f;  // stagger per template
-                float angle = anglePerInst * (float)inst + angleOffset;
+                    static_cast<float>(enemyTemplateCount) * anglePerInst * 0.37f;  // stagger per template
+                float angle = anglePerInst * static_cast<float>(inst) + angleOffset;
                 float spawnDist =
                     spawnDistMin + (spawnDistMax - spawnDistMin) *
-                                       ((float)inst / (float)(ENEMY_INSTANCES_PER_MODEL - 1));
+                                       (static_cast<float>(inst) / static_cast<float>(ENEMY_INSTANCES_PER_MODEL - 1));
                 float offX = sinf(angle) * spawnDist;
                 float offZ = cosf(angle) * spawnDist;
 
@@ -1054,11 +1062,11 @@ void removed(void) {
             if (enemy && enemy->character) {
                 vulkanDebugPhysicsUnregisterCharacter(enemy->character);
                 joltCharacterDestroy(enemy->character);
-                enemy->character = NULL;
+                enemy->character = nullptr;
             }
             if (enemy && enemy->sensorBody) {
                 joltBodyDestroy(enemy->sensorBody);
-                enemy->sensorBody = NULL;
+                enemy->sensorBody = nullptr;
             }
         }
     }
@@ -1067,6 +1075,6 @@ void removed(void) {
     if (runtimeScene) {
         rendererSceneDestroy(runtimeScene);
         sceneDestroy(runtimeScene);
-        runtimeScene = NULL;
+        runtimeScene = nullptr;
     }
 }

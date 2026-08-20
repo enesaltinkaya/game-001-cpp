@@ -23,12 +23,17 @@ static void transformSetWorldWithChildren(Scene* scene, u32 entity);
 static void transformSetWorld(Scene* scene, u32 entity, Entity* entityObj);
 static void initTransform(Scene* scene, u32 entity, void* pTransform);
 
-struct System transformSystem = {
-    .name       = "transform",
-    .added      = added,
-    .removed    = removed,
-    .update     = update,
-    .postUpdate = postUpdate,
+System transformSystem = {
+    .name                = "transform",
+    .added               = added,
+    .removed             = removed,
+    .preUpdate           = nullptr,
+    .update              = update,
+    .postUpdate          = postUpdate,
+    .cpuElapsedLastFrame = 0.0,
+    .cpuElapsed          = 0.0,
+    .gpuElapsed          = 0.0,
+    .priority            = 0,
 };
 
 void added(void) {

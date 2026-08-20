@@ -16,7 +16,7 @@ struct VulkanProfile vulkanCreateProfile(const char* name) {
     createInfo.queryType               = VK_QUERY_TYPE_TIMESTAMP;
     createInfo.queryCount              = 2;
     for (int i = 0; i < FRAMES_IN_FLIGHT; i++) {
-        vkCreateQueryPool(vulkan.device, &createInfo, NULL, &vulkanProfile.pools[i]);
+        vkCreateQueryPool(vulkan.device, &createInfo, nullptr, &vulkanProfile.pools[i]);
         if (isDebug()) {
             vulkanUtilsSetName((u64)vulkanProfile.pools[i],
                                VK_OBJECT_TYPE_QUERY_POOL,
@@ -39,7 +39,7 @@ struct VulkanProfile vulkanCreateProfile(const char* name) {
         | VK_QUERY_PIPELINE_STATISTIC_COMPUTE_SHADER_INVOCATIONS_BIT;
     statCreateInfo.queryCount            = 1;
     for (int i = 0; i < FRAMES_IN_FLIGHT; i++) {
-        vkCreateQueryPool(vulkan.device, &statCreateInfo, NULL, &vulkanProfile.statPools[i]);
+        vkCreateQueryPool(vulkan.device, &statCreateInfo, nullptr, &vulkanProfile.statPools[i]);
         if (isDebug()) {
             vulkanUtilsSetName((u64)vulkanProfile.statPools[i],
                                VK_OBJECT_TYPE_QUERY_POOL,
@@ -52,14 +52,14 @@ struct VulkanProfile vulkanCreateProfile(const char* name) {
 
 void vulkanDestroyProfile(struct VulkanProfile* profile) {
     for (int i = 0; i < FRAMES_IN_FLIGHT; i++) {
-        vkDestroyQueryPool(vulkan.device, profile->pools[i], NULL);
+        vkDestroyQueryPool(vulkan.device, profile->pools[i], nullptr);
     }
     for (int i = 0; i < FRAMES_IN_FLIGHT; i++) {
-        vkDestroyQueryPool(vulkan.device, profile->statPools[i], NULL);
+        vkDestroyQueryPool(vulkan.device, profile->statPools[i], nullptr);
     }
 }
 
-void vulkanResetProfile(struct VulkanCommand* cmd, struct VulkanProfile* profile, char force) {
+void vulkanResetProfile(struct VulkanCommand* cmd, struct VulkanProfile* profile, bool force) {
     if (vulkan.skipFrame) {
         return;
     }
@@ -100,7 +100,7 @@ void vulkanResetProfile(struct VulkanCommand* cmd, struct VulkanProfile* profile
     vkCmdResetQueryPool(cmd->cmd, profile->pools[fi], 0, 2);
 }
 
-void vulkanBeginProfile(struct VulkanCommand* cmd, struct VulkanProfile* profile, char force) {
+void vulkanBeginProfile(struct VulkanCommand* cmd, struct VulkanProfile* profile, bool force) {
     if (vulkan.skipFrame) {
         return;
     }
@@ -115,7 +115,7 @@ void vulkanBeginProfile(struct VulkanCommand* cmd, struct VulkanProfile* profile
     vkCmdWriteTimestamp(cmd->cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, profile->pools[fi], 0);
 }
 
-void vulkanEndProfile(struct VulkanCommand* cmd, struct VulkanProfile* profile, char force) {
+void vulkanEndProfile(struct VulkanCommand* cmd, struct VulkanProfile* profile, bool force) {
     if (vulkan.skipFrame) {
         return;
     }
@@ -131,7 +131,7 @@ void vulkanEndProfile(struct VulkanCommand* cmd, struct VulkanProfile* profile, 
     profile->used[fi] = 1;
 }
 
-void vulkanResetProfileStats(struct VulkanCommand* cmd, struct VulkanProfile* profile, char force) {
+void vulkanResetProfileStats(struct VulkanCommand* cmd, struct VulkanProfile* profile, bool force) {
     if (vulkan.skipFrame || cmd->transient || !profile->hasStatPools) {
         return;
     }
@@ -178,14 +178,14 @@ void vulkanResetProfileStats(struct VulkanCommand* cmd, struct VulkanProfile* pr
             profile->stats.primitiveCount = results[1];
         }
     } else {
-        profile->stats = (VulkanPipelineStats){0};
+        profile->stats = VulkanPipelineStats{};
     }
 
     // Reset for the new recording.
     vkCmdResetQueryPool(cmd->cmd, profile->statPools[fi], 0, 1);
 }
 
-void vulkanBeginProfileStats(struct VulkanCommand* cmd, struct VulkanProfile* profile, char force) {
+void vulkanBeginProfileStats(struct VulkanCommand* cmd, struct VulkanProfile* profile, bool force) {
     if (vulkan.skipFrame || cmd->transient || !profile->hasStatPools) {
         return;
     }
@@ -197,7 +197,7 @@ void vulkanBeginProfileStats(struct VulkanCommand* cmd, struct VulkanProfile* pr
     vkCmdBeginQuery(cmd->cmd, profile->statPools[fi], 0, 0);
 }
 
-void vulkanEndProfileStats(struct VulkanCommand* cmd, struct VulkanProfile* profile, char force) {
+void vulkanEndProfileStats(struct VulkanCommand* cmd, struct VulkanProfile* profile, bool force) {
     if (vulkan.skipFrame || cmd->transient || !profile->hasStatPools) {
         return;
     }

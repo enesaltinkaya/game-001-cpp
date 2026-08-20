@@ -14,10 +14,16 @@ static void update(void);
 static void removed(void);
 
 System zoneGui = {
-    .name    = "zoneGui",
-    .added   = added,
-    .update  = update,
-    .removed = removed,
+    .name                = "zoneGui",
+    .added               = added,
+    .removed             = removed,
+    .preUpdate           = nullptr,
+    .update              = update,
+    .postUpdate          = nullptr,
+    .cpuElapsedLastFrame = 0.0,
+    .cpuElapsed          = 0.0,
+    .gpuElapsed          = 0.0,
+    .priority            = 0,
 };
 
 static void* document;
@@ -79,9 +85,9 @@ static void onCellEntered(void* userData) {
     // If the player is inside a settlement's footprint, don't let the zone
     // change overwrite the settlement banner.
     if (world && world->metersPerPixel > 0.0f) {
-        float mpp = (float)world->metersPerPixel;
-        float wx = ((float)world->widthPx * 0.5f - ev->mapX) * mpp;
-        float wz = ((float)world->heightPx * 0.5f - ev->mapY) * mpp;
+        float mpp = static_cast<float>(world->metersPerPixel);
+        float wx = (static_cast<float>(world->widthPx) * 0.5f - ev->mapX) * mpp;
+        float wz = (static_cast<float>(world->heightPx) * 0.5f - ev->mapY) * mpp;
         if (azgaarSettlementsNearest(world, wx, wz)) return;
     }
 
@@ -134,14 +140,15 @@ static void added(void) {
     const AzgaarWorld* world = loadingAzgaarGetWorld();
     vec3 playerPos;
     if (world && world->metersPerPixel > 0.0f && playerGetPosition(playerPos)) {
-        float invMpp = 1.0f / (float)world->metersPerPixel;
-        float mapX   = -playerPos[0] * invMpp + (float)world->widthPx  * 0.5f;
-        float mapY   = -playerPos[2] * invMpp + (float)world->heightPx * 0.5f;
+        float invMpp = 1.0f / static_cast<float>(world->metersPerPixel);
+        float mapX   = -playerPos[0] * invMpp + static_cast<float>(world->widthPx)  * 0.5f;
+        float mapY   = -playerPos[2] * invMpp + static_cast<float>(world->heightPx) * 0.5f;
         AzgaarZoneInfo zone;
-        azgaarWorldSampleZone(world, mapX, mapY, &zone, NULL);
+        azgaarWorldSampleZone(world, mapX, mapY, &zone, nullptr);
         AzgaarCellEvent seed = {
-            .world = world,
-            .zone  = zone,
+            .world         = world,
+            .packCellIndex = 0,
+            .zone          = zone,
             .mapX  = mapX,
             .mapY  = mapY,
         };
@@ -173,8 +180,8 @@ static void removed(void) {
 
     rmlUnloadDocument(document);
     rmlUnloadModel(model);
-    document = NULL;
-    model    = NULL;
+    document = nullptr;
+    model    = nullptr;
     initialized     = false;
     active          = false;
     curSettlementId = 0u;
@@ -207,11 +214,11 @@ static void update(void) {
             } else {
                 // Left the settlement: restore the zone-based label at the
                 // player's current position.
-                float invMpp = 1.0f / (float)world->metersPerPixel;
-                float mapX = -p[0] * invMpp + (float)world->widthPx * 0.5f;
-                float mapY = -p[2] * invMpp + (float)world->heightPx * 0.5f;
+                float invMpp = 1.0f / static_cast<float>(world->metersPerPixel);
+                float mapX = -p[0] * invMpp + static_cast<float>(world->widthPx) * 0.5f;
+                float mapY = -p[2] * invMpp + static_cast<float>(world->heightPx) * 0.5f;
                 AzgaarZoneInfo zone;
-                azgaarWorldSampleZone(world, mapX, mapY, &zone, NULL);
+                azgaarWorldSampleZone(world, mapX, mapY, &zone, nullptr);
                 curProvinceId = zone.provinceId;
                 curStateId    = zone.stateId;
                 initialized   = true;
@@ -235,11 +242,11 @@ static void update(void) {
         zoneAlpha    = 0.0f;
         zoneSubAlpha = 0.0f;
     } else if (elapsed < ZONE_FADE_IN_MS) {
-        zoneAlpha = (float)elapsed / ZONE_FADE_IN_MS;
+        zoneAlpha = static_cast<float>(elapsed) / ZONE_FADE_IN_MS;
     } else if (elapsed < ZONE_FADE_IN_MS + ZONE_HOLD_MS) {
         zoneAlpha = 1.0f;
     } else {
-        zoneAlpha = 1.0f - (float)(elapsed - ZONE_FADE_IN_MS - ZONE_HOLD_MS) / ZONE_FADE_OUT_MS;
+        zoneAlpha = 1.0f - static_cast<float>(elapsed - ZONE_FADE_IN_MS - ZONE_HOLD_MS) / ZONE_FADE_OUT_MS;
         if (zoneAlpha < 0.0f) zoneAlpha = 0.0f;
     }
 

@@ -13,11 +13,17 @@ static void added(void);
 static void removed(void);
 static void postUpdate(void);
 
-struct System guiManagerRmlUi = {
-    .name       = "gui",
-    .added      = added,
-    .postUpdate = postUpdate,
-    .removed    = removed,
+System guiManagerRmlUi = {
+    .name                = "gui",
+    .added               = added,
+    .removed             = removed,
+    .preUpdate           = nullptr,
+    .update              = nullptr,
+    .postUpdate          = postUpdate,
+    .cpuElapsedLastFrame = 0.0,
+    .cpuElapsed          = 0.0,
+    .gpuElapsed          = 0.0,
+    .priority            = 0,
 };
 
 static RmlParams rmlParams;
@@ -30,7 +36,7 @@ void added(void) {
     rmlGetVersion(version);
     debug("rmlui: RmlUi %s", version);
 
-    rmlParams = (RmlParams){
+    rmlParams = RmlParams{
         .window =
             {
                 .sdlWindowHandle  = window.sdlWindowHandle,

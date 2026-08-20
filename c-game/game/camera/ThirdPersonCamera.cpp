@@ -17,6 +17,9 @@ static float tpPitchMin          = -20.0f * GLM_PIf / 180.0f;
 static float tpPitchMax          = 60.0f * GLM_PIf / 180.0f;
 static float tpLookAtHeight      = 1.1f;  // camera look-at ~chest height
 
+static vec3 Y_UP = {0.0f, 1.0f, 0.0f};
+static vec3 X_AXIS = {1.0f, 0.0f, 0.0f};
+
 static struct {
     u32 followEntityId;
     Scene* followScene;
@@ -37,7 +40,7 @@ static struct {
 } tpCam;
 
 void thirdPersonCameraInit(void) {
-    tpCam.followScene    = NULL;
+    tpCam.followScene    = nullptr;
     tpCam.followEntityId = 0;
     tpCam.yaw            = glm_rad(180.0f);
     tpCam.pitch          = glm_rad(8.0f);
@@ -113,17 +116,17 @@ void thirdPersonCameraSetMouseDy(float dy) {
  * screen edges and depth-dependent parallax at object silhouettes — the exact
  * conditions where temporal ghosting would show up.  ENGINE_TAA_GHOST_PAN. */
 static float tpGhostPan = 0.0f;
-static char tpGhostPanInit = 0;
+static bool tpGhostPanInit = false;
 
 void thirdPersonCameraUpdate(void) {
-    vulkanResourceSetCameraOccluders(NULL, NULL, 0);
+    vulkanResourceSetCameraOccluders(nullptr, nullptr, 0);
     if (!tpCam.camEntity || !tpCam.camera || !tpCam.camTransform) return;
     if (!tpCam.followScene || !tpCam.followEntityId) return;
 
     if (!tpGhostPanInit) {
-        tpGhostPanInit = 1;
+        tpGhostPanInit = true;
         const char* env = getenv("ENGINE_TAA_GHOST_PAN");
-        if (env && *env) tpGhostPan = (float)atof(env);
+        if (env && *env) tpGhostPan = static_cast<float>(atof(env));
     }
     if (tpGhostPan != 0.0f) {
         tpCam.yaw += tpGhostPan * GLM_PIf / 180.0f * timer.dt;
@@ -167,9 +170,9 @@ void thirdPersonCameraUpdate(void) {
 
             vec3 right, up;
             if (fabsf(mainDir[1]) < 0.99f) {
-                glm_vec3_cross(mainDir, GLM_YUP, right);
+                glm_vec3_cross(mainDir, Y_UP, right);
             } else {
-                glm_vec3_cross(mainDir, (vec3){1, 0, 0}, right);
+                glm_vec3_cross(mainDir, X_AXIS, right);
             }
             glm_vec3_normalize(right);
             glm_vec3_cross(right, mainDir, up);
@@ -213,12 +216,12 @@ void thirdPersonCameraUpdate(void) {
 
     // ── Smooth obstacle recovery ──────────────────────────────────────
     {
-        float fullDist    = glm_vec3_distance(playerPos,
-                                              (vec3){
-                                                  playerPos[0] + offset[0],
-                                                  playerPos[1] + offset[1],
-                                                  playerPos[2] + offset[2],
-                                              });
+        vec3 probePos = {
+            playerPos[0] + offset[0],
+            playerPos[1] + offset[1],
+            playerPos[2] + offset[2],
+        };
+        float fullDist    = glm_vec3_distance(playerPos, probePos);
         float clampedDist = glm_vec3_distance(playerPos, desiredCamPos);
         bool wasClamped   = (clampedDist < fullDist - 0.01f);
 
@@ -278,7 +281,7 @@ void thirdPersonCameraUpdate(void) {
     }
 
     mat4 lookMat;
-    glm_lookat(tpCam.camTransform->pos, lookTarget, GLM_YUP, lookMat);
+    glm_lookat(tpCam.camTransform->pos, lookTarget, Y_UP, lookMat);
     glm_mat4_quat(lookMat, tpCam.camTransform->rot);
     glm_quat_inv(tpCam.camTransform->rot, tpCam.camTransform->rot);
 

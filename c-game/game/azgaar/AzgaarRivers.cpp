@@ -8,13 +8,15 @@
 #include <stdlib.h>
 #include <string.h>
 
+static vec3 Y_UP = {0.0f, 1.0f, 0.0f};
+
 // One spatial-hash entry: a resampled river centerline point in world space.
 // Kept parallel to AzgaarRiverNearHit (the query result type).
-typedef struct RiverHashPoint {
+struct RiverHashPoint {
     float wx, wz;
     u32   riverId;
     float widthM;
-} RiverHashPoint;
+};
 
 // ── Azgaar rivers (workstream C, plans/azgaar-world-population.md) ────
 // Builds, from the parsed AzgaarWorld rivers (section 32 metadata + section
@@ -64,12 +66,12 @@ static void growHash(size_t need) {
 }
 
 // A single resampled centerline sample (world space).
-typedef struct RiverSample {
+struct RiverSample {
     float wx, wy, wz;
     float tx, tz;   // unit flow direction (source → mouth)
     float arcLen;   // cumulative arc length in metres
     float widthM;
-} RiverSample;
+};
 
 // ── Hash storage (sparse) ───────────────────────────────────────────────
 // The world spans hundreds of km, so a dense numBX*numBY grid would be
@@ -87,12 +89,12 @@ static bool   g_hashReady;
 
 static u64 packBucket(int by, int bx) {
     // Two's-complement via u32 cast so negative coordinates pack correctly.
-    return ((u64)(u32)(int32_t)by << 32) | (u32)(int32_t)bx;
+    return (static_cast<u64>(static_cast<u32>(static_cast<int32_t>(by))) << 32) | static_cast<u32>(static_cast<int32_t>(bx));
 }
 
 static u32 bucketLookup(u64 key) {
     if (!g_mapUsed || g_mapCap == 0) return 0xFFFFFFFFu;
-    size_t idx = (size_t)((key * 0x9E3779B97F4A7C15ULL) & (u64)(g_mapCap - 1));
+    size_t idx = static_cast<size_t>((key * 0x9E3779B97F4A7C15ULL) & static_cast<u64>(g_mapCap - 1));
     while (g_mapUsed[idx]) {
         if (g_bucketMap[idx] == key) return g_bucketMapIdx[idx];
         idx = (idx + 1) & (g_mapCap - 1);
@@ -101,7 +103,7 @@ static u32 bucketLookup(u64 key) {
 }
 
 static void bucketInsert(u64 key, u32 compactIdx) {
-    size_t idx = (size_t)((key * 0x9E3779B97F4A7C15ULL) & (u64)(g_mapCap - 1));
+    size_t idx = static_cast<size_t>((key * 0x9E3779B97F4A7C15ULL) & static_cast<u64>(g_mapCap - 1));
     while (g_mapUsed[idx]) {
         if (g_bucketMap[idx] == key) { g_bucketMapIdx[idx] = compactIdx; return; }
         idx = (idx + 1) & (g_mapCap - 1);
@@ -113,11 +115,11 @@ static void bucketInsert(u64 key, u32 compactIdx) {
 
 // Free all sparse hash structures (called before a rebuild and on clear).
 static void freeHashStructs(void) {
-    if (g_bucketKeys)   { memoryFree(g_bucketKeys); g_bucketKeys = NULL; }
-    if (g_bucketStart)  { memoryFree(g_bucketStart); g_bucketStart = NULL; }
-    if (g_bucketMap)    { memoryFree(g_bucketMap); g_bucketMap = NULL; }
-    if (g_mapUsed)     { memoryFree(g_mapUsed); g_mapUsed = NULL; }
-    if (g_bucketMapIdx) { memoryFree(g_bucketMapIdx); g_bucketMapIdx = NULL; }
+    if (g_bucketKeys)   { memoryFree(g_bucketKeys); g_bucketKeys = nullptr; }
+    if (g_bucketStart)  { memoryFree(g_bucketStart); g_bucketStart = nullptr; }
+    if (g_bucketMap)    { memoryFree(g_bucketMap); g_bucketMap = nullptr; }
+    if (g_mapUsed)     { memoryFree(g_mapUsed); g_mapUsed = nullptr; }
+    if (g_bucketMapIdx) { memoryFree(g_bucketMapIdx); g_bucketMapIdx = nullptr; }
     g_bucketCount = 0;
     g_mapCap = 0;
 }
@@ -134,10 +136,10 @@ static void decalRemoveAll(void) {
 void azgaarRiversClear(void) {
     vulkanAzgaarRiverClear();
     decalRemoveAll();
-    if (g_hashPts) { memoryFree(g_hashPts); g_hashPts = NULL; }
+    if (g_hashPts) { memoryFree(g_hashPts); g_hashPts = nullptr; }
     freeHashStructs();
-    if (g_verts) { memoryFree(g_verts); g_verts = NULL; }
-    if (g_indices) { memoryFree(g_indices); g_indices = NULL; }
+    if (g_verts) { memoryFree(g_verts); g_verts = nullptr; }
+    if (g_indices) { memoryFree(g_indices); g_indices = nullptr; }
     g_vertCount = g_vertCap = 0;
     g_idxCount = g_idxCap = 0;
     g_hashCount = g_hashCap = 0;
@@ -150,23 +152,23 @@ void azgaarRiversClear(void) {
 // per-sample resample path.
 static float azgaarDirectHeight(const AzgaarWorld* world, float xPx, float yPx) {
     if (!world->heightGrid || world->heightGridWidth < 2 || world->heightGridHeight < 2) return 0.0f;
-    float cellW = (float)world->widthPx / (float)world->heightGridWidth;
-    float cellH = (float)world->heightPx / (float)world->heightGridHeight;
+    float cellW = static_cast<float>(world->widthPx) / static_cast<float>(world->heightGridWidth);
+    float cellH = static_cast<float>(world->heightPx) / static_cast<float>(world->heightGridHeight);
     float gx = xPx / cellW - 0.5f;
     float gy = yPx / cellH - 0.5f;
-    i32 x1 = (i32)floorf(gx);
-    i32 y1 = (i32)floorf(gy);
-    float tx = gx - (float)x1;
-    float ty = gy - (float)y1;
+    i32 x1 = static_cast<i32>(floorf(gx));
+    i32 y1 = static_cast<i32>(floorf(gy));
+    float tx = gx - static_cast<float>(x1);
+    float ty = gy - static_cast<float>(y1);
     if (x1 < 0) { x1 = 0; tx = 0.0f; }
     if (y1 < 0) { y1 = 0; ty = 0.0f; }
-    if (x1 > (i32)world->heightGridWidth - 2) { x1 = (i32)world->heightGridWidth - 2; tx = 1.0f; }
-    if (y1 > (i32)world->heightGridHeight - 2) { y1 = (i32)world->heightGridHeight - 2; ty = 1.0f; }
+    if (x1 > static_cast<i32>(world->heightGridWidth) - 2) { x1 = static_cast<i32>(world->heightGridWidth) - 2; tx = 1.0f; }
+    if (y1 > static_cast<i32>(world->heightGridHeight) - 2) { y1 = static_cast<i32>(world->heightGridHeight) - 2; ty = 1.0f; }
     u32 w = world->heightGridWidth;
-    float top    = world->heightGrid[(u32)y1 * w + (u32)x1]
-                 + (world->heightGrid[(u32)y1 * w + (u32)(x1 + 1)] - world->heightGrid[(u32)y1 * w + (u32)x1]) * tx;
-    float bottom = world->heightGrid[(u32)(y1 + 1) * w + (u32)x1]
-                 + (world->heightGrid[(u32)(y1 + 1) * w + (u32)(x1 + 1)] - world->heightGrid[(u32)(y1 + 1) * w + (u32)x1]) * tx;
+    float top    = world->heightGrid[static_cast<u32>(y1) * w + static_cast<u32>(x1)]
+                 + (world->heightGrid[static_cast<u32>(y1) * w + static_cast<u32>(x1 + 1)] - world->heightGrid[static_cast<u32>(y1) * w + static_cast<u32>(x1)]) * tx;
+    float bottom = world->heightGrid[static_cast<u32>(y1 + 1) * w + static_cast<u32>(x1)]
+                 + (world->heightGrid[static_cast<u32>(y1 + 1) * w + static_cast<u32>(x1 + 1)] - world->heightGrid[static_cast<u32>(y1 + 1) * w + static_cast<u32>(x1)]) * tx;
     return top + (bottom - top) * ty;
 }
 
@@ -199,7 +201,7 @@ static u32 resampleRiver(const AzgaarWorld* world, const AzgaarRiver* r,
     // clamped to [MIN_W_M, MAX_W_M].  Missing metadata → default 4 m width.
     float lengthM = r->lengthKm * 1000.0f;
 
-    u32 count = (u32)(totalLen / AZGAAR_RIVER_SPACING_M);
+    u32 count = static_cast<u32>(totalLen / AZGAAR_RIVER_SPACING_M);
     if (count + 1u > cap) count = cap - 1u;
     if (count < 1u) count = 1u;
 
@@ -212,7 +214,7 @@ static u32 resampleRiver(const AzgaarWorld* world, const AzgaarRiver* r,
     // O(total samples) instead of O(samples * points) per river.
     u32 seg = 0;
     for (u32 k = 0; k <= count; ++k) {
-        float target = (float)k * AZGAAR_RIVER_SPACING_M;
+        float target = static_cast<float>(k) * AZGAAR_RIVER_SPACING_M;
         while (seg + 1u < n && cum[seg + 1u] < target) seg++;
         u32 i = seg;
 
@@ -254,7 +256,7 @@ static u32 resampleRiver(const AzgaarWorld* world, const AzgaarRiver* r,
         // Width profile at fraction s/lengthM
         float frac = lengthM > 1e-6f ? target / lengthM : 0.0f;
         float wPx = r->sourceWidthPx + (r->widthPx - r->sourceWidthPx) * frac;
-        float widthM = fminf(fmaxf(wPx * (float)mppD, AZGAAR_RIVER_MIN_W_M), AZGAAR_RIVER_MAX_W_M);
+        float widthM = fminf(fmaxf(wPx * static_cast<float>(mppD), AZGAAR_RIVER_MIN_W_M), AZGAAR_RIVER_MAX_W_M);
 
         out[k].wx = wx; out[k].wz = wz; out[k].wy = y;
         out[k].tx = tx; out[k].tz = tz;
@@ -312,7 +314,7 @@ static void buildHash(void) {
     }
 
     // Prefix sum over the compact distinct buckets -> g_bucketStart.
-    g_bucketStart  = static_cast<u32*>(memoryAlloc(sizeof(u32) * ((size_t)g_bucketCount + 1)));
+    g_bucketStart  = static_cast<u32*>(memoryAlloc(sizeof(u32) * (static_cast<size_t>(g_bucketCount) + 1)));
     u32 running = 0;
     for (u32 b = 0; b < g_bucketCount; ++b) {
         g_bucketStart[b] = running;
@@ -321,7 +323,7 @@ static void buildHash(void) {
     g_bucketStart[g_bucketCount] = running; // == n
 
     // Scatter g_hashPts into bucket-sorted order (compact bucket index order).
-    u32* cursor = static_cast<u32*>(memoryAlloc(sizeof(u32) * (size_t)g_bucketCount));
+    u32* cursor = static_cast<u32*>(memoryAlloc(sizeof(u32) * static_cast<size_t>(g_bucketCount)));
     for (u32 b = 0; b < g_bucketCount; ++b) cursor[b] = g_bucketStart[b];
     RiverHashPoint* sorted = static_cast<RiverHashPoint*>(memoryAlloc(sizeof(RiverHashPoint) * n));
     for (size_t i = 0; i < n; ++i) {
@@ -410,17 +412,17 @@ void azgaarRiversInit(const AzgaarWorld* world) {
             float dz = wxz[(p + 1u) * 2 + 1] - wxz[p * 2 + 1];
             totalLen += sqrtf(dx * dx + dz * dz);
         }
-        u32 samples = (u32)(totalLen / AZGAAR_RIVER_SPACING_M) + 1u;
+        u32 samples = static_cast<u32>(totalLen / AZGAAR_RIVER_SPACING_M) + 1u;
         sampleCounts[i] = samples;
         totalVerts += samples * 2u;
         totalSamples += samples;
-        idxNeed += (size_t)(samples - 1u) * 6u;
+        idxNeed += static_cast<size_t>(samples - 1u) * 6u;
         memoryFree(wxz);
     }
 
-    growVerts((size_t)totalVerts);
+    growVerts(static_cast<size_t>(totalVerts));
     growIndices(idxNeed);
-    growHash((size_t)totalSamples);
+    growHash(static_cast<size_t>(totalSamples));
 
     u32 riverWithGeom = 0;
     for (u32 i = 0; i < world->riverCount; ++i) {
@@ -473,8 +475,8 @@ void azgaarRiversInit(const AzgaarWorld* world) {
         // Ribbon indices: quads between consecutive samples.  Buffer pre-sized
         // via growIndices(idxNeed) — no per-quad realloc.
         for (u32 k = 0; k + 1u < n; ++k) {
-            u32 li = vBase + (size_t)k * 2u;
-            u32 li1 = vBase + (size_t)(k + 1u) * 2u;
+            u32 li = vBase + static_cast<size_t>(k) * 2u;
+            u32 li1 = vBase + static_cast<size_t>(k + 1u) * 2u;
             g_indices[g_idxCount++] = li;      // L_k
             g_indices[g_idxCount++] = li + 1u; // R_k
             g_indices[g_idxCount++] = li1;     // L_{k+1}
@@ -503,8 +505,9 @@ void azgaarRiversInit(const AzgaarWorld* world) {
             d.halfExtents[0] = stripW * 0.5f;
             d.halfExtents[1] = 140.0f;
             d.halfExtents[2] = stripSpacing * 0.5f;
-            glm_quatv(d.rotation, yaw, (vec3){0.0f, 1.0f, 0.0f});
-            glm_vec4_copy((vec4){0.20f, 0.16f, 0.10f, 0.35f}, d.color);
+            glm_quatv(d.rotation, yaw, Y_UP);
+            vec4 riverColor = {0.20f, 0.16f, 0.10f, 0.35f};
+            glm_vec4_copy(riverColor, d.color);
             d.textureId = DECAL_PROCEDURAL_CIRCLE_TEXTURE;
             d.flags = DECAL_FLAG_GROUND_ONLY;
             d.opacity = 1.0f;
@@ -525,11 +528,11 @@ void azgaarRiversInit(const AzgaarWorld* world) {
 
     // Upload the ribbon mesh to the azgaar_river pass.
     if (g_vertCount && g_idxCount) {
-        vulkanAzgaarRiverSetMesh(g_verts, (u32)g_vertCount, g_indices, (u32)g_idxCount);
+        vulkanAzgaarRiverSetMesh(g_verts, static_cast<u32>(g_vertCount), g_indices, static_cast<u32>(g_idxCount));
     }
 
     info("Azgaar rivers: %u rivers (%u with geometry), %u ribbon verts, %u indices, "
           "%u hash points, %u wet decals, built in %.1f ms",
-          world->riverCount, riverWithGeom, (u32)g_vertCount, (u32)g_idxCount,
-          (u32)g_hashCount, g_decalCount, millies() - t0);
+          world->riverCount, riverWithGeom, static_cast<u32>(g_vertCount), static_cast<u32>(g_idxCount),
+          static_cast<u32>(g_hashCount), g_decalCount, millies() - t0);
 }

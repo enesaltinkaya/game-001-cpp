@@ -15,22 +15,27 @@ static void update(void);
 static void postUpdate(void);
 static void onAzgaarMapLoaded(void* _);
 
-struct System gameSystem = {
-    .name       = "game",
-    .added      = added,
-    .removed    = removed,
-    .preUpdate  = preUpdate,
-    .update     = update,
-    .postUpdate = postUpdate,
+System gameSystem = {
+    .name                = "game",
+    .added               = added,
+    .removed             = removed,
+    .preUpdate           = preUpdate,
+    .update              = update,
+    .postUpdate          = postUpdate,
+    .cpuElapsedLastFrame = 0.0,
+    .cpuElapsed          = 0.0,
+    .gpuElapsed          = 0.0,
+    .priority            = 0,
 };
 
+[[maybe_unused]]
 static void autoEnter(void*) {
     gameStateTransition(STATE_LOADING_AZGAAR);
 }
 
 static void gameRendererInitialized(void* _) {
-    (void)_;
-    // futureTaskAdd(500, autoEnter, NULL);
+    static_cast<void>(_);
+    // futureTaskAdd(500, autoEnter, nullptr);
     guiManagerAddGuiNextFrame(&cameraGui);
     guiManagerAddGuiNextFrame(&playerGui);
 }
@@ -55,9 +60,17 @@ static void onAzgaarMapLoaded(void* _) {
 // disposes Vulkan.
 static void azgaarWorldCleanupRemoved(void);
 
-struct System azgaarWorldCleanupSystem = {
-    .name    = "azgaarWorldCleanup",
-    .removed = azgaarWorldCleanupRemoved,
+System azgaarWorldCleanupSystem = {
+    .name                = "azgaarWorldCleanup",
+    .added               = nullptr,
+    .removed             = azgaarWorldCleanupRemoved,
+    .preUpdate           = nullptr,
+    .update              = nullptr,
+    .postUpdate          = nullptr,
+    .cpuElapsedLastFrame = 0.0,
+    .cpuElapsed          = 0.0,
+    .gpuElapsed          = 0.0,
+    .priority            = 0,
 };
 
 static void azgaarWorldCleanupRemoved(void) {

@@ -17,7 +17,7 @@
  *     roads" gate.
  *
  * Everything it produces is pushed to the domain-agnostic engine pass
- * (VulkanAzgaarPropsPass).  Lifecycle is driven by LoadingAzgaar:
+ * static_cast<VulkanAzgaarPropsPass>(.)  Lifecycle is driven by LoadingAzgaar:
  *   azgaarPropsInit(world)   — build meshes + species table + road hash
  *   azgaarPropsUpdate()      — per frame: poll READY tiles, scatter, finalize
  *   azgaarPropsDestroy()     — free everything, clear the pass

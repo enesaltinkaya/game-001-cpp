@@ -437,10 +437,16 @@ static void update(void);
 static void removed(void);
 
 System animationSystem = {
-    .name    = "animation",
-    .added   = added,
-    .update  = update,
-    .removed = removed,
+    .name                = "animation",
+    .added               = added,
+    .removed             = removed,
+    .preUpdate           = nullptr,
+    .update              = update,
+    .postUpdate          = nullptr,
+    .cpuElapsedLastFrame = 0.0,
+    .cpuElapsed          = 0.0,
+    .gpuElapsed          = 0.0,
+    .priority            = 0,
 };
 
 static void added(void) {

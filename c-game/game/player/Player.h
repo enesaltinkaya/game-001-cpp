@@ -2,14 +2,14 @@
 
 #include "ecs/system/scene/SceneSystem.h"
 
-typedef struct Transform Transform;
+struct Transform;
 #include "ecs/system/System.h"
 
-typedef struct JoltCharacter JoltCharacter;
-typedef struct JoltBody JoltBody;
+struct JoltCharacter;
+struct JoltBody;
 
 // ── Player component ────────────────────────────────────────────────────────
-typedef struct Player {
+struct Player {
     float moveSpeed;
     float turnSpeed;
     float cameraYaw;        // horizontal orbit angle (radians)
@@ -28,7 +28,7 @@ typedef struct Player {
     // physics update) so it cannot fall through the terrain before the
     // collision data is ready (see heightmapTerrainHasBodyAt).
     bool  waitingForGround;
-} Player;
+};
 REGISTER_COMPONENT(Player);
 
 // ── PlayerSystem ────────────────────────────────────────────────────────────

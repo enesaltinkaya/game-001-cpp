@@ -82,12 +82,17 @@ static void postUpdate(void) {
     activeBackend->postUpdate();
 }
 
-struct System windowSystem = {
-    .name       = "window",
-    .added      = added,
-    .removed    = removed,
-    .preUpdate  = preUpdate,
-    .postUpdate = postUpdate,
+System windowSystem = {
+    .name                = "window",
+    .added               = added,
+    .removed             = removed,
+    .preUpdate           = preUpdate,
+    .update              = nullptr,
+    .postUpdate          = postUpdate,
+    .cpuElapsedLastFrame = 0.0,
+    .cpuElapsed          = 0.0,
+    .gpuElapsed          = 0.0,
+    .priority            = 0,
 };
 
 void windowSystemHide(void) {

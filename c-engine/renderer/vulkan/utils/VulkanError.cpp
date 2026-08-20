@@ -5,7 +5,7 @@
 #include "Utils.h"
 #include "logger/Logger.h"
 
-static VulkanDeviceLostHandler deviceLostHandler = NULL;
+static VulkanDeviceLostHandler deviceLostHandler = nullptr;
 static std::atomic<char> deviceLostFlag{0};
 
 void vulkanSetDeviceLostHandler(VulkanDeviceLostHandler handler) {

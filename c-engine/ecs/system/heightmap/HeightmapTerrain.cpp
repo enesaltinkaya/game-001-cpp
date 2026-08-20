@@ -683,11 +683,15 @@ static void update(void) {
     heightmapTerrainSyncPhysics(ht, transform->pos[0], transform->pos[2]);
 }
 
-struct System heightmapTerrainSystem = {
-    .name       = "heightmapTerrain",
-    .added      = added,
-    .removed    = removed,
-    .preUpdate  = preUpdate,
-    .update     = update,
-    .postUpdate = postUpdate,
+System heightmapTerrainSystem = {
+    .name                = "heightmapTerrain",
+    .added               = added,
+    .removed             = removed,
+    .preUpdate           = preUpdate,
+    .update              = update,
+    .postUpdate          = postUpdate,
+    .cpuElapsedLastFrame = 0.0,
+    .cpuElapsed          = 0.0,
+    .gpuElapsed          = 0.0,
+    .priority            = 0,
 };

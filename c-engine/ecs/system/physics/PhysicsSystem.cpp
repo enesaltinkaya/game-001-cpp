@@ -16,12 +16,17 @@ static void removed(void);
 static void preUpdate(void);
 static void update(void);
 
-struct System pyhsicsSystem = {
-    .name      = "physics",
-    .added     = added,
-    .removed   = removed,
-    .preUpdate = preUpdate,
-    .update    = update,
+System pyhsicsSystem = {
+    .name                = "physics",
+    .added               = added,
+    .removed             = removed,
+    .preUpdate           = preUpdate,
+    .update              = update,
+    .postUpdate          = nullptr,
+    .cpuElapsedLastFrame = 0.0,
+    .cpuElapsed          = 0.0,
+    .gpuElapsed          = 0.0,
+    .priority            = 0,
 };
 
 // entity → Scene* mapping for dynamic bodies so we can look up

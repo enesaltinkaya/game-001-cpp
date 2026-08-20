@@ -13,10 +13,17 @@
 static void added(void);
 static void removed(void);
 
-struct System settingsVideoGui = {
-    .name    = "settingsVideoGui",
-    .added   = added,
-    .removed = removed,
+System settingsVideoGui = {
+    .name                = "settingsVideoGui",
+    .added               = added,
+    .removed             = removed,
+    .preUpdate           = nullptr,
+    .update              = nullptr,
+    .postUpdate          = nullptr,
+    .cpuElapsedLastFrame = 0.0,
+    .cpuElapsed          = 0.0,
+    .gpuElapsed          = 0.0,
+    .priority            = 0,
 };
 
 static void* document;
@@ -77,8 +84,8 @@ void added(void) {
 void removed(void) {
     rmlUnloadDocument(document);
     rmlUnloadModel(model);
-    document = NULL;
-    model    = NULL;
+    document = nullptr;
+    model    = nullptr;
     signalRemoveSubscription("windowResized", windowResized);
 }
 
@@ -93,7 +100,7 @@ static void toggleFullScreenLater(void* _) {
 }
 
 int toggleFullScreen(void* _) {
-    futureTaskAdd(0, toggleFullScreenLater, NULL);
+    futureTaskAdd(0, toggleFullScreenLater, nullptr);
     return 0;
 }
 
@@ -108,7 +115,7 @@ static void toggleVsyncLater(void* _) {
 }
 
 int toggleVsync(void* _) {
-    futureTaskAdd(0, toggleVsyncLater, NULL);
+    futureTaskAdd(0, toggleVsyncLater, nullptr);
     return 0;
 }
 
@@ -118,12 +125,12 @@ static void uiScaleChangeLater(void* _) {
     }
 
     settingsSetDouble("uiScale", uiScale);
-    signalEmit("uiScaleChanged", NULL);
+    signalEmit("uiScaleChanged", nullptr);
     settingsWrite();
 }
 
 int uiScaleChange(void* _) {
-    futureTaskAdd(0, uiScaleChangeLater, NULL);
+    futureTaskAdd(0, uiScaleChangeLater, nullptr);
     return 0;
 }
 
@@ -139,7 +146,7 @@ static void cursorScaleChangeLater(void* _) {
 }
 
 int cursorScaleChange(void* _) {
-    futureTaskAdd(0, cursorScaleChangeLater, NULL);
+    futureTaskAdd(0, cursorScaleChangeLater, nullptr);
     return 0;
 }
 
@@ -158,7 +165,7 @@ static void fpsLimitCheckedChangeLater(void* _) {
 }
 
 int fpsLimitCheckedChange(void* _) {
-    futureTaskAdd(0, fpsLimitCheckedChangeLater, NULL);
+    futureTaskAdd(0, fpsLimitCheckedChangeLater, nullptr);
     return 0;
 }
 
@@ -173,7 +180,7 @@ static void fpsLimitChangeLater(void* _) {
 }
 
 int fpsLimitChange(void* _) {
-    futureTaskAdd(0, fpsLimitChangeLater, NULL);
+    futureTaskAdd(0, fpsLimitChangeLater, nullptr);
     return 0;
 }
 
@@ -188,7 +195,7 @@ static void showFpsChangeLater(void* _) {
 }
 
 int showFpsChange(void* _) {
-    futureTaskAdd(0, showFpsChangeLater, NULL);
+    futureTaskAdd(0, showFpsChangeLater, nullptr);
     return 0;
 }
 

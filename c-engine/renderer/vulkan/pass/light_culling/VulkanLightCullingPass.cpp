@@ -17,11 +17,16 @@ static void update(void);
 static void removed(void);
 
 System vulkanLightCullingPass = {
-    .name      = "light_culling",
-    .added     = added,
-    .preUpdate = preUpdate,
-    .update    = update,
-    .removed   = removed,
+    .name                = "light_culling",
+    .added               = added,
+    .removed             = removed,
+    .preUpdate           = preUpdate,
+    .update              = update,
+    .postUpdate          = nullptr,
+    .cpuElapsedLastFrame = 0.0,
+    .cpuElapsed          = 0.0,
+    .gpuElapsed          = 0.0,
+    .priority            = 0,
 };
 
 /* Must match shaders/includes/globalset.shader */
@@ -46,8 +51,8 @@ static void createBuffers(u32 tileCount) {
     if (buffersReady) {
         vulkanDestroyBuffer(&lightGridBuffer,  NULL);
         vulkanDestroyBuffer(&lightIndexBuffer, NULL);
-        lightGridBuffer    = (VulkanBuffer){0};
-        lightIndexBuffer   = (VulkanBuffer){0};
+        lightGridBuffer    = VulkanBuffer{0};
+        lightIndexBuffer   = VulkanBuffer{0};
         buffersReady       = 0;
         allocatedTileCount = 0;
     }
@@ -154,8 +159,8 @@ static void removed(void) {
     if (buffersReady) {
         vulkanDestroyBuffer(&lightGridBuffer,  NULL);
         vulkanDestroyBuffer(&lightIndexBuffer, NULL);
-        lightGridBuffer    = (VulkanBuffer){0};
-        lightIndexBuffer   = (VulkanBuffer){0};
+        lightGridBuffer    = VulkanBuffer{0};
+        lightIndexBuffer   = VulkanBuffer{0};
         buffersReady       = 0;
         allocatedTileCount = 0;
     }

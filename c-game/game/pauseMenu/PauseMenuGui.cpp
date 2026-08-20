@@ -10,9 +10,16 @@ static void added(void);
 static void removed(void);
 
 System pauseMenuGui = {
-    .name    = "pauseMenu",
-    .added   = added,
-    .removed = removed,
+    .name                = "pauseMenu",
+    .added               = added,
+    .removed             = removed,
+    .preUpdate           = nullptr,
+    .update              = nullptr,
+    .postUpdate          = nullptr,
+    .cpuElapsedLastFrame = 0.0,
+    .cpuElapsed          = 0.0,
+    .gpuElapsed          = 0.0,
+    .priority            = 0,
 };
 
 static void* document;
@@ -33,21 +40,21 @@ void added(void) {
 
 void removed(void) {
     rmlUnloadDocument(document);
-    document = NULL;
+    document = nullptr;
 }
 
 char pauseMenuGuiIsShowing(void) {
-    return document != NULL;
+    return document != nullptr;
 }
 
 int pauseReturnToGame(void* _) {
-    (void)_;
+    static_cast<void>(_);
     guiManagerRemoveGuiNextFrame(&pauseMenuGui);
     return 0;
 }
 
 int pauseSettingsOpen(void* _) {
-    (void)_;
+    static_cast<void>(_);
     if (!settingsGuiIsShowing()) {
         guiManagerRemoveGuiNextFrame(&pauseMenuGui);
         guiManagerAddGuiNextFrame(&settingsGui);
@@ -57,7 +64,7 @@ int pauseSettingsOpen(void* _) {
 
 int pauseExitGame(void* _) {
     guiManagerRemoveGuiNextFrame(&pauseMenuGui);
-    (void)_;
+    static_cast<void>(_);
     gameStateTransition(STATE_MAIN_MENU);
     return 0;
 }

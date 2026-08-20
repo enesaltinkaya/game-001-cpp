@@ -2,14 +2,14 @@
 
 #include "ecs/system/scene/SceneSystem.h"
 
-typedef enum {
+enum DamageType {
     DAMAGE_TYPE_PHYSICAL = 0,
     DAMAGE_TYPE_FIRE,
     DAMAGE_TYPE_COLD,
     DAMAGE_TYPE_LIGHTNING,
-} DamageType;
+};
 
-typedef struct CharacterStats {
+struct CharacterStats {
     float  hp;
     float  maxHp;
     float  mana;
@@ -23,6 +23,6 @@ typedef struct CharacterStats {
     float  xpToNext;
     u32    level;
     u8     isDead;
-} CharacterStats;
+};
 
 REGISTER_COMPONENT(CharacterStats);

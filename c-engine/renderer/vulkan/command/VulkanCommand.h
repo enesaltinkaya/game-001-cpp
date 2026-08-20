@@ -1,23 +1,25 @@
 #pragma once
 
+#include <atomic>
+
 #include "renderer/vulkan/resources/VulkanBuffer.h"
 struct VulkanImage;
 struct VulkanPipe;
 
-typedef struct VulkanCommand {
+struct VulkanCommand {
     VkCommandBuffer cmd;
     VkFence fence;
     VkCommandPool pool;  // associated pool if it is transient
-    char transient;
-    _Atomic bool submitted;
-} VulkanCommand;
+    bool transient;
+    std::atomic<bool> submitted;
+};
 
-typedef struct VulkanSubmitInfo {
-    VkSemaphore wait;
-    VkSemaphore signal;
-    struct VulkanCommand* cmd;
-    VkShaderStageFlags stageFlags;
-} VulkanSubmitInfo;
+struct VulkanSubmitInfo {
+    VkSemaphore wait = VK_NULL_HANDLE;
+    VkSemaphore signal = VK_NULL_HANDLE;
+    struct VulkanCommand* cmd = nullptr;
+    VkShaderStageFlags stageFlags = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+};
 
 void vulkanBegin(VulkanCommand* cmd);
 void vulkanEnd(VulkanCommand* cmd);
@@ -33,9 +35,7 @@ void vulkanLabelBeginColor(VulkanCommand* cmd,
 void vulkanLabelBegin(VulkanCommand* cmd, const char* name);
 void vulkanLabelEnd(VulkanCommand* cmd);
 
-#define vulkanSubmit(...) \
-    r_vulkanSubmit(       \
-        (VulkanSubmitInfo){.stageFlags = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, __VA_ARGS__})
+#define vulkanSubmit(...) r_vulkanSubmit(VulkanSubmitInfo{__VA_ARGS__})
 void r_vulkanSubmit(VulkanSubmitInfo info);
 void vulkanPresent(VkSwapchainKHR* pSwapchains, u32* pImageIndices, VkSemaphore* pWaitSemaphore);
 void vulkanWaitIdle(const char* reason);

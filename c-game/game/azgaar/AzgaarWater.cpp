@@ -25,19 +25,19 @@ static void buildGridMesh(SceneVertex* vertices, u32* indices,
     u32 vertexCount = vertsX * vertsZ;
     u32 indexCount = divs * divs * 6;  // 2 triangles per quad
 
-    float invDivs = 1.0f / (float)divs;
+    float invDivs = 1.0f / static_cast<float>(divs);
 
     for (u32 iz = 0; iz < vertsZ; iz++) {
-        float v = (float)iz * invDivs;
+        float v = static_cast<float>(iz) * invDivs;
         // Store local-space positions in [-0.5, +0.5]. The vertex shader
         // scales these by AZGAAR_WATER_GRID_SIZE so that world vertices land
         // on multiples of CELL_SIZE and the camera-snap keeps the wave field
         // anchored to a stable world grid (pre-scaling here would double the
         // scale and make the wave/ripple phase jump whenever the camera snaps).
-        float localZ = ((float)iz * invDivs - 0.5f);
+        float localZ = (static_cast<float>(iz) * invDivs - 0.5f);
         for (u32 ix = 0; ix < vertsX; ix++) {
-            float u = (float)ix * invDivs;
-            float localX = ((float)ix * invDivs - 0.5f);
+            float u = static_cast<float>(ix) * invDivs;
+            float localX = (static_cast<float>(ix) * invDivs - 0.5f);
             u32 idx = iz * vertsX + ix;
 
             vertices[idx].position[0] = localX;
@@ -93,14 +93,14 @@ void azgaarWaterInit(const AzgaarWorld* world) {
     // degrees; workstream F).  FMG leaves it 0 on unauthored maps — keep the
     // old constant in that case.
     float windRad = world->winds[0] != 0.0f
-                        ? world->winds[0] * (float)M_PI / 180.0f
+                        ? world->winds[0] * static_cast<float>(M_PI) / 180.0f
                         : 0.5f;
 
     // Upload initial water params
     VulkanWaterData params = {
         .surfaceY              = {seaLevel,
                                   AZGAAR_WATER_GRID_SIZE,
-                                  (float)AZGAAR_WATER_GRID_DIVS,
+                                  static_cast<float>(AZGAAR_WATER_GRID_DIVS),
                                   0.0f},
         .shallowColor          = {0.05f, 0.25f, 0.45f, 5.0f},
         .deepColor             = {0.01f, 0.05f, 0.15f, 40.0f},
@@ -148,7 +148,7 @@ void azgaarWaterInit(const AzgaarWorld* world) {
     memoryFree(indices);
 
     waterInitialized = true;
-    cellSize = AZGAAR_WATER_GRID_SIZE / (float)divs;
+    cellSize = AZGAAR_WATER_GRID_SIZE / static_cast<float>(divs);
     lastCamX = lastCamZ = 0.0f;
 }
 

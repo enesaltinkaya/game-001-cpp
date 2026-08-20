@@ -38,5 +38,5 @@ void azgaarSettlementsClear(void);
 float azgaarSettlementsPlateauY(const AzgaarWorld* world, float wx, float wz, float naturalY);
 
 // The closest settlement whose footprint (radiusM + 30 m) contains (wx, wz),
-// or NULL when none does.  Used by the zone banner.
+// or nullptr when none does.  Used by the zone banner.
 const AzgaarSettlement* azgaarSettlementsNearest(const AzgaarWorld* world, float wx, float wz);

@@ -2,12 +2,12 @@
 
 #include "thread/Thread.h"
 
-typedef struct VulkanDesc {
+struct VulkanDesc {
     VkDescriptorPool pool;
     VkDescriptorSet set;
     VkDescriptorSetLayout layout;
     struct Thread lock;
-} VulkanDesc;
+};
 
 struct VulkanCommand;
 struct VulkanImage;
@@ -23,19 +23,19 @@ enum VulkanDescType {
     VULKAN_BINDING_UBO                    = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
 };
 
-typedef struct VulkanDescInfo {
-    const char* name;
-    int samplers;
-    int sampledImages;
-    int sampledCubeImages;
-    int sampledImageLayered;
-    int combinedImageSamplers;
-    int storageImages;
-    int ssbos;
-    int ubos;
-} VulkanDescInfo;
+struct VulkanDescInfo {
+    const char* name = nullptr;
+    int samplers = 0;
+    int sampledImages = 0;
+    int sampledCubeImages = 0;
+    int sampledImageLayered = 0;
+    int combinedImageSamplers = 0;
+    int storageImages = 0;
+    int ssbos = 0;
+    int ubos = 0;
+};
 
-#define vulkanCreateDesc(...) r_vulkanCreateDesc((struct VulkanDescInfo){__VA_ARGS__})
+#define vulkanCreateDesc(...) r_vulkanCreateDesc(VulkanDescInfo{__VA_ARGS__})
 struct VulkanDesc r_vulkanCreateDesc(struct VulkanDescInfo info);
 void vulkanDestroyDesc(struct VulkanDesc* desc);
 

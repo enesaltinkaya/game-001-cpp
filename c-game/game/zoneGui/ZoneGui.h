@@ -1,6 +1,6 @@
 #pragma once
 
-typedef struct System System;
+struct System;
 
 // Gameplay HUD overlay that announces the current Azgaar region (province /
 // state) with a World-of-Warcraft-style fade in / hold / fade out each time the

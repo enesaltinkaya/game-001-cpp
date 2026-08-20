@@ -20,13 +20,13 @@
 //   azgaarWeatherUpdate(camX, camY, camZ) — every frame with the camera pos
 //   azgaarWeatherDestroy()                — on teardown
 
-typedef enum {
+enum AzgaarWeatherCondition {
     AZGAAR_WEATHER_NONE   = 0,
     AZGAAR_WEATHER_SNOW   = 1,
     AZGAAR_WEATHER_RAIN   = 2,
     AZGAAR_WEATHER_DUST   = 3,
     AZGAAR_WEATHER_LEAVES = 4,
-} AzgaarWeatherCondition;
+};
 
 void azgaarWeatherInit(const AzgaarWorld* world);
 void azgaarWeatherUpdate(float camX, float camY, float camZ);

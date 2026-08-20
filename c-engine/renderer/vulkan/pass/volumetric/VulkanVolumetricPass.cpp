@@ -23,12 +23,16 @@ static double elapsedGPU;
 static char   volumetricDisabled;
 
 System vulkanVolumetricPass = {
-    .name       = "volumetric",
-    .added      = added,
-    .preUpdate  = preUpdate,
-    .update     = update,
-    .postUpdate = postUpdate,
-    .removed    = removed,
+    .name                = "volumetric",
+    .added               = added,
+    .removed             = removed,
+    .preUpdate           = preUpdate,
+    .update              = update,
+    .postUpdate          = postUpdate,
+    .cpuElapsedLastFrame = 0.0,
+    .cpuElapsed          = 0.0,
+    .gpuElapsed          = 0.0,
+    .priority            = 0,
 };
 
 static VulkanPipe lightSourcePipe;
@@ -89,7 +93,7 @@ static void destroyHistory(void) {
     for (int i = 0; i < 2; ++i) {
         if (historyImages[i].img) {
             vulkanDestroyImage(&historyImages[i], NULL);
-            historyImages[i] = (VulkanImage){0};
+            historyImages[i] = VulkanImage{0};
         }
     }
 
@@ -127,15 +131,15 @@ static void destroyImages(void) {
 
     if (lightSource.img) {
         vulkanDestroyImage(&lightSource, NULL);
-        lightSource = (VulkanImage){0};
+        lightSource = VulkanImage{0};
     }
     if (lightShafts.img) {
         vulkanDestroyImage(&lightShafts, NULL);
-        lightShafts = (VulkanImage){0};
+        lightShafts = VulkanImage{0};
     }
     if (blurTemp.img) {
         vulkanDestroyImage(&blurTemp, NULL);
-        blurTemp = (VulkanImage){0};
+        blurTemp = VulkanImage{0};
     }
 }
 

@@ -19,15 +19,15 @@ static NavMeshData navMesh;
 static void* decompressZstd(String* compressed, u32* outSize) {
     u64 rSize = ZSTD_getFrameContentSize(compressed->data, compressed->size);
     if (rSize == ZSTD_CONTENTSIZE_ERROR || rSize == ZSTD_CONTENTSIZE_UNKNOWN) {
-        return NULL;
+        return nullptr;
     }
     void* buf = memoryAlloc(rSize);
     u64 dSize = ZSTD_decompress(buf, rSize, compressed->data, compressed->size);
     if (ZSTD_isError(dSize) != 0U) {
         memoryFree(buf);
-        return NULL;
+        return nullptr;
     }
-    *outSize = (u32)rSize;
+    *outSize = static_cast<u32>(rSize);
     return buf;
 }
 
@@ -119,7 +119,7 @@ static bool loadNavMeshFromFile(const char* path) {
     if (!navMesh.query) {
         warn("navMesh: failed to create query");
         rcNavMeshDestroy(navMesh.navMesh);
-        navMesh.navMesh = NULL;
+        navMesh.navMesh = nullptr;
         memoryFree(raw);
         return false;
     }
@@ -137,23 +137,28 @@ static void added(void) {
 }
 
 static void removed(void) {
-    vulkanDebugNavMeshSetMesh(NULL);
+    vulkanDebugNavMeshSetMesh(nullptr);
     if (navMesh.query)   rcQueryDestroy(navMesh.query);
     if (navMesh.navMesh) rcNavMeshDestroy(navMesh.navMesh);
-    navMesh.navMesh = NULL;
-    navMesh.query   = NULL;
+    navMesh.navMesh = nullptr;
+    navMesh.query   = nullptr;
 }
 
 static void update(void) {
-    (void)0;
+    static_cast<void>(0);
 }
 
-struct System navMeshSystem = {
-    .name     = "navMesh",
-    .added    = added,
-    .update   = update,
-    .removed  = removed,
-    .priority = 1201,
+System navMeshSystem = {
+    .name                = "navMesh",
+    .added               = added,
+    .removed             = removed,
+    .preUpdate           = nullptr,
+    .update              = update,
+    .postUpdate          = nullptr,
+    .cpuElapsedLastFrame = 0.0,
+    .cpuElapsed          = 0.0,
+    .gpuElapsed          = 0.0,
+    .priority            = 1201,
 };
 
 // ── Public API ───────────────────────────────────────────────────────────
@@ -163,7 +168,7 @@ uint32_t navMeshFindPath(Scene* scene,
                           const float* endPos,
                           float* outPath,
                           uint32_t maxPath) {
-    (void)scene;
+    static_cast<void>(scene);
     if (!navMesh.query) return 0;
     uint32_t count = rcQueryFindPath(navMesh.query, startPos, endPos, outPath, maxPath);
     if (count > 0) {
@@ -173,7 +178,7 @@ uint32_t navMeshFindPath(Scene* scene,
 }
 
 int navMeshClosestPoint(Scene* scene, const float* pos, float* outPoint) {
-    (void)scene;
+    static_cast<void>(scene);
     if (!navMesh.query) return 0;
     return rcQueryClosestPoint(navMesh.query, pos, outPoint);
 }

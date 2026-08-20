@@ -17,12 +17,17 @@ static void preUpdate(void);
 static void update(void);
 static void removed(void);
 
-struct System vulkanAzgaarPropsPass = {
-    .name      = "azgaar_props",
-    .added     = added,
-    .preUpdate = preUpdate,
-    .update    = update,
-    .removed   = removed,
+System vulkanAzgaarPropsPass = {
+    .name                = "azgaar_props",
+    .added               = added,
+    .removed             = removed,
+    .preUpdate           = preUpdate,
+    .update              = update,
+    .postUpdate          = nullptr,
+    .cpuElapsedLastFrame = 0.0,
+    .cpuElapsed          = 0.0,
+    .gpuElapsed          = 0.0,
+    .priority            = 0,
 };
 
 // Must match the GLSL `PropPush` block (std430).
@@ -101,7 +106,7 @@ static Array(VulkanBuffer) retiredIbos = {};
 static void retireIbo(VulkanBuffer* ibo) {
     if (ibo->buf) {
         arrayPut(retiredIbos, *ibo);
-        *ibo = (VulkanBuffer){0};
+        *ibo = VulkanBuffer{0};
     }
 }
 
@@ -274,8 +279,8 @@ void vulkanAzgaarPropsSetMeshes(const void* verts, u32 vertCount,
                    .size = static_cast<u32>(idxCount * sizeof(u32)));
         vulkanTransientEnd(cmd, 1);
     } else {
-        meshVbo = (VulkanBuffer){0};
-        meshIbo = (VulkanBuffer){0};
+        meshVbo = VulkanBuffer{0};
+        meshIbo = VulkanBuffer{0};
     }
     threadUnlock(&uploadLock);
 }
@@ -393,7 +398,7 @@ void vulkanAzgaarPropsSetGlobal(const PropInstance* instances, u32 instanceCount
 
 void vulkanAzgaarPropsClearGlobal(void) {
     threadLock(&uploadLock);
-    arrayPut(pendingGlobals, (PendingGlobalUpload){.clear = true});
+    arrayPut(pendingGlobals, PendingGlobalUpload{.clear = true});
     threadUnlock(&uploadLock);
 }
 
@@ -405,7 +410,7 @@ void vulkanAzgaarPropsSetLandmarks(const PropInstance* instances, u32 instanceCo
 
 void vulkanAzgaarPropsClearLandmarks(void) {
     threadLock(&uploadLock);
-    arrayPut(pendingLandmarks, (PendingGlobalUpload){.clear = true});
+    arrayPut(pendingLandmarks, PendingGlobalUpload{.clear = true});
     threadUnlock(&uploadLock);
 }
 
@@ -427,7 +432,7 @@ static PropGpuTile* gpuTileFind(i32 tileX, i32 tileZ) {
 static void gpuTileDestroy(PropGpuTile* e) {
     retireIbo(&e->ibo);
     memoryFree(e->ranges);
-    *e = (PropGpuTile){0};
+    *e = PropGpuTile{0};
 }
 
 static void applyPendingTiles(void) {
@@ -460,7 +465,7 @@ static void applyPendingTiles(void) {
                 arrayPut(pendingTiles, *p);
                 p->cmd   = NULL;
                 p->ranges = NULL;
-                p->ibo   = (VulkanBuffer){0};
+                p->ibo   = VulkanBuffer{0};
                 threadUnlock(&uploadLock);
                 continue;
             }
@@ -470,7 +475,7 @@ static void applyPendingTiles(void) {
         PropGpuTile*       e = gpuTileFind(p->tileX, p->tileZ);
         if (!e) {
             if (!p->clear && p->instanceCount > 0) {
-                arrayPut(gpuTiles, (PropGpuTile){0});
+                arrayPut(gpuTiles, PropGpuTile{0});
                 e = &gpuTiles[arraySize(gpuTiles) - 1u];
                 e->tileX = p->tileX;
                 e->tileZ = p->tileZ;
@@ -498,7 +503,7 @@ static void applyPendingTiles(void) {
 
         if (p->instanceCount > 0) {
             e->ibo           = p->ibo;
-            p->ibo           = (VulkanBuffer){0};
+            p->ibo           = VulkanBuffer{0};
             e->instanceCount = p->instanceCount;
             e->ranges        = p->ranges; // takes ownership
             e->rangeCount    = p->rangeCount;
@@ -519,7 +524,7 @@ static void applyPendingTiles(void) {
 static void gpuSetDestroy(PropGpuGlobal* g) {
     retireIbo(&g->ibo);
     memoryFree(g->ranges);
-    *g = (PropGpuGlobal){0};
+    *g = PropGpuGlobal{0};
 }
 
 // Drain a pending global-upload queue (game/pool thread -> render thread),
@@ -545,7 +550,7 @@ static void drainGlobalQueue(Array(PendingGlobalUpload)* queue, PropGpuGlobal* t
         if (p->instanceCount > 0) {
             if (target->ibo.buf) retireIbo(&target->ibo);
             target->ibo          = p->ibo;
-            p->ibo               = (VulkanBuffer){0};
+            p->ibo               = VulkanBuffer{0};
             memoryFree(target->ranges);
             target->inUse         = true;
             target->instanceCount = p->instanceCount;
@@ -927,8 +932,8 @@ static void removed(void) {
     threadLock(&uploadLock);
     if (meshVbo.buf) vulkanDestroyBuffer(&meshVbo, VK_NULL_HANDLE);
     if (meshIbo.buf) vulkanDestroyBuffer(&meshIbo, VK_NULL_HANDLE);
-    meshVbo = (VulkanBuffer){0};
-    meshIbo = (VulkanBuffer){0};
+    meshVbo = VulkanBuffer{0};
+    meshIbo = VulkanBuffer{0};
     for (u32 i = 0u; i < arraySize(gpuTiles); i++) {
         if (gpuTiles[i].inUse) gpuTileDestroy(&gpuTiles[i]);
     }

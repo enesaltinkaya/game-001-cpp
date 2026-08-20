@@ -29,9 +29,9 @@ void vulkanVmaUnlock(void) {
 
 static VulkanBuffer createBuffer(const char* name,
                                  u64 size,
-                                 VkBufferUsageFlags usage,
-                                 char gpu,
-                                 char readBack) {
+VkBufferUsageFlags usage,
+                                  int gpu,
+                                  bool readBack) {
     assert(name && "need buf name");
     VulkanBuffer buf = {};
     threadInitMutex(&buf.lock);
@@ -84,7 +84,7 @@ static VulkanBuffer createBuffer(const char* name,
         // Local format (not strtmp): this path runs on pool threads.
         char debugName[128];
         snprintf(debugName, sizeof(debugName), "buf %s", name);
-        vulkanUtilsSetName((u64)buf.buf, VK_OBJECT_TYPE_BUFFER, debugName);
+        vulkanUtilsSetName(reinterpret_cast<u64>(buf.buf), VK_OBJECT_TYPE_BUFFER, debugName);
     }
     return buf;
 }
@@ -113,13 +113,13 @@ void vulkanDestroyBuffer(VulkanBuffer* buffer, VkFence fence) {
     //     vmaDestroyVirtualBlock(buffer->virtualBlock);
     //     vmaDestroyBuffer(vulkan.vmaAllocator, buffer->buf, buffer->vma);
     // } else {
-    addBufferGarbage(buffer, fence, NULL);
+    addBufferGarbage(buffer, fence, nullptr);
     // }
     // The destruction is deferred (garbage list) and the entry above holds a
     // copy of every field it needs.  Invalidate the caller's struct so a
     // stale `if (buf.buf)` guard cannot destroy the same buffer a second
     // time (double free of the VMA virtual block on world re-entry).
-    *buffer = (VulkanBuffer){0};
+    *buffer = VulkanBuffer{};
 }
 
 VulkanVirtualBuf vulkanBufferAllocateVirtual(VulkanBuffer* buf, u32 size, u32 align) {
@@ -168,9 +168,9 @@ void r_vulkanCopy(VulkanCopyInfo copyInfo) {
            "dont need commandbuffer for mapped copy!");
 
     if (copyInfo.source.data && copyInfo.target.buf && copyInfo.target.buf->vmaInfo.pMappedData) {
-        memcpy((char*)copyInfo.target.buf->vmaInfo.pMappedData + copyInfo.target.bufferOffset,
-               (char*)copyInfo.source.data + copyInfo.source.offset,
-               copyInfo.size);
+memcpy(static_cast<char*>(copyInfo.target.buf->vmaInfo.pMappedData) + copyInfo.target.bufferOffset,
+       static_cast<char*>(copyInfo.source.data) + copyInfo.source.offset,
+       copyInfo.size);
         return;
     }
 
@@ -201,7 +201,7 @@ void copyDataToBuffer(VulkanCopyInfo info) {
     VulkanBuffer* target = info.target.buf;
 
     VulkanBuffer staging = vulkanCreateStagingBuffer(info.size);
-    memcpy((char*)staging.vmaInfo.pMappedData, source + info.source.offset, info.size);
+    memcpy(static_cast<char*>(staging.vmaInfo.pMappedData), source + info.source.offset, info.size);
     VkBufferCopy copyRegion = {
         0,
         info.target.bufferOffset,
@@ -244,7 +244,7 @@ void copyDataToImage(VulkanCopyInfo copyInfo) {
 
     // } else {
     VulkanBuffer staging = vulkanCreateStagingBuffer(copyInfo.size);
-    memcpy((char*)staging.vmaInfo.pMappedData, source + copyInfo.source.offset, copyInfo.size);
+    memcpy(static_cast<char*>(staging.vmaInfo.pMappedData), source + copyInfo.source.offset, copyInfo.size);
 
     if (copyInfo.target.imageExtent[0] == 0 && copyInfo.target.imageExtent[1] == 0 &&
         copyInfo.target.imageExtent[2] == 0) {
@@ -323,8 +323,8 @@ void copyImageToImage(VulkanCopyInfo info) {
     VulkanImage* target = info.target.img;
 
     VkImageCopy region    = {};
-    region.srcSubresource = (VkImageSubresourceLayers){VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-    region.dstSubresource = (VkImageSubresourceLayers){VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    region.srcSubresource = VkImageSubresourceLayers{VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    region.dstSubresource = VkImageSubresourceLayers{VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
     region.extent         = info.source.img->extent;
 
     vkCmdCopyImage(info.cmd->cmd,

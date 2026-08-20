@@ -2,21 +2,21 @@
 
 #include "ecs/system/scene/SceneSystem.h"
 
-typedef struct JoltCharacter JoltCharacter;
-typedef struct JoltBody JoltBody;
+struct JoltCharacter;
+struct JoltBody;
 
-typedef enum {
+enum EnemyState {
     ENEMY_STATE_IDLE,
     ENEMY_STATE_ALERT,
     ENEMY_STATE_CHASE,
     ENEMY_STATE_ATTACK,
     ENEMY_STATE_RETREAT,
     ENEMY_STATE_DEAD,
-} EnemyState;
+};
 
 #define ENEMY_MAX_PATROL_POINTS 8
 
-typedef struct Enemy {
+struct Enemy {
     // State machine
     EnemyState state;
     float stateTimer;
@@ -75,6 +75,6 @@ typedef struct Enemy {
     // Death rotation (no death anim yet, so we rotate to lie on ground)
     versor deathRotStart;
     versor deathRotTarget;
-} Enemy;
+};
 
 REGISTER_COMPONENT(Enemy);

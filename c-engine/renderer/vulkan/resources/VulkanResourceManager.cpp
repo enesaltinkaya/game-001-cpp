@@ -17,13 +17,13 @@
 #include "timer/Timer.h"
 #include <math.h>
 
-typedef struct ImageArrayData {
+struct ImageArrayData {
     struct Thread lock;
     u32 textureArrayCounter;
     Array(u32) emptySlots;
     enum VulkanDescType descType;
     int slot;
-} ImageArrayData;
+};
 
 static ImageArrayData sampledImageArrayData     = {.slot     = SLOT_IMAGE,  //
                                                    .descType = VULKAN_BINDING_SAMPLED_IMAGE,
@@ -35,38 +35,38 @@ static ImageArrayData storageImageArrayData     = {.slot     = SLOT_STORAGE_IMAG
                                                    .descType = VULKAN_BINDING_STORAGE_IMAGE,
                                                    .lock     = {.mutex = PTHREAD_MUTEX_INITIALIZER}};
 
-typedef struct BufferGarbage {
+struct BufferGarbage {
     VkBuffer buffer;
     VmaVirtualBlock virtualBlock;
     VkFence fence;
-    _Atomic bool* submitted;
+    std::atomic<bool>* submitted;
     VmaAllocation vma;
-} BufferGarbage;
+};
 
-typedef struct ImageGarbage {
+struct ImageGarbage {
     Array(VkImageView) views;
     VkImageView view;
     VkFence fence;
-    _Atomic bool* submitted;
+    std::atomic<bool>* submitted;
     VmaAllocation vma;
     VkImage img;
-} ImageGarbage;
+};
 
-typedef struct CommandGarbage {
+struct CommandGarbage {
     VkFence fence;
-    _Atomic bool* submitted;
+    std::atomic<bool>* submitted;
     VkCommandPool pool;
     VulkanCommand* cmd;
-} CommandGarbage;
+};
 
-static Array(VkFence) fencesToDestroy   = NULL;
-static Array(VulkanCommand*) cmdsToFree = NULL;
+static Array(VkFence) fencesToDestroy   = nullptr;
+static Array(VulkanCommand*) cmdsToFree = nullptr;
 static Array(BufferGarbage) buffersToClean;
 static Array(ImageGarbage) imagesToClean;
 static Array(CommandGarbage) commandsToClean;
 static Thread garbageLock = {.mutex = PTHREAD_MUTEX_INITIALIZER};
 
-typedef struct VulkanIblData {
+struct VulkanIblData {
     u32 environmentMapIndex;
     u32 irradianceMapIndex;
     u32 prefilterMapIndex;
@@ -88,18 +88,18 @@ typedef struct VulkanIblData {
     vec4 shL1_M0;
     vec4 shL1_Mp1;
     mat4 envRotation;
-} VulkanIblData;
+};
 
-typedef struct VulkanPostProcessData {
+struct VulkanPostProcessData {
     u32 depthTextureIndex;
     u32 pad[3];
-} VulkanPostProcessData;
+};
 
-typedef struct VulkanSplatGroup {
+struct VulkanSplatGroup {
     u32 weightTextures[SPLAT_UDIM_TILES];  // 100 UDIM tile texture IDs (0 = empty)
-} VulkanSplatGroup;
+};
 
-typedef struct VulkanTerrainData {
+struct VulkanTerrainData {
     u32 grassAlbedoIndex;
     u32 grassNormalIndex;
     u32 cliffAlbedoIndex;
@@ -117,18 +117,18 @@ typedef struct VulkanTerrainData {
     u32 sandAlbedoIndex;
     VulkanSplatGroup splatGroups[MAX_SPLAT_GROUPS];  // UDIM weight textures per group
     u32 _pad[2];
-} VulkanTerrainData;
+};
 
-typedef struct VulkanCameraOccluderData {
+struct VulkanCameraOccluderData {
     u32   entityIds[VULKAN_MAX_CAMERA_OCCLUDERS];
     float alphas[VULKAN_MAX_CAMERA_OCCLUDERS];
     u32   count;
     u32   pad[3];
-} VulkanCameraOccluderData;
+};
 
 /* VulkanWaterData / VulkanAzgaarPropsData are defined in VulkanResourceManager.h */
 
-typedef struct VulkanSceneBuffer {
+struct VulkanSceneBuffer {
     CameraUbo cameras[4];
     DirectionalLightUbo directionalLight;
     ShadowUbo shadow;
@@ -145,9 +145,9 @@ typedef struct VulkanSceneBuffer {
     VulkanWaterData water;
     VulkanAzgaarPropsData props;
     VulkanWeatherData weather;
-} VulkanSceneBuffer;
+};
 
-typedef struct VulkanAddressBuffer {
+struct VulkanAddressBuffer {
     u64 sceneBufferAddress;
     u64 materialBufferAddress;
     u64 lightGridAddress;
@@ -155,7 +155,7 @@ typedef struct VulkanAddressBuffer {
     u64 jointMatrixBufferAddress;
     u64 entitySkinMapBufferAddress;
     u64 prevJointMatrixBufferAddress;
-} VulkanAddressBuffer;
+};
 
 VulkanResources vulkanResources;
 static VkSampler samplers[MAX_SAMPLERS];
@@ -181,7 +181,7 @@ static void writeAddressBuffer(int i);
 void vulkanCleanupGarbage();
 static float currentMipBias;
 
-typedef struct UploadQueue {
+struct UploadQueue {
     CameraUbo camera;
     DirectionalLightUbo directionalLight;
     ShadowUbo shadow;
@@ -189,13 +189,13 @@ typedef struct UploadQueue {
     ivec4 lightCounts;
     GpuLight lights[MAX_GPU_LIGHTS];
     u32 lightCount;
-    char hasCamera;
-    char hasDirectionalLight;
-    char hasShadow;
-    char hasIbl;
-    char hasLightCounts;
-    char hasLights;
-} UploadQueue;
+    bool hasCamera;
+    bool hasDirectionalLight;
+    bool hasShadow;
+    bool hasIbl;
+    bool hasLightCounts;
+    bool hasLights;
+};
 
 static UploadQueue uploadQueue[FRAMES_IN_FLIGHT];
 
@@ -292,18 +292,18 @@ void vulkanResourceInit(void) {
 
 void vulkanResourceDestroy(void) {
     for (i32 i = 0, si = MAX_SAMPLERS; i < si; i++) {
-        vkDestroySampler(vulkan.device, samplers[i], NULL);
+        vkDestroySampler(vulkan.device, samplers[i], nullptr);
     }
 
-    vulkanDestroyBuffer(&globalMaterialBuffer, NULL);
+    vulkanDestroyBuffer(&globalMaterialBuffer, nullptr);
 
     for (i32 i = 0, si = FRAMES_IN_FLIGHT; i < si; i++) {
-        vulkanDestroyBuffer(&addressBuffer[i], NULL);
-        vulkanDestroyBuffer(&sceneBuffer[i], NULL);
+        vulkanDestroyBuffer(&addressBuffer[i], nullptr);
+        vulkanDestroyBuffer(&sceneBuffer[i], nullptr);
         vulkanDestroyDesc(&vulkanResources.globalSet0[i]);
     }
-    vulkanDestroyImage(&vulkanResources.dummyImage, NULL);
-    vulkanDestroyImage(&vulkanResources.dummyCubeImage, NULL);
+    vulkanDestroyImage(&vulkanResources.dummyImage, nullptr);
+    vulkanDestroyImage(&vulkanResources.dummyCubeImage, nullptr);
 
     arrayFree(storageImageArrayData.emptySlots);
     arrayFree(sampledImageArrayData.emptySlots);
@@ -847,7 +847,7 @@ static void recreateSamplerWithBias(u32 index,
                                     VkBool32 anisotropy,
                                     float maxAniso,
                                     const char* debugName) {
-    vkDestroySampler(vulkan.device, samplers[index], NULL);
+    vkDestroySampler(vulkan.device, samplers[index], nullptr);
 
     VkSamplerCreateInfo ci = {
         .sType            = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
@@ -1017,7 +1017,7 @@ VulkanCommand* vulkanTransientBegin(void) {
     return cmd;
 }
 
-void vulkanTransientEnd(VulkanCommand* cmd, char wait) {
+void vulkanTransientEnd(VulkanCommand* cmd, bool wait) {
     vulkanEnd(cmd);
     vulkanSubmit(.cmd = cmd);
     if (wait) vulkanFenceWait(cmd);
@@ -1239,14 +1239,14 @@ void vulkanRemoveStorageImageViewFromPool(int poolIndex) {
     threadUnlock(&storageImageArrayData.lock);
 }
 
-void addBufferGarbage(VulkanBuffer* buffer, VkFence fence, _Atomic bool* submitted) {
+void addBufferGarbage(VulkanBuffer* buffer, VkFence fence, std::atomic<bool>* submitted) {
     threadLock(&garbageLock);
     BufferGarbage garbage = {buffer->buf, buffer->virtualBlock, fence, submitted, buffer->vma};
     arrayPut(buffersToClean, garbage);
     threadUnlock(&garbageLock);
 }
 
-void addImageGarbage(VulkanImage* image, VkFence fence, _Atomic bool* submitted) {
+void addImageGarbage(VulkanImage* image, VkFence fence, std::atomic<bool>* submitted) {
     threadLock(&garbageLock);
     ImageGarbage garbage = {.views     = image->views,
                             .view      = image->view,
@@ -1272,7 +1272,7 @@ void addCommandGarbage(VulkanCommand* command) {
 // Check if a garbage entry's fence is complete. If submitted is non-NULL,
 // we must wait until the fence has actually been passed to vkQueueSubmit
 // before we can safely call vkGetFenceStatus on it.
-static bool isFenceComplete(VkFence fence, _Atomic bool* submitted) {
+static bool isFenceComplete(VkFence fence, std::atomic<bool>* submitted) {
     if (!fence) return true;
     if (submitted && !*submitted) return false;
     return vkGetFenceStatus(vulkan.device, fence) == VK_SUCCESS;
@@ -1281,7 +1281,7 @@ static bool isFenceComplete(VkFence fence, _Atomic bool* submitted) {
 void vulkanCleanupGarbage() {
     double gT0     = nanos();
     static int gHitchOn = -1;
-    if (gHitchOn < 0) gHitchOn = getenv("ENGINE_HITCH_DEBUG") != NULL;
+    if (gHitchOn < 0) gHitchOn = getenv("ENGINE_HITCH_DEBUG") != nullptr;
     u32 cleaned     = 0;
     threadLock(&garbageLock);
 
@@ -1294,7 +1294,7 @@ void vulkanCleanupGarbage() {
             if (garbage->fence) {
                 arrayPut(fencesToDestroy, garbage->fence);
             }
-            vkDestroyCommandPool(vulkan.device, garbage->pool, NULL);
+            vkDestroyCommandPool(vulkan.device, garbage->pool, nullptr);
             arrayPut(cmdsToFree, garbage->cmd);
             cleaned++;
             arrayDeleteSwap(commandsToClean, i);
@@ -1323,9 +1323,9 @@ void vulkanCleanupGarbage() {
     for (u32 i = 0; i < arraySize(imagesToClean);) {
         ImageGarbage* garbage = &imagesToClean[i];
         if (isFenceComplete(garbage->fence, garbage->submitted)) {
-            vkDestroyImageView(vulkan.device, garbage->view, NULL);
+            vkDestroyImageView(vulkan.device, garbage->view, nullptr);
             for (i32 j = 0, s = arraySize(garbage->views); j < s; j++) {
-                vkDestroyImageView(vulkan.device, garbage->views[j], NULL);
+                vkDestroyImageView(vulkan.device, garbage->views[j], nullptr);
             }
             vulkanVmaLock();
             vmaDestroyImage(vulkan.vmaAllocator, garbage->img, garbage->vma);
@@ -1341,7 +1341,7 @@ void vulkanCleanupGarbage() {
     // 4. Safely destroy fences now that all resources sharing them have been
     // removed
     for (u32 i = 0; i < arraySize(fencesToDestroy); i++) {
-        vkDestroyFence(vulkan.device, fencesToDestroy[i], NULL);
+        vkDestroyFence(vulkan.device, fencesToDestroy[i], nullptr);
     }
     arrayClear(fencesToDestroy);
 

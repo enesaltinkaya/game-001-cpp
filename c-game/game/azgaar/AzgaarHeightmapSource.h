@@ -24,12 +24,12 @@
  * rendered ground).
  */
 
-typedef struct AzgaarHeightmapSource {
+struct AzgaarHeightmapSource {
     HeightmapSource vtable;  // .userData == this struct
     const AzgaarWorld* world;
     u32 noiseSeed;           // FNV-1a of the map name
     bool detailEnabled;      // false = pure FMG heights (debug)
-} AzgaarHeightmapSource;
+};
 
 void azgaarHeightmapSourceInit(AzgaarHeightmapSource* src,
                                const AzgaarWorld* world,

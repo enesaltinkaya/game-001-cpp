@@ -20,12 +20,16 @@ static double elapsedGPU;
 static char   bloomDisabled;
 
 System vulkanBloomPass = {
-    .name       = "bloom",
-    .added      = added,
-    .preUpdate  = preUpdate,
-    .update     = update,
-    .postUpdate = postUpdate,
-    .removed    = removed,
+    .name                = "bloom",
+    .added               = added,
+    .removed             = removed,
+    .preUpdate           = preUpdate,
+    .update              = update,
+    .postUpdate          = postUpdate,
+    .cpuElapsedLastFrame = 0.0,
+    .cpuElapsed          = 0.0,
+    .gpuElapsed          = 0.0,
+    .priority            = 0,
 };
 
 #define BLOOM_MIP_COUNT 6
@@ -99,7 +103,7 @@ static void createMipViews(void) {
         vkCreateImageView(vulkan.device, &viewInfo, NULL, &mipViews[i]);
 
         /* Register a sampled-only fake image for this mip view */
-        mipSampledImages[i] = (VulkanImage){
+        mipSampledImages[i] = VulkanImage{
             .img      = bloomImage.img,
             .view     = mipViews[i],
             .format   = bloomImage.format,
@@ -114,7 +118,7 @@ static void createMipViews(void) {
         vulkanAddImageToPool(&mipSampledImages[i]);
 
         /* Register a storage-only fake image for this mip view */
-        mipStorageImages[i] = (VulkanImage){
+        mipStorageImages[i] = VulkanImage{
             .img      = bloomImage.img,
             .view     = mipViews[i],
             .format   = bloomImage.format,
@@ -137,8 +141,8 @@ static void destroyMipViews(void) {
             vulkanRemoveImageFromPool(&mipStorageImages[i]);
             vkDestroyImageView(vulkan.device, mipViews[i], NULL);
             mipViews[i]          = VK_NULL_HANDLE;
-            mipSampledImages[i]  = (VulkanImage){0};
-            mipStorageImages[i]  = (VulkanImage){0};
+            mipSampledImages[i]  = VulkanImage{0};
+            mipStorageImages[i]  = VulkanImage{0};
         }
     }
 }
@@ -147,7 +151,7 @@ static void destroyBloom(void) {
     destroyMipViews();
     if (bloomImage.img) {
         vulkanDestroyImage(&bloomImage, NULL);
-        bloomImage = (VulkanImage){0};
+        bloomImage = VulkanImage{0};
     }
     cachedWidth  = 0;
     cachedHeight = 0;

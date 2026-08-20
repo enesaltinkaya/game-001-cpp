@@ -13,11 +13,17 @@ static int teleportToCell(void* _);
 static int teleportToOrigin(void* _);
 static int playerActionsToggle(void* _);
 
-struct System playerActionsGui = {
-    .name    = "playerActionsGui",
-    .added   = added,
-    .update  = update,
-    .removed = removed,
+System playerActionsGui = {
+    .name                = "playerActionsGui",
+    .added               = added,
+    .removed             = removed,
+    .preUpdate           = nullptr,
+    .update              = update,
+    .postUpdate          = nullptr,
+    .cpuElapsedLastFrame = 0.0,
+    .cpuElapsed          = 0.0,
+    .gpuElapsed          = 0.0,
+    .priority            = 0,
 };
 
 static void* document;
@@ -53,14 +59,14 @@ static void added(void) {
 static void removed(void) {
     rmlUnloadDocument(document);
     rmlUnloadModel(model);
-    document = NULL;
-    model = NULL;
+    document = nullptr;
+    model = nullptr;
 }
 
 static void update(void) {}
 
 static int playerActionsToggle(void* _) {
-    (void)_;
+    static_cast<void>(_);
     void* body = rmlGetElementById(document, "playerActionsBody");
     if (!body) return 0;
     if (rmlElementHasClass(body, "collapsed")) {
@@ -72,7 +78,7 @@ static int playerActionsToggle(void* _) {
 }
 
 static int teleportToOrigin(void* _) {
-    (void)_;
+    static_cast<void>(_);
 
     vec3 pos = {0.0f, 0.0f, 0.0f};
     if (!playerTeleportTo(pos)) {
@@ -86,7 +92,7 @@ static int teleportToOrigin(void* _) {
 }
 
 static int teleportToCell(void* _) {
-    (void)_;
+    static_cast<void>(_);
 
     const AzgaarWorld* world = loadingAzgaarGetWorld();
     if (!world || !world->cells || world->cellCount == 0u) {
@@ -94,7 +100,7 @@ static int teleportToCell(void* _) {
         return 0;
     }
 
-    u32 id = (u32)(cellId + 0.5f);
+    u32 id = static_cast<u32>(cellId + 0.5f);
     if (id >= world->cellCount) {
         snprintf(statusTextBuf, sizeof(statusTextBuf), "Invalid cell %u (max %u)", id, world->cellCount - 1u);
         statusText = statusTextBuf;

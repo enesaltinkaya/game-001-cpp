@@ -5,7 +5,7 @@
 #include "renderer/vulkan/Vulkan.h"
 #include "renderer/vulkan/resources/VulkanResourceManager.h"
 
-typedef struct VulkanFrameResources {
+struct VulkanFrameResources {
     VulkanImage sceneColor;
     VulkanImage compositeColor;
     VulkanImage normals;
@@ -21,7 +21,7 @@ typedef struct VulkanFrameResources {
     VulkanImage viewNormal;
     u32 width;
     u32 height;
-} VulkanFrameResources;
+};
 
 static VulkanFrameResources frameResources;
 
@@ -55,55 +55,55 @@ void vulkanFrameResourcesDestroy(void) {
 }
 
 VulkanImage* vulkanFrameResourcesGetSceneColor(void) {
-    return frameResources.sceneColor.img ? &frameResources.sceneColor : NULL;
+    return frameResources.sceneColor.img ? &frameResources.sceneColor : nullptr;
 }
 
 VulkanImage* vulkanFrameResourcesGetCompositeColor(void) {
-    return frameResources.compositeColor.img ? &frameResources.compositeColor : NULL;
+    return frameResources.compositeColor.img ? &frameResources.compositeColor : nullptr;
 }
 
 VulkanImage* vulkanFrameResourcesGetNormals(void) {
-    return frameResources.normals.img ? &frameResources.normals : NULL;
+    return frameResources.normals.img ? &frameResources.normals : nullptr;
 }
 
 VulkanImage* vulkanFrameResourcesGetMaterial(void) {
-    return frameResources.material.img ? &frameResources.material : NULL;
+    return frameResources.material.img ? &frameResources.material : nullptr;
 }
 
 VulkanImage* vulkanFrameResourcesGetResolvedColor(void) {
-    return frameResources.resolvedColor.img ? &frameResources.resolvedColor : NULL;
+    return frameResources.resolvedColor.img ? &frameResources.resolvedColor : nullptr;
 }
 
 VulkanImage* vulkanFrameResourcesGetReflectionColor(void) {
-    return frameResources.reflectionColor.img ? &frameResources.reflectionColor : NULL;
+    return frameResources.reflectionColor.img ? &frameResources.reflectionColor : nullptr;
 }
 
 VulkanImage* vulkanFrameResourcesGetReflectionDepth(void) {
-    return frameResources.reflectionDepth.img ? &frameResources.reflectionDepth : NULL;
+    return frameResources.reflectionDepth.img ? &frameResources.reflectionDepth : nullptr;
 }
 
 VulkanImage* vulkanFrameResourcesGetOitAccum(void) {
-    return frameResources.oitAccum.img ? &frameResources.oitAccum : NULL;
+    return frameResources.oitAccum.img ? &frameResources.oitAccum : nullptr;
 }
 
 VulkanImage* vulkanFrameResourcesGetOitReveal(void) {
-    return frameResources.oitReveal.img ? &frameResources.oitReveal : NULL;
+    return frameResources.oitReveal.img ? &frameResources.oitReveal : nullptr;
 }
 
 VulkanImage* vulkanFrameResourcesGetRoadLayer(void) {
-    return frameResources.roadLayer.img ? &frameResources.roadLayer : NULL;
+    return frameResources.roadLayer.img ? &frameResources.roadLayer : nullptr;
 }
 
 VulkanImage* vulkanFrameResourcesGetDepth(void) {
-    return frameResources.depth.img ? &frameResources.depth : NULL;
+    return frameResources.depth.img ? &frameResources.depth : nullptr;
 }
 
 VulkanImage* vulkanFrameResourcesGetVelocity(void) {
-    return frameResources.velocity.img ? &frameResources.velocity : NULL;
+    return frameResources.velocity.img ? &frameResources.velocity : nullptr;
 }
 
 VulkanImage* vulkanFrameResourcesGetViewNormal(void) {
-    return frameResources.viewNormal.img ? &frameResources.viewNormal : NULL;
+    return frameResources.viewNormal.img ? &frameResources.viewNormal : nullptr;
 }
 
 static void swapchainCreated(void* _) {
@@ -115,8 +115,8 @@ static void recreate(void) {
         return;
     }
 
-    if (frameResources.width == (u32)window.renderWidth &&
-        frameResources.height == (u32)window.renderHeight &&
+    if (frameResources.width == static_cast<u32>(window.renderWidth) &&
+        frameResources.height == static_cast<u32>(window.renderHeight) &&
         frameResources.sceneColor.img &&
         frameResources.sceneColor.samples == VK_SAMPLE_COUNT_1_BIT) {
         return;
@@ -181,9 +181,9 @@ static void recreate(void) {
     frameResources.reflectionDepth =
         vulkanCreateImage(.name   = "ReflectionDepth",
                           .format = VK_FORMAT_D32_SFLOAT,
-                          .aspect = VK_IMAGE_ASPECT_DEPTH_BIT,
                           .usage  = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
                                     VK_IMAGE_USAGE_SAMPLED_BIT,
+                          .aspect = VK_IMAGE_ASPECT_DEPTH_BIT,
                           .width  = window.renderWidth > 1 ? window.renderWidth / 2 : 1,
                           .height = window.renderHeight > 1 ? window.renderHeight / 2 : 1);
 
@@ -214,12 +214,13 @@ static void recreate(void) {
                           .width  = window.renderWidth,
                           .height = window.renderHeight);
 
-    frameResources.depth =
+frameResources.depth =
         vulkanCreateImage(.name   = "Depth",
                           .format = VK_FORMAT_D32_SFLOAT,
-                          .aspect = VK_IMAGE_ASPECT_DEPTH_BIT,
                           .usage  = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
-                                    VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+                                    VK_IMAGE_USAGE_SAMPLED_BIT |
+                                    VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+                          .aspect = VK_IMAGE_ASPECT_DEPTH_BIT,
                           .width  = window.renderWidth,
                           .height = window.renderHeight);
 
@@ -247,8 +248,8 @@ static void destroyImage(VulkanImage* image) {
         return;
     }
 
-    vulkanDestroyImage(image, NULL);
-    *image = (VulkanImage){0};
+    vulkanDestroyImage(image, nullptr);
+    *image = VulkanImage{};
 }
 
 static void destroyAll(void) {

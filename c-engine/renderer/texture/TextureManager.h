@@ -1,20 +1,20 @@
 #pragma once
 
-typedef struct Texture {
+struct Texture {
     Image image;
     String name;
     void* backendImg;
     int id;  // also poolIndex into global vulkan texture array
-    char nearest;
+    bool nearest;
     u32 refCount;
-} Texture;
+};
 
-// Primary lookup: returns existing texture, or tries to load from pak by name, or NULL.
+// Primary lookup: returns existing texture, or tries to load from pak by name, or nullptr.
 Texture* getTextureByName(const char* name);
 Texture* getTextureById(u32 id);
 
 // For embedded glTF textures (data not in paks).
-Texture* createTextureFromData(const char* name, const u8* data, u64 size, const char* mime, char nonColor);
+Texture* createTextureFromData(const char* name, const u8* data, u64 size, const char* mime, bool nonColor);
 
 void textureManagerInit();
 void textureManagerDestroy();

@@ -21,12 +21,17 @@ static void preUpdate(void);
 static void update(void);
 static void removed(void);
 
-struct System vulkanHeightmapTerrainPass = {
-    .name      = "heightmap_terrain",
-    .added     = added,
-    .preUpdate = preUpdate,
-    .update    = update,
-    .removed   = removed,
+System vulkanHeightmapTerrainPass = {
+    .name                = "heightmap_terrain",
+    .added               = added,
+    .removed             = removed,
+    .preUpdate           = preUpdate,
+    .update              = update,
+    .postUpdate          = nullptr,
+    .cpuElapsedLastFrame = 0.0,
+    .cpuElapsed          = 0.0,
+    .gpuElapsed          = 0.0,
+    .priority            = 0,
 };
 
 // ── Push constants ────────────────────────────────────────────────────────
@@ -202,10 +207,10 @@ static void swapchainCreated(void*) {
 static void heightmapGpuTileDestroy(HeightmapGpuTile* e) {
     if (e->heightTex.img) vulkanDestroyImage(&e->heightTex, VK_NULL_HANDLE);
     if (e->heightDesc.set) {
-        arrayPut(deferredDescs, ((DeferredDescDestroy){.desc = e->heightDesc, .framesLeft = 3}));
-        e->heightDesc = (VulkanDesc){0};
+        arrayPut(deferredDescs, (DeferredDescDestroy{.desc = e->heightDesc, .framesLeft = 3}));
+        e->heightDesc = VulkanDesc{0};
     }
-    *e = (HeightmapGpuTile){0};
+    *e = HeightmapGpuTile{0};
 }
 
 static void heightmapPassReset(void) {
@@ -322,7 +327,7 @@ static void preUpdate(void) {
         cachedHt  = ht;
         u32 cap   = ht->windowSize * ht->windowSize;
         if (arraySize(gpuTiles) < cap) {
-            while (arraySize(gpuTiles) < cap) arrayPut(gpuTiles, (HeightmapGpuTile){0});
+            while (arraySize(gpuTiles) < cap) arrayPut(gpuTiles, HeightmapGpuTile{0});
         }
     }
 
@@ -618,7 +623,7 @@ static void removed(void) {
     arrayClear(gpuTiles);
     for (u32 i = 0; i < arraySize(deferredDescs); i++) vulkanDestroyDesc(&deferredDescs[i].desc);
     arrayFree(deferredDescs);
-    deferredDescs = (Array(DeferredDescDestroy)){};
+    deferredDescs = nullptr;
 
     vulkanDestroyPipe(&scenePipe);
     vulkanDestroyPipe(&sceneWireFramePipe);

@@ -13,11 +13,17 @@ static void update(void);
 static void removed(void);
 static void onClickPassRow(void* element, const char* eventType, const char* id, EventParameter* parameter);
 
-struct System passStatsGui = {
-    .name    = "passStatsGui",
-    .added   = added,
-    .update  = update,
-    .removed = removed,
+System passStatsGui = {
+    .name                = "passStatsGui",
+    .added               = added,
+    .removed             = removed,
+    .preUpdate           = nullptr,
+    .update              = update,
+    .postUpdate          = nullptr,
+    .cpuElapsedLastFrame = 0.0,
+    .cpuElapsed          = 0.0,
+    .gpuElapsed          = 0.0,
+    .priority            = 0,
 };
 
 static void* document;
@@ -48,7 +54,7 @@ static void* findPassRowAncestor(void* element) {
         }
         current = rmlElementGetParentNode(current);
     }
-    return NULL;
+    return nullptr;
 }
 
 // Helper: collect pass-row elements (RMLUI QuerySelectorAll doesn't support class selectors)
@@ -151,7 +157,7 @@ void removed(void) {
     selectedPassIndex = -1;
     rmlUnloadDocument(document);
     rmlUnloadModel(model);
-    document = NULL;
+    document = nullptr;
 }
 
 void update(void) {

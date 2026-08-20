@@ -60,11 +60,17 @@ static void sceneSystemPostUpdate(void) {
     rendererSetVisibleScenes(visibleScenes, static_cast<u32>(arraySize(visibleScenes)));
 }
 
-struct System sceneSystem = {
-    .name       = "sceneSystem",
-    .added      = sceneSystemAdded,
-    .removed    = sceneSystemRemoved,
-    .postUpdate = sceneSystemPostUpdate,
+System sceneSystem = {
+    .name                = "sceneSystem",
+    .added               = sceneSystemAdded,
+    .removed             = sceneSystemRemoved,
+    .preUpdate           = nullptr,
+    .update              = nullptr,
+    .postUpdate          = sceneSystemPostUpdate,
+    .cpuElapsedLastFrame = 0.0,
+    .cpuElapsed          = 0.0,
+    .gpuElapsed          = 0.0,
+    .priority            = 0,
 };
 
 void* F_sceneCreateComponent(Scene* scene, u32 entity, u64* typeIdPtr, u64 size) {

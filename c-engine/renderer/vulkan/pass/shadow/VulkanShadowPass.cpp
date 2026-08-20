@@ -30,11 +30,16 @@ static void update(void);
 static void removed(void);
 
 System vulkanShadowPass = {
-    .name      = "shadow",
-    .added     = added,
-    .preUpdate = preUpdate,
-    .update    = update,
-    .removed   = removed,
+    .name                = "shadow",
+    .added               = added,
+    .removed             = removed,
+    .preUpdate           = preUpdate,
+    .update              = update,
+    .postUpdate          = nullptr,
+    .cpuElapsedLastFrame = 0.0,
+    .cpuElapsed          = 0.0,
+    .gpuElapsed          = 0.0,
+    .priority            = 0,
 };
 
 /* ── Pipeline + push constants ────────────────────────────────────────── */
@@ -299,13 +304,13 @@ static void destroyShadowMap(void) {
             /* Don't vkDestroyImage — the underlying VkImage belongs to
              * shadowMapImage.  Only destroy the per-layer view. */
             vkDestroyImageView(vulkan.device, shadowMapLayerImages[i].view, NULL);
-            shadowMapLayerImages[i] = (VulkanImage){0};
+            shadowMapLayerImages[i] = VulkanImage{0};
         }
     }
 
     if (shadowMapImage.img) {
         vulkanDestroyImage(&shadowMapImage, NULL);
-        shadowMapImage = (VulkanImage){0};
+        shadowMapImage = VulkanImage{0};
     }
 
     shadowMapReady = 0;
@@ -330,7 +335,7 @@ static void ensureShadowMap(void) {
         /* Build a "fake" VulkanImage that shares the same VkImage but
          * has its own VkImageView (single layer). */
         VulkanImage* layer = &shadowMapLayerImages[i];
-        *layer             = (VulkanImage){0};
+        *layer             = VulkanImage{0};
         layer->img         = shadowMapImage.img;
         layer->format      = VK_FORMAT_D32_SFLOAT;
         layer->aspect      = VK_IMAGE_ASPECT_DEPTH_BIT;

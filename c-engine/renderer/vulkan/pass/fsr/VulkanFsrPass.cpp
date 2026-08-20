@@ -99,12 +99,16 @@ typedef struct ReflVelocityPushConstants {
 } ReflVelocityPushConstants;
 
 System vulkanFsrPass = {
-    .name       = "fsr",
-    .added      = added,
-    .preUpdate  = preUpdate,
-    .update     = update,
-    .postUpdate = postUpdate,
-    .removed    = removed,
+    .name                = "fsr",
+    .added               = added,
+    .removed             = removed,
+    .preUpdate           = preUpdate,
+    .update              = update,
+    .postUpdate          = postUpdate,
+    .cpuElapsedLastFrame = 0.0,
+    .cpuElapsed          = 0.0,
+    .gpuElapsed          = 0.0,
+    .priority            = 0,
 };
 
 static void added(void) {
@@ -138,27 +142,27 @@ static void swapchainCreated(void* _) {
 static void destroyOutput(void) {
     if (outputImage.img) {
         vulkanDestroyImage(&outputImage, NULL);
-        outputImage = (VulkanImage){0};
+        outputImage = VulkanImage{0};
     }
     if (dilatedDepthImage.img) {
         vulkanDestroyImage(&dilatedDepthImage, NULL);
-        dilatedDepthImage = (VulkanImage){0};
+        dilatedDepthImage = VulkanImage{0};
     }
     if (dilatedMotionVectorsImage.img) {
         vulkanDestroyImage(&dilatedMotionVectorsImage, NULL);
-        dilatedMotionVectorsImage = (VulkanImage){0};
+        dilatedMotionVectorsImage = VulkanImage{0};
     }
     if (reconstructedPrevNearestDepthImage.img) {
         vulkanDestroyImage(&reconstructedPrevNearestDepthImage, NULL);
-        reconstructedPrevNearestDepthImage = (VulkanImage){0};
+        reconstructedPrevNearestDepthImage = VulkanImage{0};
     }
     if (reactiveMaskImage.img) {
         vulkanDestroyImage(&reactiveMaskImage, NULL);
-        reactiveMaskImage = (VulkanImage){0};
+        reactiveMaskImage = VulkanImage{0};
     }
     if (tcMaskImage.img) {
         vulkanDestroyImage(&tcMaskImage, NULL);
-        tcMaskImage = (VulkanImage){0};
+        tcMaskImage = VulkanImage{0};
     }
     outputWidth  = 0;
     outputHeight = 0;
@@ -167,7 +171,7 @@ static void destroyOutput(void) {
 static void destroyContext(void) {
     if (contextReady) {
         ffxFsr3UpscalerContextDestroy(&context);
-        context      = (FfxFsr3UpscalerContext){0};
+        context      = FfxFsr3UpscalerContext{0};
         contextReady = 0;
     }
 }
@@ -589,26 +593,26 @@ static void removed(void) {
         scratchBuffer     = NULL;
         scratchBufferSize = 0;
     }
-    backendInterface = (FfxInterface){0};
+    backendInterface = FfxInterface{0};
     backendReady     = 0;
     if (profileReady) {
         vulkanDestroyProfile(&profile);
-        profile      = (VulkanProfile){0};
+        profile      = VulkanProfile{0};
         profileReady = 0;
     }
     if (reactivePipeReady) {
         vulkanDestroyPipe(&reactivePipe);
-        reactivePipe      = (VulkanPipe){0};
+        reactivePipe      = VulkanPipe{0};
         reactivePipeReady = 0;
     }
     if (skyVelocityPipeReady) {
         vulkanDestroyPipe(&skyVelocityPipe);
-        skyVelocityPipe      = (VulkanPipe){0};
+        skyVelocityPipe      = VulkanPipe{0};
         skyVelocityPipeReady = 0;
     }
     if (reflVelocityPipeReady) {
         vulkanDestroyPipe(&reflVelocityPipe);
-        reflVelocityPipe      = (VulkanPipe){0};
+        reflVelocityPipe      = VulkanPipe{0};
         reflVelocityPipeReady = 0;
     }
 }

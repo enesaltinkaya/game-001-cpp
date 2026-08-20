@@ -15,12 +15,17 @@ static void added(void);
 static void removed(void);
 static void update(void);
 
-struct System combatSystem = {
-    .name     = "combat",
-    .added    = added,
-    .removed  = removed,
-    .update   = update,
-    .priority = 1500,
+System combatSystem = {
+    .name                = "combat",
+    .added               = added,
+    .removed             = removed,
+    .preUpdate           = nullptr,
+    .update              = update,
+    .postUpdate          = nullptr,
+    .cpuElapsedLastFrame = 0.0,
+    .cpuElapsed          = 0.0,
+    .gpuElapsed          = 0.0,
+    .priority            = 1500,
 };
 
 static Scene* gPlayerScene;
@@ -33,7 +38,7 @@ static Entity* findEntityById(u32 entityId) {
         Entity* e = getEntity(scene, entityId);
         if (e) return e;
     }
-    return NULL;
+    return nullptr;
 }
 
 static u8 canHit(AttackHitbox* hitbox, u32 entityId);
@@ -44,7 +49,7 @@ static void markHit(AttackHitbox* hitbox, u32 entityId);
 /// not possible.  We skip the owner (self) and damage the first entity
 /// with CharacterStats.
 static void processHit(AttackHitbox* hb, const JoltOverlapHit* hit, vec3 center) {
-    u32 hitEntityId = (u32)hit->userData;
+    u32 hitEntityId = static_cast<u32>(hit->userData);
     if (hitEntityId == 0) return;
 
     u32 numScenes = arraySize(ecs.scenes);
@@ -87,14 +92,14 @@ static void markHit(AttackHitbox* hitbox, u32 entityId) {
     // Update existing entry first
     for (u32 i = 0; i < hitbox->recentHitCount; i++) {
         if (hitbox->recentHits[i].entityId == entityId) {
-            hitbox->recentHits[i].hitTime = (float)timer.timeSinceStartSeconds;
+            hitbox->recentHits[i].hitTime = static_cast<float>(timer.timeSinceStartSeconds);
             return;
         }
     }
     // Add new entry
     if (hitbox->recentHitCount < ATTACK_HITBOX_MAX_RECENT) {
         hitbox->recentHits[hitbox->recentHitCount].entityId = entityId;
-        hitbox->recentHits[hitbox->recentHitCount].hitTime = (float)timer.timeSinceStartSeconds;
+        hitbox->recentHits[hitbox->recentHitCount].hitTime = static_cast<float>(timer.timeSinceStartSeconds);
         hitbox->recentHitCount++;
     }
 }
@@ -149,7 +154,7 @@ void update(void) {
 }
 
 Entity* combatCreateHitbox(Entity* parent, float radius, float damage, u32 damageType, u32 ownerEntityId, u8 once, float hitCooldown) {
-    if (!parent) return NULL;
+    if (!parent) return nullptr;
 
     Scene* scene = parent->scene;
     Entity* entity = createEntity(scene, "hitbox");
@@ -183,7 +188,7 @@ void combatSetPlayerEntity(Scene* scene, u32 entityId) {
 }
 
 Entity* combatGetPlayerEntity(void) {
-    if (!gPlayerScene) return NULL;
+    if (!gPlayerScene) return nullptr;
     return getEntity(gPlayerScene, gPlayerEntityId);
 }
 
@@ -191,6 +196,6 @@ void added(void) {
 }
 
 void removed(void) {
-    gPlayerScene = NULL;
+    gPlayerScene = nullptr;
     gPlayerEntityId = 0;
 }

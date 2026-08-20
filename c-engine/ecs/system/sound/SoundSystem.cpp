@@ -24,10 +24,16 @@ static void preUpdate(void);
 static void removed(void);
 
 System soundSystem = {
-    .name      = "sound",
-    .added     = added,
-    .preUpdate = preUpdate,
-    .removed   = removed,
+    .name                = "sound",
+    .added               = added,
+    .removed             = removed,
+    .preUpdate           = preUpdate,
+    .update              = nullptr,
+    .postUpdate          = nullptr,
+    .cpuElapsedLastFrame = 0.0,
+    .cpuElapsed          = 0.0,
+    .gpuElapsed          = 0.0,
+    .priority            = 0,
 };
 
 void added(void) {

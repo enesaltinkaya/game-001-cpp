@@ -5,7 +5,7 @@ struct VulkanDesc;
 struct VulkanImage;
 struct VulkanBuffer;
 
-typedef struct VulkanPipe {
+struct VulkanPipe {
     char name[64];
     VkPipeline pipe;
     VkPipelineLayout layout;
@@ -19,81 +19,80 @@ typedef struct VulkanPipe {
     VkClearValue clearColor2;
     VkClearValue clearColor3;
     VkClearValue clearDepth;
-    char isCompute;
-    char clearColor1Enabled;
-    char clearColor2Enabled;
-    char clearColor3Enabled;
-    char clearDepthEnabled;
-} VulkanPipe;
+    bool isCompute;
+    bool clearColor1Enabled;
+    bool clearColor2Enabled;
+    bool clearColor3Enabled;
+    bool clearDepthEnabled;
+};
 
-typedef struct VulkanPipeInfo {
-    const char* name;
-    const char* vs;
-    const char* fs;
-    const char* tsc;
-    const char* tes;
-    const char* comp;
+struct VulkanPipeInfo {
+    const char* name = nullptr;
+    const char* vs = nullptr;
+    const char* fs = nullptr;
+    const char* tsc = nullptr;
+    const char* tes = nullptr;
+    const char* comp = nullptr;
     VkVertexInputAttributeDescription in1attr;
     VkVertexInputBindingDescription in1bind;
     VkVertexInputAttributeDescription in2attr;
     VkVertexInputBindingDescription in2bind;
-    VkVertexInputAttributeDescription* vertexAttributes;
-    u32 vertexAttributeCount;
-    VkVertexInputBindingDescription* vertexBindings;
-    u32 vertexBindingCount;
-    struct VulkanDesc* set0_reserved;  // dont use
-    struct VulkanDesc* set1;
-    struct VulkanDesc* set2;
-    struct VulkanDesc* set3;
-    struct VulkanDesc* set4;
-    VkFormat colorFormat1;
-    VkFormat colorFormat2;
-    VkFormat colorFormat3;
-    VkFormat depthFormat;
+    VkVertexInputAttributeDescription* vertexAttributes = nullptr;
+    u32 vertexAttributeCount = 0;
+    VkVertexInputBindingDescription* vertexBindings = nullptr;
+    u32 vertexBindingCount = 0;
+    struct VulkanDesc* set0_reserved = nullptr;  // dont use
+    struct VulkanDesc* set1 = nullptr;
+    struct VulkanDesc* set2 = nullptr;
+    struct VulkanDesc* set3 = nullptr;
+    struct VulkanDesc* set4 = nullptr;
+    VkFormat colorFormat1 = VK_FORMAT_UNDEFINED;
+    VkFormat colorFormat2 = VK_FORMAT_UNDEFINED;
+    VkFormat colorFormat3 = VK_FORMAT_UNDEFINED;
+    VkFormat depthFormat = VK_FORMAT_UNDEFINED;
     vec4 clearColor1;
     vec4 clearColor2;
     vec4 clearColor3;
     vec2 clearDepth;
-    char wireFrame;
-    char blend;
-    char blendPreserveAlpha;
-    char blendOit;  // OIT accumulation: attachment0=additive, attachment1=multiplicative
-    char blendRoad; // road "union": replace RGB, MAX alpha (overlapping rects stay idempotent)
-    char lineList;
-    char depthTestOnly;
-    char noCull;
-    char cullFront;  // cull front faces (render back faces only)
-    char clearColor1Enabled;
-    char clearColor2Enabled;
-    char clearColor3Enabled;
-    char clearDepthEnabled;
-    char depthClamp;
-    VkCompareOp depthCompareOp;
-    int patchControlPoints;  // 0 = default (3), otherwise use this value
-    char depthBiasEnable;
-    float depthBiasConstantFactor;
-    float depthBiasSlopeFactor;
-    float depthBiasClamp;
-} VulkanPipeInfo;
+    bool wireFrame = false;
+    bool blend = false;
+    bool blendPreserveAlpha = false;
+    bool blendOit = false;  // OIT accumulation: attachment0=additive, attachment1=multiplicative
+    bool blendRoad = false; // road "union": replace RGB, MAX alpha (overlapping rects stay idempotent)
+    bool lineList = false;
+    bool depthTestOnly = false;
+    bool noCull = false;
+    bool cullFront = false;  // cull front faces (render back faces only)
+    bool clearColor1Enabled = false;
+    bool clearColor2Enabled = false;
+    bool clearColor3Enabled = false;
+    bool clearDepthEnabled = false;
+    bool depthClamp = false;
+    VkCompareOp depthCompareOp = VK_COMPARE_OP_NEVER;
+    int patchControlPoints = 0;  // 0 = default (3), otherwise use this value
+    bool depthBiasEnable = false;
+    float depthBiasConstantFactor = 0.0f;
+    float depthBiasSlopeFactor = 0.0f;
+    float depthBiasClamp = 0.0f;
+};
 
-typedef struct VulkanBeginRenderInfo {
-    struct VulkanCommand* cmd;
-    struct VulkanPipe* pipe;
-    struct VulkanImage* color1;
-    struct VulkanImage* color2;
-    struct VulkanImage* color3;
-    struct VulkanImage* depth;
-    int depthLayer;  // -1 or 0 = use default view, >0 = use per-layer view (1-indexed)
-} VulkanBeginRenderInfo;
+struct VulkanBeginRenderInfo {
+    struct VulkanCommand* cmd = nullptr;
+    struct VulkanPipe* pipe = nullptr;
+    struct VulkanImage* color1 = nullptr;
+    struct VulkanImage* color2 = nullptr;
+    struct VulkanImage* color3 = nullptr;
+    struct VulkanImage* depth = nullptr;
+    int depthLayer = -1;  // -1 or 0 = use default view, >0 = use per-layer view (1-indexed)
+};
 
-#define vulkanCreatePipe(...) \
-    r_vulkanCreatePipe((struct VulkanPipeInfo){.blend = 0, __VA_ARGS__})
+#define vulkanCreatePipe(...) r_vulkanCreatePipe(VulkanPipeInfo{__VA_ARGS__})
 struct VulkanPipe r_vulkanCreatePipe(struct VulkanPipeInfo pipeInfo);
 void vulkanDestroyPipe(struct VulkanPipe* pipe);
 void vulkanBindPipe(struct VulkanCommand* cmd, struct VulkanPipe* pipe);
 void vulkanPush(struct VulkanCommand* cmd, struct VulkanPipe* pipe, u32 size, void* pc);
 
-#define vulkanBeginRender(...) r_vulkanBeginRender((struct VulkanBeginRenderInfo){__VA_ARGS__})
+#define vulkanBeginRender(...) r_vulkanBeginRender(VulkanBeginRenderInfo{__VA_ARGS__})
 void r_vulkanBeginRender(struct VulkanBeginRenderInfo beginRenderInfo);
 void r_vulkanEndRender(struct VulkanCommand* cmd);
 #define vulkanEndRender(cmd) r_vulkanEndRender(cmd)

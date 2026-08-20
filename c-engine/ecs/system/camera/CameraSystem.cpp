@@ -19,12 +19,17 @@ static Entity* cameraEntityObj;
 static u32 cameraEntity;
 static Scene* scene;
 
-struct System cameraSystem = {
-    .name       = "camera",
-    .added      = added,
-    .preUpdate  = preUpdate,
-    .update     = update,
-    .postUpdate = postUpdate,
+System cameraSystem = {
+    .name                = "camera",
+    .added               = added,
+    .removed             = nullptr,
+    .preUpdate           = preUpdate,
+    .update              = update,
+    .postUpdate          = postUpdate,
+    .cpuElapsedLastFrame = 0.0,
+    .cpuElapsed          = 0.0,
+    .gpuElapsed          = 0.0,
+    .priority            = 0,
 };
 
 void added(void) {

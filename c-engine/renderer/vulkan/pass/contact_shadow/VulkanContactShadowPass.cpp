@@ -21,11 +21,16 @@ static void update(void);
 static void removed(void);
 
 System vulkanContactShadowPass = {
-    .name      = "contact_shadow",
-    .added     = added,
-    .preUpdate = preUpdate,
-    .update    = update,
-    .removed   = removed,
+    .name                = "contact_shadow",
+    .added               = added,
+    .removed             = removed,
+    .preUpdate           = preUpdate,
+    .update              = update,
+    .postUpdate          = nullptr,
+    .cpuElapsedLastFrame = 0.0,
+    .cpuElapsed          = 0.0,
+    .gpuElapsed          = 0.0,
+    .priority            = 0,
 };
 
 /* ── Push constants (must match contact_shadow.comp) ───────────── */
@@ -109,7 +114,7 @@ static void destroyHistory(void) {
     for (int i = 0; i < 2; ++i) {
         if (historyImages[i].img) {
             vulkanDestroyImage(&historyImages[i], NULL);
-            historyImages[i] = (VulkanImage){0};
+            historyImages[i] = VulkanImage{0};
         }
     }
 
@@ -144,11 +149,11 @@ static void ensureHistory(u32 w, u32 h) {
 static void swapchainCreated(void*) {
     if (filteredImage.img) {
         vulkanDestroyImage(&filteredImage, NULL);
-        filteredImage = (VulkanImage){0};
+        filteredImage = VulkanImage{0};
     }
     if (rawImage.img) {
         vulkanDestroyImage(&rawImage, NULL);
-        rawImage = (VulkanImage){0};
+        rawImage = VulkanImage{0};
     }
     destroyHistory();
 }
@@ -456,11 +461,11 @@ static void update(void) {
 static void removed(void) {
     if (filteredImage.img) {
         vulkanDestroyImage(&filteredImage, NULL);
-        filteredImage = (VulkanImage){0};
+        filteredImage = VulkanImage{0};
     }
     if (rawImage.img) {
         vulkanDestroyImage(&rawImage, NULL);
-        rawImage = (VulkanImage){0};
+        rawImage = VulkanImage{0};
     }
     destroyHistory();
 

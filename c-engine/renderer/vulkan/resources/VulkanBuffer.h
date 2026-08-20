@@ -2,7 +2,7 @@
 #include "renderer/vulkan/Vulkan.h"
 #include "thread/Thread.h"
 
-typedef struct VulkanBuffer {
+struct VulkanBuffer {
     struct Thread lock;
     VmaAllocationInfo vmaInfo;
     VkBuffer buf;
@@ -10,41 +10,41 @@ typedef struct VulkanBuffer {
     VmaVirtualBlock virtualBlock;
     u64 address;
     u64 size;
-} VulkanBuffer;
+};
 
-typedef struct VulkanVirtualBuf {
+struct VulkanVirtualBuf {
     VulkanBuffer* buffer;
     VkDeviceSize offset;
     VkDeviceSize size;
     VmaVirtualAllocation virtualAllocation;
-} VulkanVirtualBuf;
+};
 
-typedef struct VulkanCommand VulkanCommand;
-typedef struct VulkanImage VulkanImage;
+struct VulkanCommand;
+struct VulkanImage;
 
-typedef struct VulkanCopyInfo {
-    VulkanCommand* cmd;
+struct VulkanCopyInfo {
+    VulkanCommand* cmd = nullptr;
     // VulkanVirtualBuf* staging;
 
     struct {
-        VulkanBuffer* buf;
-        VulkanImage* img;
-        void* data;
-        u32 offset;
+        VulkanBuffer* buf = nullptr;
+        VulkanImage* img = nullptr;
+        void* data = nullptr;
+        u32 offset = 0;
     } source;
 
     struct {
-        VulkanBuffer* buf;
-        u32 bufferOffset;
-        VulkanImage* img;
-        u32 layer;
-        ivec3 imageExtent;
-        ivec3 imageOffset;
-        u32 bufferRowLength;
+        VulkanBuffer* buf = nullptr;
+        u32 bufferOffset = 0;
+        VulkanImage* img = nullptr;
+        u32 layer = 0;
+        ivec3 imageExtent{};
+        ivec3 imageOffset{};
+        u32 bufferRowLength = 0;
     } target;
 
-    u32 size;
-} VulkanCopyInfo;
+    u32 size = 0;
+};
 
 VulkanBuffer vulkanCreateCpuBuffer(const char* name, u64 size, VkBufferUsageFlags usage);
 VulkanBuffer vulkanCreateGpuBuffer(const char* name, u64 size, VkBufferUsageFlags usage);
@@ -54,7 +54,7 @@ VulkanBuffer vulkanCreateStagingBuffer(u64 size);
 
 void vulkanDestroyBuffer(VulkanBuffer* buffer, VkFence fence);
 
-#define vulkanCopy(...) r_vulkanCopy((VulkanCopyInfo){__VA_ARGS__})
+#define vulkanCopy(...) r_vulkanCopy(VulkanCopyInfo{__VA_ARGS__})
 void r_vulkanCopy(VulkanCopyInfo info);
 
 VulkanVirtualBuf vulkanBufferAllocateVirtual(VulkanBuffer* buf, u32 size, u32 align);

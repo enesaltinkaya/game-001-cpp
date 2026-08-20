@@ -11,9 +11,16 @@ static void added(void);
 static void removed(void);
 
 System mainMenuGui = {
-    .name    = "mainMenu",
-    .added   = added,
-    .removed = removed,
+    .name                = "mainMenu",
+    .added               = added,
+    .removed             = removed,
+    .preUpdate           = nullptr,
+    .update              = nullptr,
+    .postUpdate          = nullptr,
+    .cpuElapsedLastFrame = 0.0,
+    .cpuElapsed          = 0.0,
+    .gpuElapsed          = 0.0,
+    .priority            = 0,
 };
 
 static void* document;
@@ -37,9 +44,9 @@ void added(void) {
 void removed(void) {
     warn("remove main menu gui");
     rmlUnloadDocument(document);
-    document = NULL;
+    document = nullptr;
     rmlUnloadModel(model);
-    model = NULL;
+    model = nullptr;
 }
 
 int settingsOpen(void* _) {
@@ -55,7 +62,7 @@ int creditsOpen(void* _) {
 }
 
 int luaPlayGame(void* _) {
-    (void)_;
+    static_cast<void>(_);
     playGame();
     return 0;
 }

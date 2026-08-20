@@ -24,11 +24,16 @@ static double elapsedCPU;
 static double elapsedGPU;
 
 System vulkanRmluiPass = {
-    .name       = "rmlui",
-    .added      = added,
-    .preUpdate  = preUpdate,
-    .postUpdate = postUpdate,
-    .removed    = removed,
+    .name                = "rmlui",
+    .added               = added,
+    .removed             = removed,
+    .preUpdate           = preUpdate,
+    .update              = nullptr,
+    .postUpdate          = postUpdate,
+    .cpuElapsedLastFrame = 0.0,
+    .cpuElapsed          = 0.0,
+    .gpuElapsed          = 0.0,
+    .priority            = 0,
 };
 
 ////////////////////////////////////////////////////////////////////
@@ -420,7 +425,7 @@ void freeRemovedGeometries(void) {
         RmlGeometry* rmlGeometry = (RmlGeometry*)geometriesToRemove[i];
         vulkanBufferDestroyVirtual(&rmlGeometry->indexVirtualBuf);
         vulkanBufferDestroyVirtual(&rmlGeometry->vertexVirtualBuf);
-        *rmlGeometry = (RmlGeometry){0};
+        *rmlGeometry = RmlGeometry{};
     }
     arrayClear(geometriesToRemove);
 }

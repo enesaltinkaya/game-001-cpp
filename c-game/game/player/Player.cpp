@@ -80,16 +80,22 @@ static void playerMovementTopDownOnly(void);
 static void playerLightCreate(Entity* playerEntity);
 static void playerLightUpdate(void);
 
-struct System playerSystem = {
-    .name       = "player",
-    .added      = added,
-    .removed    = removed,
-    .preUpdate  = preUpdate,
-    .update     = update,
-    .postUpdate = postUpdate,
+System playerSystem = {
+    .name                = "player",
+    .added               = added,
+    .removed             = removed,
+    .preUpdate           = preUpdate,
+    .update              = update,
+    .postUpdate          = postUpdate,
+    .cpuElapsedLastFrame = 0.0,
+    .cpuElapsed          = 0.0,
+    .gpuElapsed          = 0.0,
+    .priority            = 0,
 };
 
 static Scene* playerScene;
+
+static vec3 Y_UP = {0.0f, 1.0f, 0.0f};
 static u32 playerEntityId;
 static bool playerReady;
 
@@ -178,11 +184,11 @@ void playerGetSpawn(vec3 outPos) {
     outPos[1] = 511.55f;
     outPos[2] = 1691.46f;
 }
-static struct Sound* kickSound;
-static struct Sound* bicycleKickSound;
-static struct Sound* jumpSound;
-static struct Sound* stepSound;
-static struct Sound* hitSound;
+static Sound* kickSound;
+static Sound* bicycleKickSound;
+static Sound* jumpSound;
+static Sound* stepSound;
+static Sound* hitSound;
 static const char* castingAnim;                   // animation name of the active ability
 static int castingRepeatsLeft;                    // how many more times to replay the animation
 static Entity* kickHitboxEntity;                  // hitbox entity for kick damage
@@ -196,20 +202,20 @@ static const float playerLightIntensity = 50.0f;
 static bool isTposing;  // playing eve_t emote
 
 // ── Camera mode (ISO default, C to toggle) ─────────────────────────────────
-typedef enum {
+enum CameraMode {
     CAM_MODE_ISO,
     CAM_MODE_ORBIT,
-} CameraMode;
+};
 
 static CameraMode gCameraMode = CAM_MODE_ISO;
 
 // ── Fireball state ──────────────────────────────────────────────────────────
-typedef struct Fireball {
+struct Fireball {
     Entity* entity;
     Entity* hitboxEntity;  // combat hitbox that follows the fireball
     vec3 velocity;
     float lifetime;  // remaining seconds
-} Fireball;
+};
 
 static Fireball fireballs[FIREBALL_MAX];
 static int fireballCount = 0;
@@ -218,13 +224,13 @@ static int fireballDestroyCount = 0;
 
 // ── Player DB (persist camera angles + distance across runs) ────────────────
 
-typedef struct PlayerDb {
+struct PlayerDb {
     float cameraYaw;
     float cameraPitch;
     float moveYaw;
     float cameraDistance;
     int cameraMode;
-} PlayerDb;
+};
 
 static CameraMode playerDbSanitizeCameraMode(int cameraMode) {
     if (cameraMode == CAM_MODE_ORBIT) return CAM_MODE_ORBIT;
@@ -255,7 +261,7 @@ static bool playerDbLoad(const char* name, PlayerDb* data) {
     if (sqliteStep(stmt)) {
         void* blob   = sqliteGetBlob(stmt, 0);
         int blobSize = sqliteGetInt(stmt, 1);
-        memcpy(data, blob, std::min((size_t)blobSize, sizeof(PlayerDb)));
+        memcpy(data, blob, std::min(static_cast<size_t>(blobSize), sizeof(PlayerDb)));
         result = true;
     }
     sqliteFinalize(stmt);
@@ -287,7 +293,7 @@ static float pitchMax          = 60.0f * GLM_PIf / 180.0f;
 // ENGINE_CAM_TELEPORT for targeted landmark screenshots; view direction is
 // (sin yaw, ., cos yaw), so yaw 180 looks toward -Z).
 static void tempCameraOrbitOverride(void) {
-    static char* env = NULL;
+    static char* env = nullptr;
     static bool done = false;
     if (done) return;
     if (!env) env = getenv("ENGINE_CAM_ORBIT");
@@ -313,7 +319,7 @@ static void tempCameraOrbitOverride(void) {
         p->facingYaw   = yaw;
     }
     Entity* camEntity = cameraGetEntity();
-    Camera* camera    = camEntity ? getComponent(ecs.defaultScene, Camera, camEntity->id) : NULL;
+    Camera* camera    = camEntity ? getComponent(ecs.defaultScene, Camera, camEntity->id) : nullptr;
     if (camera) {
         camera->yaw   = yaw;
         camera->pitch = pitch;
@@ -428,7 +434,7 @@ static void playerSceneLoaded(Scene* scene, void*) {
                                                          (uint64_t)entityId);
             // Hold the character at its spawn position until the streaming
             // heightfield body under it exists (Azgaar world). In the regular
-            // (mesh) world the active heightmap is NULL, so this clears on the
+            // (mesh) world the active heightmap is nullptr, so this clears on the
             // first update and the character moves normally.
             player->waitingForGround = true;
             info("player: created character controller");
@@ -494,11 +500,11 @@ static void playerSceneLoaded(Scene* scene, void*) {
 }
 
 static void waitAsecondTemp(void*) {
-    sceneLoadCb("models/eve.dat", playerSceneLoaded, NULL);
+    sceneLoadCb("models/eve.dat", playerSceneLoaded, nullptr);
 }
 
 static void animationsLoaded(void*) {
-    futureTaskAdd(1000, waitAsecondTemp, NULL);
+    futureTaskAdd(1000, waitAsecondTemp, nullptr);
 }
 
 void added(void) {
@@ -515,7 +521,7 @@ void removed(void) {
         // after the scene is destroyed below.
         HeightmapTerrain* hm = heightmapTerrainGetActive();
         if (hm) {
-            heightmapTerrainSetActive(NULL);
+            heightmapTerrainSetActive(nullptr);
             heightmapTerrainDestroyData(hm);
         }
 
@@ -523,17 +529,17 @@ void removed(void) {
         if (player && player->character) {
             vulkanDebugPhysicsUnregisterCharacter(player->character);
             joltCharacterDestroy(player->character);
-            player->character = NULL;
+            player->character = nullptr;
         }
         if (player && player->sensorBody) {
             joltBodyDestroy(player->sensorBody);
-            player->sensorBody = NULL;
+            player->sensorBody = nullptr;
         }
         rendererSceneDestroy(playerScene);
         sceneDestroy(playerScene);
     }
-    playerLightEntity = NULL;
-    playerScene       = NULL;
+    playerLightEntity = nullptr;
+    playerScene       = nullptr;
     playerReady       = false;
 }
 
@@ -750,12 +756,13 @@ static void kickLightAttach(Entity* playerEntity) {
     if (kickLightEntity) {
         F_sceneRemoveComponent(kickLightEntity->scene, kickLightEntity->id, &Light_id);
         lightMarkDirty(kickLightEntity->scene, kickLightEntity->id);
-        kickLightEntity = NULL;
+        kickLightEntity = nullptr;
     }
 
     Light* light     = createComponent(foot->scene, Light, foot->id);
     light->lightType = LIGHT_POINT;
-    glm_vec3_copy((vec3){1.0f, 0.6f, 0.2f}, light->color);  // warm orange
+    vec3 kickLightColor = {1.0f, 0.6f, 0.2f};
+    glm_vec3_copy(kickLightColor, light->color);  // warm orange
     light->intensity = kickLightIntensity;
     light->range     = 8.0f;
     kickLightFade    = 0.0f;
@@ -780,7 +787,7 @@ static void kickLightUpdate(void) {
         u32 id        = kickLightEntity->id;
         F_sceneRemoveComponent(scene, id, &Light_id);
         lightMarkDirty(scene, id);
-        kickLightEntity = NULL;
+        kickLightEntity = nullptr;
         return;
     }
 
@@ -794,6 +801,7 @@ static void kickLightUpdate(void) {
 }
 
 // ── Player follow light ───────────────────────────────────────────────────
+[[maybe_unused]]
 static void playerLightCreate(Entity* playerEntity) {
     if (!playerEntity || playerLightEntity) return;
 
@@ -898,11 +906,11 @@ static void fireballUpdate(void) {
                 F_sceneRemoveComponent(hbScene, hbId, &AttackHitbox_id);
                 F_sceneRemoveComponent(hbScene, hbId, &Transform_id);
                 destroyEntity(fb->hitboxEntity);
-                fb->hitboxEntity = NULL;
+                fb->hitboxEntity = nullptr;
             }
             // Queue entity for destruction in postUpdate (safe to call destroyEntity there)
             fireballDestroyList[fireballDestroyCount++] = fb->entity;
-            fb->entity                                  = NULL;
+            fb->entity                                  = nullptr;
             continue;
         }
 
@@ -977,10 +985,10 @@ static void playerAbilities(void) {
                     F_sceneRemoveComponent(hbScene, hbId, &AttackHitbox_id);
                     F_sceneRemoveComponent(hbScene, hbId, &Transform_id);
                     destroyEntity(kickHitboxEntity);
-                    kickHitboxEntity = NULL;
+                    kickHitboxEntity = nullptr;
                 }
                 player->isCasting = false;
-                castingAnim       = NULL;
+                castingAnim       = nullptr;
                 kickLightStartFade();
                 // Transition back to idle/move
                 if (player->isMoving)
@@ -1063,15 +1071,15 @@ static bool playerIsLocomotionClip(const char* clipName) {
 }
 
 static AnimationInstance* playerFindAnimationInstance(Animator* animator, const char* clipName) {
-    if (!animator) return NULL;
-    for (i32 i = (i32)arraySize(animator->activeInstances) - 1; i >= 0; i--) {
+    if (!animator) return nullptr;
+    for (i32 i = static_cast<i32>(arraySize(animator->activeInstances)) - 1; i >= 0; i--) {
         AnimationInstance* instance = animator->activeInstances[i];
         if (instance && !instance->markedForRemoval &&
             strequals(instance->clip->name.data, clipName)) {
             return instance;
         }
     }
-    return NULL;
+    return nullptr;
 }
 
 static float playerLocomotionPhase(Animator* animator) {
@@ -1157,7 +1165,7 @@ static void playerPlayLocomotionBlend(Entity* entity,
     if (!animator) {
         animator          = createComponent(entity->scene, Animator, entity->id);
         animator->entity  = entity;
-        animator->mapping = NULL;
+        animator->mapping = nullptr;
     }
 
     // Fade out idle/emotes/etc.  Ability and jump animations do not call this path.
@@ -1318,7 +1326,7 @@ static void playerMovementTopDownOnly(void) {
     // body under it exists (Azgaar world). While waiting, skip the physics
     // update so the character cannot fall through the terrain before the
     // collision data is ready. In the regular (mesh) world the active
-    // heightmap is NULL, so this clears on the first update.
+    // heightmap is nullptr, so this clears on the first update.
     if (player->waitingForGround) {
         HeightmapTerrain* hm = heightmapTerrainGetActive();
         if (!hm) {
@@ -1377,7 +1385,7 @@ static void playerMovementTopDownOnly(void) {
             player->facingYaw = targetYaw;
 
             versor yawQuat;
-            glm_quatv(yawQuat, targetYaw, (vec3){0.0f, 1.0f, 0.0f});
+            glm_quatv(yawQuat, targetYaw, Y_UP);
             versor targetRot;
             glm_quat_mul(yawQuat, player->baseRot, targetRot);
             quatSlerpShortest(transform->rot,

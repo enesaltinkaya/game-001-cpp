@@ -7,6 +7,8 @@
 
 #define AZGAAR_ROAD_DECAL_MAX_HANDLES 8192u
 
+static vec3 Y_UP = {0.0f, 1.0f, 0.0f};
+
 static u32  handles[AZGAAR_ROAD_DECAL_MAX_HANDLES];
 static u32  handleCount;
 static bool visible = true;
@@ -25,9 +27,11 @@ static float routeMaxLen(AzgaarRouteGroup group) {
 
 static void routeColor(AzgaarRouteGroup group, vec4 out) {
     if (group == AZGAAR_ROUTE_ROAD) {
-        glm_vec4_copy((vec4){0.42f, 0.30f, 0.18f, 0.42f}, out);
+        vec4 c = {0.42f, 0.30f, 0.18f, 0.42f};
+        glm_vec4_copy(c, out);
     } else {
-        glm_vec4_copy((vec4){0.36f, 0.27f, 0.16f, 0.34f}, out);
+        vec4 c = {0.36f, 0.27f, 0.16f, 0.34f};
+        glm_vec4_copy(c, out);
     }
 }
 
@@ -60,12 +64,12 @@ static void addSegment(const AzgaarWorld* world,
 
     float width = routeWidth(group);
     float maxLen = routeMaxLen(group);
-    u32 pieces = (u32)ceilf(len / maxLen);
+    u32 pieces = static_cast<u32>(ceilf(len / maxLen));
     if (pieces < 1u) pieces = 1u;
 
     for (u32 p = 0; p < pieces && handleCount < AZGAAR_ROAD_DECAL_MAX_HANDLES; ++p) {
-        float t0 = (float)p / (float)pieces;
-        float t1 = (float)(p + 1u) / (float)pieces;
+        float t0 = static_cast<float>(p) / static_cast<float>(pieces);
+        float t1 = static_cast<float>(p + 1u) / static_cast<float>(pieces);
         float sx = awx + dx * t0;
         float sz = awz + dz * t0;
         float ex = awx + dx * t1;
@@ -111,7 +115,7 @@ static void addSegment(const AzgaarWorld* world,
         // along the shared segment boundary with no overlap. Any overlap would
         // double alpha-blend and show up as a brighter cross-band at joints.
         d.halfExtents[2] = slen * 0.5f;
-        glm_quatv(d.rotation, yaw, (vec3){0.0f, 1.0f, 0.0f});
+        glm_quatv(d.rotation, yaw, Y_UP);
         routeColor(group, d.color);
         d.textureId = DECAL_PROCEDURAL_CIRCLE_TEXTURE;
         // Road rectangles overlap at junctions; the union-blend road layer

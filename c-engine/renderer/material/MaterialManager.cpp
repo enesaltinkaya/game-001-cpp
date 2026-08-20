@@ -15,7 +15,7 @@ Material* createMaterial(const char* name) {
     }
 
     Material* material = static_cast<Material*>(memoryAlloc(sizeof(Material)));
-    *material          = (Material){0};
+    *material          = Material{};
     material->id       = materialCounter;
     strmapPut(materialMap, name, material);
     mapPut(materialIdMap, material->id, material);
@@ -27,14 +27,14 @@ Material* createMaterial(const char* name) {
 
 Material* getMaterialByName(const char* name) {
     if (!strmapContainsKey(materialMap, name)) {
-        return NULL;
+        return nullptr;
     }
     return strmapGet(materialMap, name);
 }
 
 Material* getMaterialById(const u32 id) {
     if (!mapContainsKey(materialIdMap, id)) {
-        return NULL;
+        return nullptr;
     }
     return mapGet(materialIdMap, id);
 }

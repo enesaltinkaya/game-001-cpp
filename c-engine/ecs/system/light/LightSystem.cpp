@@ -16,11 +16,17 @@ static void buildGpuLight(Scene* scene, u32 entity, Light* light, GpuLight* out)
 static LightUbo frameLightUbo;
 static u32 frameLightCount;
 
-struct System lightSystem = {
-    .name       = "light",
-    .added      = added,
-    .update     = update,
-    .postUpdate = postUpdate,
+System lightSystem = {
+    .name                = "light",
+    .added               = added,
+    .removed             = nullptr,
+    .preUpdate           = nullptr,
+    .update              = update,
+    .postUpdate          = postUpdate,
+    .cpuElapsedLastFrame = 0.0,
+    .cpuElapsed          = 0.0,
+    .gpuElapsed          = 0.0,
+    .priority            = 0,
 };
 
 static void buildGpuLight(Scene* scene, u32 entity, Light* light, GpuLight* out) {

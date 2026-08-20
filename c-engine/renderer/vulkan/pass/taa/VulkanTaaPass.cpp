@@ -39,12 +39,16 @@ static char taaPipeReady;
 static char taaWasEnabled;
 
 System vulkanTaaPass = {
-    .name       = "taa",
-    .added      = added,
-    .preUpdate  = preUpdate,
-    .update     = update,
-    .postUpdate = postUpdate,
-    .removed    = removed,
+    .name                = "taa",
+    .added               = added,
+    .removed             = removed,
+    .preUpdate           = preUpdate,
+    .update              = update,
+    .postUpdate          = postUpdate,
+    .cpuElapsedLastFrame = 0.0,
+    .cpuElapsed          = 0.0,
+    .gpuElapsed          = 0.0,
+    .priority            = 0,
 };
 
 static void added(void) {
@@ -112,11 +116,11 @@ static void createAccumulators(void) {
 static void destroyAccumulators(void) {
     if (taaA.img) {
         vulkanDestroyImage(&taaA, NULL);
-        taaA = (VulkanImage){0};
+        taaA = VulkanImage{0};
     }
     if (taaB.img) {
         vulkanDestroyImage(&taaB, NULL);
-        taaB = (VulkanImage){0};
+        taaB = VulkanImage{0};
     }
     taaWidth  = 0;
     taaHeight = 0;
@@ -288,12 +292,12 @@ static void removed(void) {
     destroyAccumulators();
     if (profileReady) {
         vulkanDestroyProfile(&profile);
-        profile      = (VulkanProfile){0};
+        profile      = VulkanProfile{0};
         profileReady = 0;
     }
     if (taaPipeReady) {
         vulkanDestroyPipe(&taaPipe);
-        taaPipe      = (VulkanPipe){0};
+        taaPipe      = VulkanPipe{0};
         taaPipeReady = 0;
     }
 }

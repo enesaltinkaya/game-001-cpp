@@ -2,13 +2,13 @@
 
 #include "Utils.h"
 
-typedef enum DecalProjectionAxis {
+enum DecalProjectionAxis {
     DECAL_PROJECT_Y_DOWN = 0,
     DECAL_PROJECT_Z_FORWARD = 1,
     DECAL_PROJECT_CUSTOM = 2,
-} DecalProjectionAxis;
+};
 
-typedef enum DecalFlags {
+enum DecalFlags {
     DECAL_FLAG_NONE        = 0,
     DECAL_FLAG_GROUND_ONLY = 1u << 0,
     DECAL_FLAG_EMISSIVE    = 1u << 1,
@@ -18,9 +18,9 @@ typedef enum DecalFlags {
     // roads/trails). Routed to a dedicated "union" layer so overlapping rects
     // take the max coverage instead of accumulating alpha (which would darken).
     DECAL_FLAG_ROAD        = 1u << 4,
-} DecalFlags;
+};
 
-typedef struct DecalInstance {
+struct DecalInstance {
     vec3 position;
     vec3 halfExtents;
     versor rotation;
@@ -32,7 +32,7 @@ typedef struct DecalInstance {
     float edgeFeather;
     float uvScale[2];
     float time;
-} DecalInstance;
+};
 
 #define DECAL_INVALID_HANDLE UINT32_MAX
 #define DECAL_PROCEDURAL_CIRCLE_TEXTURE UINT32_MAX

@@ -13,9 +13,17 @@ static i32 luacExit(void* luaState);
 static void added(void);
 
 static lua_State* luaState;
-struct System luaSystem = {
-    .name  = "lua",
-    .added = added,
+System luaSystem = {
+    .name                = "lua",
+    .added               = added,
+    .removed             = nullptr,
+    .preUpdate           = nullptr,
+    .update              = nullptr,
+    .postUpdate          = nullptr,
+    .cpuElapsedLastFrame = 0.0,
+    .cpuElapsed          = 0.0,
+    .gpuElapsed          = 0.0,
+    .priority            = 0,
 };
 
 void added(void) {

@@ -3,7 +3,7 @@
 #include "ecs/system/System.h"
 #include "enemy/Enemy.h"
 
-typedef struct Entity Entity;
+struct Entity;
 
 extern struct System enemySystem;
 

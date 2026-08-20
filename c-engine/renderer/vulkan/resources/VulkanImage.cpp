@@ -1,5 +1,6 @@
 #include "VulkanImage.h"
 #include <algorithm>
+#include <cmath>
 #include "../command/VulkanCommand.h"
 #include "../utils/VulkanUtils.h"
 #include "Utils.h"
@@ -8,7 +9,7 @@
 #include "renderer/vulkan/resources/VulkanResourceManager.h"
 #include "string/String.h"
 
-static char hasStencilComponent(VkFormat format);
+static bool hasStencilComponent(VkFormat format);
 static VkAccessFlags2 accessFlagsForLayout(VkImageLayout layout);
 static VkPipelineStageFlags2 stageFlagsForLayout(VkImageLayout layout);
 static void copyImage(VulkanCommand* cmd,
@@ -30,16 +31,16 @@ VulkanImage r_vulkanCreateImg(VulkanImageInfo info) {
     image.layout      = VK_IMAGE_LAYOUT_UNDEFINED;
     image.mipLevels   = info.mipLevels;
     image.format      = info.format;
-    image.extent      = (VkExtent3D){.width = static_cast<uint32_t>(info.width), .height = static_cast<uint32_t>(info.height), 1};
+    image.extent      = VkExtent3D{static_cast<uint32_t>(info.width), static_cast<uint32_t>(info.height), 1};
     image.usage       = info.usage;
     image.viewType    = info.viewType;
-    image.samples     = (VkSampleCountFlagBits)info.samples;
+    image.samples     = static_cast<VkSampleCountFlagBits>(info.samples);
     image.onHeap      = info.onHeap;
 
     VkImageCreateInfo imageCreateInfo = {};
     imageCreateInfo.sType             = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     imageCreateInfo.flags             = info.flags;
-    imageCreateInfo.format            = (VkFormat)info.format;
+    imageCreateInfo.format            = static_cast<VkFormat>(info.format);
     imageCreateInfo.mipLevels         = info.mipLevels;
     imageCreateInfo.initialLayout     = VK_IMAGE_LAYOUT_UNDEFINED;
     imageCreateInfo.sharingMode       = VK_SHARING_MODE_EXCLUSIVE;
@@ -47,11 +48,11 @@ VulkanImage r_vulkanCreateImg(VulkanImageInfo info) {
 
     if (info.type == VK_IMAGE_TYPE_3D) {
         imageCreateInfo.imageType   = VK_IMAGE_TYPE_3D;
-        imageCreateInfo.extent      = (VkExtent3D){.width = static_cast<uint32_t>(info.width), .height = static_cast<uint32_t>(info.height), .depth = static_cast<uint32_t>(info.layers)};
+        imageCreateInfo.extent      = VkExtent3D{static_cast<uint32_t>(info.width), static_cast<uint32_t>(info.height), static_cast<uint32_t>(info.layers)};
         imageCreateInfo.arrayLayers = 1;  // Must be 1 for 3D images
     } else {
         imageCreateInfo.imageType   = VK_IMAGE_TYPE_2D;
-        imageCreateInfo.extent      = (VkExtent3D){.width = static_cast<uint32_t>(info.width), .height = static_cast<uint32_t>(info.height), 1};
+        imageCreateInfo.extent      = VkExtent3D{static_cast<uint32_t>(info.width), static_cast<uint32_t>(info.height), 1};
         imageCreateInfo.arrayLayers = info.layers;
     }
     imageCreateInfo.samples           = static_cast<VkSampleCountFlagBits>(info.samples);
@@ -67,20 +68,20 @@ VulkanImage r_vulkanCreateImg(VulkanImageInfo info) {
     vmaCreateImage(vulkan.vmaAllocator,
                    &imageCreateInfo,
                    &vmaCreateInfo,
-                   &image.img,
-                   &image.vma,
-                   NULL);
+&image.img,
+                    &image.vma,
+                    nullptr);
     if (!image.img) {
         warn("r_vulkanCreateImg: VMA image allocation failed (name=%s, format=%d)",
-             info.name, (int)info.format);
-        return (VulkanImage){0};
+             info.name, static_cast<int>(info.format));
+        return VulkanImage{};
     }
 
     VkImageViewCreateInfo imageViewCreateInfo           = {};
     imageViewCreateInfo.sType                           = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
     imageViewCreateInfo.image                           = image.img;
     imageViewCreateInfo.viewType                        = info.viewType;
-    imageViewCreateInfo.format                          = (VkFormat)info.format;
+    imageViewCreateInfo.format                          = static_cast<VkFormat>(info.format);
     imageViewCreateInfo.subresourceRange.levelCount     = info.mipLevels;
     imageViewCreateInfo.subresourceRange.layerCount     = info.type == VK_IMAGE_TYPE_3D ? 1 : info.layers;
     imageViewCreateInfo.subresourceRange.aspectMask     = info.aspect;
@@ -90,7 +91,7 @@ VulkanImage r_vulkanCreateImg(VulkanImageInfo info) {
     imageViewCreateInfo.components.b                    = VK_COMPONENT_SWIZZLE_IDENTITY;
     imageViewCreateInfo.subresourceRange.baseMipLevel   = 0;
     imageViewCreateInfo.subresourceRange.baseArrayLayer = 0;
-    vkCreateImageView(vulkan.device, &imageViewCreateInfo, NULL, &image.view);
+    vkCreateImageView(vulkan.device, &imageViewCreateInfo, nullptr, &image.view);
 
     arraySetSize(image.views, info.layers);
     for (i32 i = 0, si = info.layers; i < si; i++) {
@@ -99,7 +100,7 @@ VulkanImage r_vulkanCreateImg(VulkanImageInfo info) {
         if (info.type == VK_IMAGE_TYPE_3D) {
             perLayerViewCI.viewType = VK_IMAGE_VIEW_TYPE_2D;
             perLayerViewCI.image    = image.img;
-            perLayerViewCI.format   = (VkFormat)info.format;
+            perLayerViewCI.format   = static_cast<VkFormat>(info.format);
             perLayerViewCI.subresourceRange.baseMipLevel   = 0;
             perLayerViewCI.subresourceRange.levelCount     = info.mipLevels;
             perLayerViewCI.subresourceRange.baseArrayLayer = 0;
@@ -112,7 +113,7 @@ VulkanImage r_vulkanCreateImg(VulkanImageInfo info) {
         } else {
             perLayerViewCI.viewType              = VK_IMAGE_VIEW_TYPE_2D;
             perLayerViewCI.image                 = image.img;
-            perLayerViewCI.format                = (VkFormat)info.format;
+            perLayerViewCI.format                = static_cast<VkFormat>(info.format);
             perLayerViewCI.components.r          = VK_COMPONENT_SWIZZLE_R;
             perLayerViewCI.components.g          = VK_COMPONENT_SWIZZLE_G;
             perLayerViewCI.components.b          = VK_COMPONENT_SWIZZLE_B;
@@ -123,9 +124,9 @@ VulkanImage r_vulkanCreateImg(VulkanImageInfo info) {
             perLayerViewCI.subresourceRange.layerCount     = 1;
             perLayerViewCI.subresourceRange.aspectMask     = info.aspect;
         }
-        vkCreateImageView(vulkan.device, &perLayerViewCI, NULL, &image.views[i]);
+        vkCreateImageView(vulkan.device, &perLayerViewCI, nullptr, &image.views[i]);
         if (isDebug()) {
-            vulkanUtilsSetName((uint64_t)image.views[i],
+            vulkanUtilsSetName(reinterpret_cast<uint64_t>(image.views[i]),
                                VK_OBJECT_TYPE_IMAGE_VIEW,
                                strtmp("view %s arr: %d", info.name, i));
         }
@@ -138,11 +139,11 @@ VulkanImage r_vulkanCreateImg(VulkanImageInfo info) {
     stringPrintf(&image.name, info.name);
 
     if (isDebug()) {
-        vulkanUtilsSetName((uint64_t)image.view,
+        vulkanUtilsSetName(reinterpret_cast<uint64_t>(image.view),
                            VK_OBJECT_TYPE_IMAGE_VIEW,
                            strtmp("%s%s", "view ", info.name));
         vulkanUtilsSetName(
-            (uint64_t)image.img,
+            reinterpret_cast<uint64_t>(image.img),
             VK_OBJECT_TYPE_IMAGE,
             strtmp("%s%s poolIndex: %d", "image ", info.name, image.sampledPoolIndex));
     }
@@ -152,7 +153,7 @@ VulkanImage r_vulkanCreateImg(VulkanImageInfo info) {
 
 void vulkanDestroyImage(VulkanImage* image, VkFence fence) {
     vulkanRemoveImageFromPool(image);
-    addImageGarbage(image, fence, NULL);
+    addImageGarbage(image, fence, nullptr);
     stringDestroy(&image->name);
     if (image->onHeap) memoryFree(image);
 }
@@ -181,8 +182,8 @@ void vulkanTransition(VulkanCommand* cmd,
     barrier.dstStageMask  = stageFlagsForLayout(newLayout);
     barrier.dstAccessMask = accessFlagsForLayout(newLayout);
 
-    barrier.oldLayout           = (VkImageLayout)oldLayout;
-    barrier.newLayout           = (VkImageLayout)newLayout;
+    barrier.oldLayout           = static_cast<VkImageLayout>(oldLayout);
+    barrier.newLayout           = static_cast<VkImageLayout>(newLayout);
     barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     barrier.image               = img->img;
@@ -211,7 +212,7 @@ void vulkanTransition(VulkanCommand* cmd,
     img->layout = newLayout;
 }
 
-char hasStencilComponent(VkFormat format) {
+bool hasStencilComponent(VkFormat format) {
     return format == VK_FORMAT_D32_SFLOAT_S8_UINT || format == VK_FORMAT_D24_UNORM_S8_UINT;
 }
 
@@ -293,10 +294,10 @@ void vulkanImgGenerateMips(VulkanCommand* cmd, VulkanImage* img) {
                              VK_PIPELINE_STAGE_TRANSFER_BIT,
                              VK_PIPELINE_STAGE_TRANSFER_BIT,
                              0,
-                             0,
-                             NULL,
-                             0,
-                             NULL,
+0,
+                              nullptr,
+                              0,
+                              nullptr,
                              1,
                              &barrier);
 
@@ -338,10 +339,10 @@ void vulkanImgGenerateMips(VulkanCommand* cmd, VulkanImage* img) {
                              VK_PIPELINE_STAGE_TRANSFER_BIT,
                              VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
                              0,
-                             0,
-                             NULL,
-                             0,
-                             NULL,
+0,
+                              nullptr,
+                              0,
+                              nullptr,
                              1,
                              &barrier);
 
@@ -364,12 +365,12 @@ void vulkanImgGenerateMips(VulkanCommand* cmd, VulkanImage* img) {
                          VK_PIPELINE_STAGE_TRANSFER_BIT,
                          VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
                          0,
-                         0,
-                         NULL,
-                         0,
-                         NULL,
-                         1,
-                         &barrier);
+0,
+                          nullptr,
+                          0,
+                          nullptr,
+                          1,
+                          &barrier);
     img->layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 }
 
@@ -396,14 +397,14 @@ void vulkanBlit(VulkanCommand* cmd, VulkanImage* source, VulkanImage* target) {
     VkImageBlit blitRegion               = {};
     blitRegion.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     blitRegion.srcSubresource.layerCount = 1;
-    blitRegion.srcOffsets[0]             = (VkOffset3D){0, 0, 0};
+    blitRegion.srcOffsets[0]             = VkOffset3D{0, 0, 0};
     blitRegion.srcOffsets[1] =
-        (VkOffset3D){static_cast<int32_t>(source->extent.width), static_cast<int32_t>(source->extent.height), static_cast<int32_t>(source->extent.depth)};
+        VkOffset3D{static_cast<int32_t>(source->extent.width), static_cast<int32_t>(source->extent.height), static_cast<int32_t>(source->extent.depth)};
     blitRegion.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     blitRegion.dstSubresource.layerCount = 1;
-    blitRegion.dstOffsets[0]             = (VkOffset3D){0, 0, 0};
+    blitRegion.dstOffsets[0]             = VkOffset3D{0, 0, 0};
     blitRegion.dstOffsets[1] =
-        (VkOffset3D){static_cast<int32_t>(target->extent.width), static_cast<int32_t>(target->extent.height), static_cast<int32_t>(target->extent.depth)};
+        VkOffset3D{static_cast<int32_t>(target->extent.width), static_cast<int32_t>(target->extent.height), static_cast<int32_t>(target->extent.depth)};
 
     vkCmdBlitImage(cmd->cmd,
                    source->img,
@@ -518,7 +519,7 @@ static void copyImage(VulkanCommand* cmd,
 //     i32 refCount;
 // } Texture;
 
-void vulkanLoadTexture(Texture* texture, char nonColor, char genMips) {
+void vulkanLoadTexture(Texture* texture, bool nonColor, bool genMips) {
     VulkanImage* vulkanImage = static_cast<VulkanImage*>(memoryAlloc(sizeof(VulkanImage)));
 
     VkFormat format = VK_FORMAT_UNDEFINED;
@@ -550,7 +551,7 @@ void vulkanLoadTexture(Texture* texture, char nonColor, char genMips) {
     }
 
     // Check if image has pre-generated mipmaps
-    char hasMipData = texture->image.mips > 1;
+    bool hasMipData = texture->image.mips > 1;
 
     // Determine mip levels for the Vulkan image
     int mipLevels           = 1;
@@ -561,25 +562,25 @@ void vulkanLoadTexture(Texture* texture, char nonColor, char genMips) {
         mipLevels = texture->image.mips;
     } else if (genMips) {
         // Generate mipmaps at runtime
-        mipLevels = (int)((log2(std::max(texture->image.width, texture->image.height))) + 1);
+        mipLevels = static_cast<int>(std::log2(std::max(texture->image.width, texture->image.height)) + 1);
         usage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;  // Need transfer src for mipmap
                                                    // generation
     }
 
-    *vulkanImage = vulkanCreateImage(.name      = texture->name.data,
-                                     .format    = format,
-                                     .usage     = usage,
-                                     .mipLevels = mipLevels,
-                                     .width     = texture->image.width,
-                                     .height    = texture->image.height,
-                                     .onHeap    = 1);
+*vulkanImage = vulkanCreateImage(.name      = texture->name.data,
+                                  .format    = format,
+                                  .usage     = usage,
+                                  .width     = texture->image.width,
+                                  .height    = texture->image.height,
+                                  .mipLevels = mipLevels,
+                                  .onHeap    = true);
 
     VulkanCommand* cmd = vulkanTransientBegin();
     vulkanTransition(cmd, vulkanImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 0, 1);
 
     if (hasMipData) {
         VulkanBuffer staging = vulkanCreateStagingBuffer(texture->image.size);
-        memcpy((char*)staging.vmaInfo.pMappedData, texture->image.data, texture->image.size);
+        memcpy(static_cast<char*>(staging.vmaInfo.pMappedData), texture->image.data, texture->image.size);
 
         Array(VkBufferImageCopy) regions = {};
 

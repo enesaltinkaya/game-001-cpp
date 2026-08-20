@@ -5,10 +5,17 @@
 static void added(void);
 static void removed(void);
 
-struct System creditsGui = {
-    .name    = "creditsGui",
-    .added   = added,
-    .removed = removed,
+System creditsGui = {
+    .name                = "creditsGui",
+    .added               = added,
+    .removed             = removed,
+    .preUpdate           = nullptr,
+    .update              = nullptr,
+    .postUpdate          = nullptr,
+    .cpuElapsedLastFrame = 0.0,
+    .cpuElapsed          = 0.0,
+    .gpuElapsed          = 0.0,
+    .priority            = 0,
 };
 
 static void* document;
@@ -24,7 +31,7 @@ void added(void) {
 
 void removed(void) {
     rmlUnloadDocument(document);
-    document = NULL;
+    document = nullptr;
 }
 
 int creditsClose(void* _) {

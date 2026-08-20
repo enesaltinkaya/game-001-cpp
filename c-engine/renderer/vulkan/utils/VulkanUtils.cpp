@@ -127,7 +127,7 @@ VkFormat vulkanFindSupportedFormat(const VkFormat* candidates,
 // handed back to PRESENT_SRC so vulkanSwapchainEnd's own transition is a
 // no-op.
 void vulkanScreenshotRecord(VulkanImage* swapImg, VulkanBuffer* outReadback) {
-    *outReadback = (VulkanBuffer){0};
+    *outReadback = VulkanBuffer{};
     if (!swapImg || !swapImg->img) {
         warn("vulkanScreenshotRecord: no swapchain image available");
         return;
@@ -294,21 +294,21 @@ void vulkanSaveImage(VulkanImage* img, const char* path) {
         warn("vulkanSaveImage: failed to write %s", path);
     }
 
-    vulkanDestroyBuffer(&readback, NULL);
+    vulkanDestroyBuffer(&readback, nullptr);
 }
 
 #ifndef NDEBUG
 #ifdef __linux__
 #include "renderdoc_app.h"
 #include <dlfcn.h>
-static RENDERDOC_API_1_1_2* rdoc_api = NULL;
+static RENDERDOC_API_1_1_2* rdoc_api = nullptr;
 
 void* initRenderDocAPI(void) {
     if (rdoc_api) {
         return rdoc_api;
     }
 
-    void* module = NULL;
+    void* module = nullptr;
     module       = dlopen("librenderdoc.so", RTLD_NOLOAD | RTLD_NOW);
     if (module) {
         pRENDERDOC_GetAPI RENDERDOC_GetAPI =

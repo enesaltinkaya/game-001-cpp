@@ -65,7 +65,7 @@ struct VulkanDesc r_vulkanCreateDesc(struct VulkanDescInfo info) {
     poolCreateInfo.maxSets                    = 1;
     poolCreateInfo.pPoolSizes                 = poolSizes;
     poolCreateInfo.poolSizeCount              = arraySize(poolSizes);
-    vkCreateDescriptorPool(vulkan.device, &poolCreateInfo, NULL, &desc.pool);
+    vkCreateDescriptorPool(vulkan.device, &poolCreateInfo, nullptr, &desc.pool);
     arrayFree(poolSizes);
 
     Array(VkDescriptorSetLayoutBinding) bindings = {};
@@ -198,7 +198,7 @@ struct VulkanDesc r_vulkanCreateDesc(struct VulkanDescInfo info) {
     layoutInfo.pNext        = &layoutBindingFlags;
     layoutInfo.pBindings    = bindings;
     layoutInfo.bindingCount = arraySize(bindings);
-    vkCreateDescriptorSetLayout(vulkan.device, &layoutInfo, NULL, &desc.layout);
+    vkCreateDescriptorSetLayout(vulkan.device, &layoutInfo, nullptr, &desc.layout);
     arrayFree(bindings);
     arrayFree(bindingFlags);
 
@@ -225,8 +225,8 @@ struct VulkanDesc r_vulkanCreateDesc(struct VulkanDescInfo info) {
 }
 
 void vulkanDestroyDesc(struct VulkanDesc* desc) {
-    vkDestroyDescriptorSetLayout(vulkan.device, desc->layout, NULL);
-    vkDestroyDescriptorPool(vulkan.device, desc->pool, NULL);
+    vkDestroyDescriptorSetLayout(vulkan.device, desc->layout, nullptr);
+    vkDestroyDescriptorPool(vulkan.device, desc->pool, nullptr);
 }
 
 // dstArrayElement becomes size, if writing INLINE_UNIFORM
@@ -266,7 +266,7 @@ void vulkanUpdateDesc(struct VulkanDesc* desc,
         writeDescriptor.pImageInfo      = &descriptorImageInfo;
     } else if (type == VULKAN_BINDING_INLINE_UNIFORM_BLOCK) {
         inlineUniformWrite.sType    = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_INLINE_UNIFORM_BLOCK;
-        inlineUniformWrite.pNext    = NULL;
+        inlineUniformWrite.pNext    = nullptr;
         inlineUniformWrite.dataSize = dstArrayElement;
         inlineUniformWrite.pData    = resource;
 
@@ -280,7 +280,7 @@ void vulkanUpdateDesc(struct VulkanDesc* desc,
     }
 
     writeDescriptor.dstSet          = desc->set;
-    writeDescriptor.descriptorType  = (VkDescriptorType)type;
+    writeDescriptor.descriptorType  = static_cast<VkDescriptorType>(type);
     writeDescriptor.dstBinding      = dstBinding;
     writeDescriptor.dstArrayElement = dstArrayElement;
     vkUpdateDescriptorSets(vulkan.device, 1, &writeDescriptor, 0, 0);
@@ -290,7 +290,7 @@ void vulkanUpdateDesc(struct VulkanDesc* desc,
 void vulkanUpdateDescInline(struct VulkanDesc* desc, void* data, int size) {
     VkWriteDescriptorSetInlineUniformBlock inlineUniformWrite = {};
     inlineUniformWrite.sType    = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_INLINE_UNIFORM_BLOCK;
-    inlineUniformWrite.pNext    = NULL;
+    inlineUniformWrite.pNext    = nullptr;
     inlineUniformWrite.dataSize = size;
     inlineUniformWrite.pData    = data;
 
@@ -301,10 +301,10 @@ void vulkanUpdateDescInline(struct VulkanDesc* desc, void* data, int size) {
     writeDescriptor.dstBinding           = 0;
     writeDescriptor.descriptorType       = VK_DESCRIPTOR_TYPE_INLINE_UNIFORM_BLOCK;
     writeDescriptor.descriptorCount      = size;
-    writeDescriptor.pBufferInfo          = NULL;
-    writeDescriptor.pImageInfo           = NULL;
-    writeDescriptor.pTexelBufferView     = NULL;
-    vkUpdateDescriptorSets(vulkan.device, 1, &writeDescriptor, 0, NULL);
+    writeDescriptor.pBufferInfo          = nullptr;
+    writeDescriptor.pImageInfo           = nullptr;
+    writeDescriptor.pTexelBufferView     = nullptr;
+    vkUpdateDescriptorSets(vulkan.device, 1, &writeDescriptor, 0, nullptr);
 }
 
 void vulkanBindDesc(struct VulkanCommand* cmd,
@@ -319,5 +319,5 @@ void vulkanBindDesc(struct VulkanCommand* cmd,
         1,
         &desc->set,
         0,
-        NULL);
+        nullptr);
 }

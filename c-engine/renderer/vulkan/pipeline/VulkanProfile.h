@@ -5,7 +5,7 @@
 struct VulkanCommand;
 
 // Pipeline statistics counters (matches VkPipelineStatisticFlags)
-typedef struct VulkanPipelineStats {
+struct VulkanPipelineStats {
     u64 inputAssemblyVertices;
     u64 inputAssemblyPrimitives;
     u64 vertexShaderInvocations;
@@ -17,29 +17,29 @@ typedef struct VulkanPipelineStats {
     u64 computeShaderInvocations;
     u64 vertexCount;       // total vertices consumed by rasterizer
     u64 primitiveCount;    // total primitives consumed by rasterizer
-} VulkanPipelineStats;
+};
 
-typedef struct VulkanProfile {
+struct VulkanProfile {
     u64 results[2];
     VkQueryPool pools[FRAMES_IN_FLIGHT];
-    char used[FRAMES_IN_FLIGHT]; // set to 1 after first successful timestamp write
+    bool used[FRAMES_IN_FLIGHT]; // set to true after first successful timestamp write
     double elapsed;
 
     // Pipeline statistics (optional, enabled when stats gui is visible)
     VkQueryPool statPools[FRAMES_IN_FLIGHT];
-    char statUsed[FRAMES_IN_FLIGHT];
-    char hasStatPools;
+    bool statUsed[FRAMES_IN_FLIGHT];
+    bool hasStatPools;
     VulkanPipelineStats stats;
-} VulkanProfile;
+};
 
 struct VulkanProfile vulkanCreateProfile(const char* name);
 void vulkanDestroyProfile(struct VulkanProfile* profile);
 
-void vulkanResetProfile(struct VulkanCommand* cmd, struct VulkanProfile* profile, char force);
-void vulkanBeginProfile(struct VulkanCommand* cmd, struct VulkanProfile* profile, char force);
-void vulkanEndProfile(struct VulkanCommand* cmd, struct VulkanProfile* profile, char force);
+void vulkanResetProfile(struct VulkanCommand* cmd, struct VulkanProfile* profile, bool force);
+void vulkanBeginProfile(struct VulkanCommand* cmd, struct VulkanProfile* profile, bool force);
+void vulkanEndProfile(struct VulkanCommand* cmd, struct VulkanProfile* profile, bool force);
 
 // Pipeline statistics helpers
-void vulkanResetProfileStats(struct VulkanCommand* cmd, struct VulkanProfile* profile, char force);
-void vulkanBeginProfileStats(struct VulkanCommand* cmd, struct VulkanProfile* profile, char force);
-void vulkanEndProfileStats(struct VulkanCommand* cmd, struct VulkanProfile* profile, char force);
+void vulkanResetProfileStats(struct VulkanCommand* cmd, struct VulkanProfile* profile, bool force);
+void vulkanBeginProfileStats(struct VulkanCommand* cmd, struct VulkanProfile* profile, bool force);
+void vulkanEndProfileStats(struct VulkanCommand* cmd, struct VulkanProfile* profile, bool force);

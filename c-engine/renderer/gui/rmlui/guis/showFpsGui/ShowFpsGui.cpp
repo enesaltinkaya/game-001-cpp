@@ -6,11 +6,17 @@ static void added(void);
 static void update(void);
 static void removed(void);
 
-struct System rmluiShowFpsGui = {
-    .name    = "showFpsGui",
-    .added   = added,
-    .update  = update,
-    .removed = removed,
+System rmluiShowFpsGui = {
+    .name                = "showFpsGui",
+    .added               = added,
+    .removed             = removed,
+    .preUpdate           = nullptr,
+    .update              = update,
+    .postUpdate          = nullptr,
+    .cpuElapsedLastFrame = 0.0,
+    .cpuElapsed          = 0.0,
+    .gpuElapsed          = 0.0,
+    .priority            = 0,
 };
 
 static void* document;

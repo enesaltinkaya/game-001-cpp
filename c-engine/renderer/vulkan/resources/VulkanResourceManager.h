@@ -1,5 +1,7 @@
 #pragma once
 
+#include <atomic>
+
 #include "VulkanDesc.h"
 #include "VulkanImage.h"
 #include "renderer/Renderer.h"
@@ -9,7 +11,7 @@
 #define MAX_SAMPLERS 11
 #define MAX_IMAGES 4096
 
-typedef struct VulkanFogData {
+struct VulkanFogData {
     // Base fog (screen-space)
     vec4  fogColor;              // rgb: fog color, w: unused
     float fogDensity;            // density parameter
@@ -28,7 +30,7 @@ typedef struct VulkanFogData {
     float fogNoiseScale;         // spatial noise scale
     float fogNoiseStrength;      // noise modulation strength
     float fogPad;                // std430 alignment
-} VulkanFogData;
+};
 
 #define SLOT_SAMPLER 0
 #define SLOT_IMAGE 1
@@ -47,11 +49,11 @@ typedef struct VulkanFogData {
 #define SAMPLER_CLAMP_NEAREST 9
 #define SAMPLER_CLAMP_LINEAR_MIPMAP 10
 
-typedef struct VulkanResources {
+struct VulkanResources {
     VulkanDesc globalSet0[FRAMES_IN_FLIGHT];
     VulkanImage dummyImage;
     VulkanImage dummyCubeImage;
-} VulkanResources;
+};
 
 extern struct VulkanResources vulkanResources;
 
@@ -77,7 +79,7 @@ void vulkanRemoveImageViewFromPool(int poolIndex);
 int vulkanAddStorageImageViewToPool(VkImageView view);
 void vulkanRemoveStorageImageViewFromPool(int poolIndex);
 
-typedef struct VulkanIblSetInfo {
+struct VulkanIblSetInfo {
     u32 environmentMapIndex;
     u32 irradianceMapIndex;
     u32 prefilterMapIndex;
@@ -86,11 +88,11 @@ typedef struct VulkanIblSetInfo {
     u32 tonemapLutIndex;
     float environmentMapMaxLod;
     float prefilterMapMaxLod;
-    char enabled;
+    bool enabled;
     float intensity;
     float specularIntensity;
     float sunThreshold;
-    char hasSH;
+    bool hasSH;
     u32 tonemapMode;
     u32 tonemapLutPunchyIndex;
     float shL0_M0[4];
@@ -98,14 +100,13 @@ typedef struct VulkanIblSetInfo {
     float shL1_M0[4];
     float shL1_Mp1[4];
     float envRotation[16]; // mat4, column-major
-} VulkanIblSetInfo;
+};
 
-#define vulkanResourceSetIbl(...) \
-    r_vulkanResourceSetIbl((VulkanIblSetInfo){__VA_ARGS__})
+#define vulkanResourceSetIbl(...) r_vulkanResourceSetIbl(VulkanIblSetInfo{__VA_ARGS__})
 void r_vulkanResourceSetIbl(VulkanIblSetInfo info);
 
 VulkanCommand* vulkanTransientBegin(void);
-void vulkanTransientEnd(VulkanCommand* cmd, char wait);
+void vulkanTransientEnd(VulkanCommand* cmd, bool wait);
 // Non-blocking variant: ends + submits without waiting on the fence and without
 // handing the command to the garbage collector.  The caller owns the pool,
 // fence and struct afterwards and must call vulkanTransientFinish() once it
@@ -113,8 +114,8 @@ void vulkanTransientEnd(VulkanCommand* cmd, char wait);
 void vulkanTransientEndAsync(VulkanCommand* cmd);
 void vulkanTransientFinish(VulkanCommand* cmd);
 
-void addBufferGarbage(VulkanBuffer* buffer, VkFence fence, _Atomic bool* submitted);
-void addImageGarbage(VulkanImage* image, VkFence fence, _Atomic bool* submitted);
+void addBufferGarbage(VulkanBuffer* buffer, VkFence fence, std::atomic<bool>* submitted);
+void addImageGarbage(VulkanImage* image, VkFence fence, std::atomic<bool>* submitted);
 void addCommandGarbage(VulkanCommand* command);
 void vulkanCleanupGarbage(void);
 void vulkanRendererSetTonemapMode(TonemapMode mode);
@@ -155,7 +156,7 @@ void vulkanResourceGetTerrainState(u32* grassAlbedoIndex, u32* cliffAlbedoIndex,
 void vulkanResourceSetFogData(VulkanFogData fog);
 VulkanFogData vulkanResourceGetFogData(void);
 
-typedef struct VulkanWaterData {
+struct VulkanWaterData {
     vec4 surfaceY;
     vec4 shallowColor;
     vec4 deepColor;
@@ -170,31 +171,31 @@ typedef struct VulkanWaterData {
     float sunSpecularPower;
     float sunSpecularIntensity;
     float enabled;
-} VulkanWaterData;
+};
 
 void vulkanResourceSetWaterParams(const VulkanWaterData* params);
 VulkanWaterData vulkanResourceGetWaterData(void);
 
 /* Must match AzgaarPropsData in globalset.shader (std430 layout).  Pushed by
  * the game each frame for the Azgaar props pass (workstream B). */
-typedef struct VulkanAzgaarPropsData {
+struct VulkanAzgaarPropsData {
     vec4 wind;    // xy = dir (unit), z = speed (rad/s), w = strength (m)
     vec4 density; // xyz = global multipliers (grass / tree / rock), w = enabled
     vec4 lod;     // x = hard LOD switch distance (m): near inside, far outside
-} VulkanAzgaarPropsData;
+};
 void vulkanResourceSetAzgaarPropsData(const VulkanAzgaarPropsData* params);
 VulkanAzgaarPropsData vulkanResourceGetAzgaarPropsData(void);
 
 /* Must match WeatherData in globalset.shader (std430 layout).  Pushed by the
  * game each frame (AzgaarWeather) and read by the azgaar_weather compute
  * + billboard pass.  look.w < 0.5 turns the whole pass off. */
-typedef struct VulkanWeatherData {
+struct VulkanWeatherData {
     vec4 wind;    // xy = dir (unit, world xz), z = speed m/s, w = turbulence 0..1
     vec4 types;   // spawn weights: x snow, y rain, z dust, w leaves (normalized)
     vec4 params;  // x = box half xz (m), y = box half y (m), z = density 0..1, w = size scale
     vec4 look;    // x = global opacity, y = fall speed scale, z = far fade start (m), w = enabled
     vec4 tint;    // rgb = particle tint (dust = biome colour), a unused
-} VulkanWeatherData;
+};
 void vulkanResourceSetWeather(const VulkanWeatherData* data);
 VulkanWeatherData vulkanResourceGetWeatherData(void);
 

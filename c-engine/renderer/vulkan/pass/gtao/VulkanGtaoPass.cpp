@@ -19,11 +19,16 @@ static void update(void);
 static void removed(void);
 
 System vulkanGtaoPass = {
-    .name      = "gtao",
-    .added     = added,
-    .preUpdate = preUpdate,
-    .update    = update,
-    .removed   = removed,
+    .name                = "gtao",
+    .added               = added,
+    .removed             = removed,
+    .preUpdate           = preUpdate,
+    .update              = update,
+    .postUpdate          = nullptr,
+    .cpuElapsedLastFrame = 0.0,
+    .cpuElapsed          = 0.0,
+    .gpuElapsed          = 0.0,
+    .priority            = 0,
 };
 
 /* ── Push constants (must match GLSL) ────────────────────────────── */
@@ -109,7 +114,7 @@ static void destroyHistory(void) {
     for (int i = 0; i < 2; ++i) {
         if (gtaoHistoryImages[i].img) {
             vulkanDestroyImage(&gtaoHistoryImages[i], NULL);
-            gtaoHistoryImages[i] = (VulkanImage){0};
+            gtaoHistoryImages[i] = VulkanImage{0};
         }
     }
 
@@ -144,11 +149,11 @@ static void ensureHistory(u32 w, u32 h) {
 static void swapchainCreated(void*) {
     if (gtaoFilteredImage.img) {
         vulkanDestroyImage(&gtaoFilteredImage, NULL);
-        gtaoFilteredImage = (VulkanImage){0};
+        gtaoFilteredImage = VulkanImage{0};
     }
     if (gtaoRawImage.img) {
         vulkanDestroyImage(&gtaoRawImage, NULL);
-        gtaoRawImage = (VulkanImage){0};
+        gtaoRawImage = VulkanImage{0};
     }
     destroyHistory();
 }
@@ -407,11 +412,11 @@ static void update(void) {
 static void removed(void) {
     if (gtaoFilteredImage.img) {
         vulkanDestroyImage(&gtaoFilteredImage, NULL);
-        gtaoFilteredImage = (VulkanImage){0};
+        gtaoFilteredImage = VulkanImage{0};
     }
     if (gtaoRawImage.img) {
         vulkanDestroyImage(&gtaoRawImage, NULL);
-        gtaoRawImage = (VulkanImage){0};
+        gtaoRawImage = VulkanImage{0};
     }
     destroyHistory();
 

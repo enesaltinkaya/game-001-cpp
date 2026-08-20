@@ -19,11 +19,17 @@ static void added(void);
 static void update(void);
 static void removed(void);
 
-struct System debugGui = {
-    .name    = "debugGui",
-    .added   = added,
-    .update  = update,
-    .removed = removed,
+System debugGui = {
+    .name                = "debugGui",
+    .added               = added,
+    .removed             = removed,
+    .preUpdate           = nullptr,
+    .update              = update,
+    .postUpdate          = nullptr,
+    .cpuElapsedLastFrame = 0.0,
+    .cpuElapsed          = 0.0,
+    .gpuElapsed          = 0.0,
+    .priority            = 0,
 };
 
 static void* document;
@@ -323,7 +329,7 @@ void added(void) {
 void removed(void) {
     rmlUnloadDocument(document);
     rmlUnloadModel(model);
-    document = NULL;
+    document = nullptr;
 }
 
 void update(void) {

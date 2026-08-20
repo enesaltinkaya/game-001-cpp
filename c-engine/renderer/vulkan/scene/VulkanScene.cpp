@@ -227,7 +227,7 @@ void vulkanSceneCreate(Scene* scene) {
                                   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
         memset(vs->transformBuffer[f].vmaInfo.pMappedData, 0, sizeof(Transform) * MAX_ENTITIES);
         memset(vs->prevTransformBuffer[f].vmaInfo.pMappedData, 0, sizeof(Transform) * MAX_ENTITIES);
-        vs->transformUploads[f] = NULL;
+        vs->transformUploads[f] = nullptr;
 
         // Opaque single-sided culling output
         vs->indirectBuffer[f] = vulkanCreateGpuBuffer(
@@ -378,7 +378,7 @@ void vulkanSceneDestroy(Scene* scene) {
     }
 
     memoryFree(vs);
-    scene->backendScene = NULL;
+    scene->backendScene = nullptr;
 }
 
 void vulkanSceneUploadTransform(Scene* scene, u32 entity, Transform* transform) {

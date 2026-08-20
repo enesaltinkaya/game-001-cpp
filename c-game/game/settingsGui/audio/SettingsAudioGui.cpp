@@ -10,10 +10,17 @@
 static void added(void);
 static void removed(void);
 
-struct System settingsAudioGui = {
-    .name    = "settingsAudioGui",
-    .added   = added,
-    .removed = removed,
+System settingsAudioGui = {
+    .name                = "settingsAudioGui",
+    .added               = added,
+    .removed             = removed,
+    .preUpdate           = nullptr,
+    .update              = nullptr,
+    .postUpdate          = nullptr,
+    .cpuElapsedLastFrame = 0.0,
+    .cpuElapsed          = 0.0,
+    .gpuElapsed          = 0.0,
+    .priority            = 0,
 };
 
 static void* document;
@@ -69,7 +76,7 @@ int effectsChange(void* _) {
     if (key) {
         futureTaskRemove(key);
     }
-    key = futureTaskAdd(50, effectsChangeLater, NULL);
+    key = futureTaskAdd(50, effectsChangeLater, nullptr);
     return 0;
 }
 
@@ -78,6 +85,6 @@ int musicChange(void* _) {
     if (key) {
         futureTaskRemove(key);
     }
-    key = futureTaskAdd(50, musicChangeLater, NULL);
+    key = futureTaskAdd(50, musicChangeLater, nullptr);
     return 0;
 }

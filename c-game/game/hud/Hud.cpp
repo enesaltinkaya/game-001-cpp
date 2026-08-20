@@ -21,10 +21,16 @@ static void update(void);
 static void removed(void);
 
 System hud = {
-    .name    = "hud",
-    .added   = added,
-    .update  = update,
-    .removed = removed,
+    .name                = "hud",
+    .added               = added,
+    .removed             = removed,
+    .preUpdate           = nullptr,
+    .update              = update,
+    .postUpdate          = nullptr,
+    .cpuElapsedLastFrame = 0.0,
+    .cpuElapsed          = 0.0,
+    .gpuElapsed          = 0.0,
+    .priority            = 0,
 };
 
 // ── RMLUI ──────────────────────────────────────────
@@ -50,13 +56,13 @@ static char hudDmgColorBuf[DMG_NUM_POOL_SIZE][32];
 
 // ── Enemy health bar pool ──────────────────────────
 
-typedef struct {
+struct EnemyHpBar {
     Scene* scene;
     u32    entityId;
     float  screenX, screenY;
     float  hpPercent;
-    char   active;
-} EnemyHpBar;
+    bool   active;
+};
 
 static EnemyHpBar enemyHpPool[ENEMY_HP_POOL_SIZE];
 
@@ -70,14 +76,14 @@ static float  hudEnemyHpAlpha[ENEMY_HP_POOL_SIZE];
 
 // ── Damage number pool ─────────────────────────────
 
-typedef struct {
+struct DamageNumber {
     float   worldX, worldY, worldZ;
     float   screenX, screenY;
     float   value;
     float   vy;           // screen rise speed (px/s)
     double  spawnTime;    // ms timestamp
-    char    active;
-} DamageNumber;
+    bool    active;
+};
 
 static DamageNumber dmgPool[DMG_NUM_POOL_SIZE];
 
@@ -95,15 +101,15 @@ static DamageNumber* dmgPoolPush(float wx, float wy, float wz, float value) {
             slot = i;
         }
     }
-    if (slot < 0) return NULL;
+    if (slot < 0) return nullptr;
 
     DamageNumber* dn = &dmgPool[slot];
-    *dn = (DamageNumber){
+    *dn = DamageNumber{
         .worldX  = wx,
         .worldY  = wy,
         .worldZ  = wz,
         .value   = value,
-        .vy      = 80.0f + (float)(randomU32() % 40),  // 80-120 px/s rise
+        .vy      = 80.0f + static_cast<float>(randomU32() % 40),  // 80-120 px/s rise
         .spawnTime = millies(),
         .active  = 1,
         .screenX = 0.0f,
@@ -131,11 +137,11 @@ static bool worldToScreen(float wx, float wy, float wz, float* outX, float* outY
     ndc[1] /= ndc[3];
     ndc[2] /= ndc[3];
 
-    float sx = (ndc[0] * 0.5f + 0.5f) * (float)window.width;
-    float sy = (1.0f - (ndc[1] * 0.5f + 0.5f)) * (float)window.height;
+    float sx = (ndc[0] * 0.5f + 0.5f) * static_cast<float>(window.width);
+    float sy = (1.0f - (ndc[1] * 0.5f + 0.5f)) * static_cast<float>(window.height);
 
-    if (sx < -50 || sx > (float)window.width + 50 ||
-        sy < -50 || sy > (float)window.height + 50) {
+    if (sx < -50 || sx > static_cast<float>(window.width) + 50 ||
+        sy < -50 || sy > static_cast<float>(window.height) + 50) {
         return false;
     }
 
@@ -147,7 +153,7 @@ static bool worldToScreen(float wx, float wy, float wz, float* outX, float* outY
 // ── Public API ──────────────────────────────────────
 
 void hudDamageNumber(float x, float y, float z, float value) {
-    (void)dmgPoolPush(x, y + 1.0f, z, value);
+    static_cast<void>(dmgPoolPush(x, y + 1.0f, z, value));
 }
 
 // ── System lifecycle ───────────────────────────────
@@ -230,8 +236,8 @@ static void added(void) {
 static void removed(void) {
     rmlUnloadDocument(document);
     rmlUnloadModel(model);
-    document = NULL;
-    model = NULL;
+    document = nullptr;
+    model = nullptr;
 }
 
 static void update(void) {
