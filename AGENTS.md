@@ -107,6 +107,14 @@ to skip the main menu and capture gameplay directly:
 ./scripts/run.sh play screenshot /tmp/screenshot.jpg
 ```
 
+To capture frames without any in-world UI overlays (HUD, compass, zone,
+camera/player debug GUIs), set `ENGINE_HIDE_GUI=1` before running — it is
+inherited through `run.sh`:
+
+```bash
+ENGINE_HIDE_GUI=1 ./scripts/run.sh play screenshot /tmp/clean.jpg
+```
+
 ### Saving Vulkan images to disk
 
 - `vulkanScreenshot(path)` — saves the current swapchain image as JPG.

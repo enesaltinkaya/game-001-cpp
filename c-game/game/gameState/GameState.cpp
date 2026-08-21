@@ -16,6 +16,9 @@
 #include "hud/Hud.h"
 #include "compassGui/CompassGui.h"
 #include "zoneGui/ZoneGui.h"
+#include "cameraGui/CameraGui.h"
+#include "playerGui/PlayerGui.h"
+#include "playerActionsGui/PlayerActionsGui.h"
 #include "azgaar/AzgaarCellTracker.h"
 #include "mainMenu/MainMenu.h"
 #include "mainMenu/MainMenuGui.h"
@@ -35,6 +38,10 @@ static float transitionProgress;
 // main menu -> loading -> gameplay -> main menu -> loading ... cycle.
 static bool testReentryActive;
 static double testStateEnterTime;
+// ENGINE_HIDE_GUI: drop all in-world UI overlays (HUD, compass, zone,
+// camera/player debug GUIs) once gameplay starts — for clean automated
+// screenshots/logs.
+static bool hideGameplayGui;
 
 // timer.timeSinceStart is in nanoseconds.
 #define TEST_REENTRY_MENU_WAIT_NS     (2.0 * BILLION)  // wait in the main menu (first start and after re-entry)
@@ -105,6 +112,7 @@ void gameStateInit(void) {
                               });
 
     testReentryActive = getenv("ENGINE_TEST_REENTRY") != nullptr;
+    hideGameplayGui   = getenv("ENGINE_HIDE_GUI") != nullptr;
 
     utils::signalSubscribe("rendererInitialized", gameStateRendererInitialized);
 }
@@ -235,9 +243,19 @@ void gameStateGameplayEnter(void) {
     engine::systemAdd(gameSystem.priority + 1, &navMeshSystem);
     engine::systemAdd(gameSystem.priority + 1, &azgaarStreamingSystem);
     engine::systemAdd(gameSystem.priority + 1, &azgaarCellTrackerSystem);
-    engine::guiManagerAddGuiNextFrame(&hud);
-    engine::guiManagerAddGuiNextFrame(&compassGui);
-    engine::guiManagerAddGuiNextFrame(&zoneGui);
+    if (hideGameplayGui) {
+        // Automated runs: keep frames free of UI overlays. The always-on
+        // debug GUIs registered earlier (renderer init / map load) are
+        // removed; hud/compass/zone simply aren't added.
+        engine::guiManagerRemoveGuiNextFrame(&cameraGui);
+        engine::guiManagerRemoveGuiNextFrame(&playerGui);
+        engine::guiManagerRemoveGuiNextFrame(&playerActionsGui);
+        engine::guiManagerRemoveGuiNextFrame(&engine::rmluiShowFpsGui);
+    } else {
+        engine::guiManagerAddGuiNextFrame(&hud);
+        engine::guiManagerAddGuiNextFrame(&compassGui);
+        engine::guiManagerAddGuiNextFrame(&zoneGui);
+    }
 }
 
 void gameStateGameplayExit(void) {
