@@ -18,6 +18,7 @@
 #include "zoneGui/ZoneGui.h"
 #include "azgaar/AzgaarCellTracker.h"
 #include "mainMenu/MainMenu.h"
+#include "mainMenu/MainMenuGui.h"
 #include "loadingAzgaar/LoadingAzgaar.h"
 #include "azgaar/AzgaarStreaming.h"
 #include "pauseMenu/PauseMenuGui.h"
@@ -192,9 +193,10 @@ void gameStateMainMenuExit(void) {
 }
 
 void gameStateMainMenuUpdate(void) {
-    // F8 debug shortcut to skip straight to gameplay
+    // F8 debug shortcut to skip straight to gameplay (hides the menu first,
+    // same as the button press).
     if (engine::input.pressed == KEY_F8) {
-        gameStateTransition(STATE_LOADING_AZGAAR);
+        game::playGame();
     }
 }
 

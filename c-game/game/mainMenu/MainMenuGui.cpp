@@ -59,6 +59,10 @@ int luaPlayGame(void* _) {
 }
 
 void playGame(void) {
+    // Hide the menu synchronously so it can't take a second click while the
+    // transition tears the state down; the actual unload still happens on
+    // the next frame via MainMenu::removed() (safe to call mid-RML-event).
+    rmlHideDocument(document);
     gameStateTransition(STATE_LOADING_AZGAAR);
 }
 }  // namespace game

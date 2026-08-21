@@ -63,7 +63,6 @@ static const char* const azgaarMapPath = "azgaar/Chilerel 2026-08-11-15-35.map";
 
 static AzgaarLoadStage loadStage;
 static char cancelled;
-static double enterTime;
 static void* document;
 static void* model;
 static char stageTextBuf[128];
@@ -398,7 +397,6 @@ static void azgaarHeightmapDetach(void) {
 
 void loadingAzgaarOnEnter(void) {
     cancelled = 0;
-    enterTime = utils::timer.timeSinceStart;
     loadStage = AZGAAR_LOAD_STAGE_MAP;
     loadingAzgaarReleaseWorld();  // free any previously retained world
     azgaarWorld             = AzgaarWorld{};
@@ -553,7 +551,9 @@ void LoadingAzgaarSystem::update() {
         return;
     }
 
-    if (loadStage == AZGAAR_LOAD_STAGE_READY && (utils::timer.timeSinceStart - enterTime) >= 1.0) {
+    // Transition as soon as everything is ready — no artificial minimum
+    // hold on the loading screen.
+    if (loadStage == AZGAAR_LOAD_STAGE_READY) {
         keepAssetsOnExit = 1;
         if (!heightmapAttached) {
             heightmapAttached = true;
