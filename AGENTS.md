@@ -1,5 +1,25 @@
 # AGENTS.md
 
+## Screenshot capability
+
+When a change affects rendering (shaders, passes, materials, lighting, etc.),
+you can capture and inspect the final frame:
+
+Read scripts/run.sh to learn how to take a screenshot. Use the `play` variant
+to skip the main menu and capture gameplay directly:
+
+```bash
+./scripts/run.sh play screenshot /tmp/screenshot.jpg
+```
+
+To capture frames without any in-world UI overlays (HUD, compass, zone,
+camera/player debug GUIs), set `ENGINE_HIDE_GUI=1` before running — it is
+inherited through `run.sh`:
+
+```bash
+ENGINE_HIDE_GUI=1 ./scripts/run.sh play screenshot /tmp/clean.jpg
+```
+
 USE scripts/build.sh to compile sources AND SHADERS.
 If there is crash use gdb to find out where. You need ENGINE_DEBUG=1 when running the application via c-game executable.
 
@@ -9,6 +29,21 @@ export VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/radeon_icd.json
 export ENGINE_DEBUG=1
 these are important if you want to debug and need to run c-game without run.sh.
 
+### Parked player / camera — do not disturb
+
+Where each `play` run starts comes from the saved transforms in
+`build/c-game/data/db/db.db` (SQLite `transform` table: `player`, `camera`,
+`flying_camera`; loaded via `transformDbLoad`, written back on exit). The
+user parks the player next to the object under test so a screenshot run
+frames exactly that object.
+
+- **Do not move the parked player/camera.** Never edit or delete those db
+  rows, and never patch spawn code (`playerGetSpawn()` etc.) to aim
+  elsewhere — it destroys the parked setup and wastes the whole session.
+- If a different vantage point is genuinely needed for verification,
+  **ask the user** to park the player there (or approve a temporary change)
+  before touching anything.
+  
 ## Project overview
 
 - `game-001` is a C++23 game project built with CMake + Ninja.
@@ -94,41 +129,6 @@ When making code changes, prefer validating with:
 
 1. `./scripts/build.sh`
 2. `./scripts/run.sh` if runtime verification is needed
-
-### Visual verification via screenshot
-
-When a change affects rendering (shaders, passes, materials, lighting, etc.),
-you can capture and inspect the final frame:
-
-Read scripts/run.sh to learn how to take a screenshot. Use the `play` variant
-to skip the main menu and capture gameplay directly:
-
-```bash
-./scripts/run.sh play screenshot /tmp/screenshot.jpg
-```
-
-To capture frames without any in-world UI overlays (HUD, compass, zone,
-camera/player debug GUIs), set `ENGINE_HIDE_GUI=1` before running — it is
-inherited through `run.sh`:
-
-```bash
-ENGINE_HIDE_GUI=1 ./scripts/run.sh play screenshot /tmp/clean.jpg
-```
-
-### Parked player / camera — do not disturb
-
-Where each `play` run starts comes from the saved transforms in
-`build/c-game/data/db/db.db` (SQLite `transform` table: `player`, `camera`,
-`flying_camera`; loaded via `transformDbLoad`, written back on exit). The
-user parks the player next to the object under test so a screenshot run
-frames exactly that object.
-
-- **Do not move the parked player/camera.** Never edit or delete those db
-  rows, and never patch spawn code (`playerGetSpawn()` etc.) to aim
-  elsewhere — it destroys the parked setup and wastes the whole session.
-- If a different vantage point is genuinely needed for verification,
-  **ask the user** to park the player there (or approve a temporary change)
-  before touching anything.
 
 ### Saving Vulkan images to disk
 
