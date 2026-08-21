@@ -66,5 +66,13 @@ void main() {
     outVelocity = clamp(pixelVelocity, vec2(-32767.0), vec2(32767.0));
 
     vec3 n = normalize(inViewNormal);
+    /* Must match azgaar_props.frag: the props pipes render double-sided
+     * (noCull), so back faces must store the OUTWARD normal.  Structures
+     * whose visible surfaces are back faces (inward mesh normals) would
+     * otherwise write an inverted normal to the view-normal G-buffer, and
+     * GTAO — which only sees depth + normals — occludes their tops as if
+     * the surface faced away from the sky (dark top / lit bottom glitch).
+     */
+    if (!gl_FrontFacing) n = -n;
     outViewNormalXY = n.xy;
 }
