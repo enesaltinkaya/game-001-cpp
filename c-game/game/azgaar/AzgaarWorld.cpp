@@ -1632,13 +1632,21 @@ static void azgaarGaussianBlurGrid(AzgaarWorld* world,
 // shores (no more cliffed plateau edges at the coast); islets only one FMG
 // cell wide may sink to sandbars.  Water depth sampling shares this grid, so
 // terrain, roads and water all stay consistent.
-static void azgaarSmoothHeightGrid(AzgaarWorld* world) {
-    azgaarGaussianBlurGrid(world,
-                           world->heightGrid,
-                           world->heightGridWidth,
-                           world->heightGridHeight,
-                           "ENGINE_AZGAAR_HM_SIGMA",
-                           "height");
+//
+// Each blur touches only its own grid vector, so independent grids are run as
+// jobs on the default thread pool (see azgaarBlurJobFn).
+struct AzgaarBlurJob {
+    AzgaarWorld* world;
+    std::vector<float>* grid;
+    u32 w;
+    u32 h;
+    const char* envName;
+    const char* label;
+};
+
+static void azgaarBlurJobFn(void* userData) {
+    AzgaarBlurJob* job = static_cast<AzgaarBlurJob*>(userData);
+    azgaarGaussianBlurGrid(job->world, *job->grid, job->w, job->h, job->envName, job->label);
 }
 
 // Biome-colour counterpart of azgaarSmoothHeightGrid.  The raw colour grid is
@@ -2061,36 +2069,37 @@ static bool azgaarWorldLoadMap(AzgaarWorld* world, const char* path) {
         }
     }
 
-    // Low-pass the plateau steps (see azgaarSmoothHeightGrid) so the terrain
-    // doesn't read as an ~800 m period staircase on distant hills.
-    azgaarSmoothHeightGrid(world);
+    // Low-pass the plateau steps (see azgaarGaussianBlurGrid) so the terrain
+    // doesn't read as an ~800 m period staircase on distant hills.  The four
+    // independent float grids (height + temp/prec/coast) run concurrently on
+    // the default thread pool; the biome-colour blur stays inline because it
+    // must see the FINAL blurred heights as its land/water mask.
+    AzgaarBlurJob heightJob = {.world   = world,
+                               .grid    = &world->heightGrid,
+                               .w       = world->heightGridWidth,
+                               .h       = world->heightGridHeight,
+                               .envName = "ENGINE_AZGAAR_HM_SIGMA",
+                               .label   = "height"};
+    utils::threadPoolAddWork(nullptr, azgaarBlurJobFn, &heightJob);
+
+    // Smooth the climate scalar fields with the same Gaussian so the snow
+    // line / weather fields don't follow pixel-hard Voronoi borders.  The
+    // biome id field stays nearest (ids are not interpolable).
+    if (hasClimate) {
+        const char* climateEnv         = "ENGINE_AZGAAR_CLIMATE_SIGMA";
+        AzgaarBlurJob climateJobs[3]   = {};
+        climateJobs[0] = {.world = world, .grid = &world->tempGrid,  .w = world->climateGridWidth, .h = world->climateGridHeight, .envName = climateEnv, .label = "temperature"};
+        climateJobs[1] = {.world = world, .grid = &world->precGrid,  .w = world->climateGridWidth, .h = world->climateGridHeight, .envName = climateEnv, .label = "precipitation"};
+        climateJobs[2] = {.world = world, .grid = &world->coastGrid, .w = world->climateGridWidth, .h = world->climateGridHeight, .envName = climateEnv, .label = "coast"};
+        for (u32 i = 0u; i < 3u; ++i) utils::threadPoolAddWork(nullptr, azgaarBlurJobFn, &climateJobs[i]);
+    }
+    utils::threadPoolWait(nullptr);
 
     // Blend biome colours across cell borders (runs after the height blur so
     // the land/water mask matches the final heights the water pass uses).
     azgaarSmoothBiomeColorGrid(world);
 
-    // Smooth the climate scalar fields with the same Gaussian so the snow
-    // line / weather fields don't follow pixel-hard Voronoi borders.  The
-    // biome id field stays nearest (ids are not interpolable).
-    if (!world->tempGrid.empty()) {
-        azgaarGaussianBlurGrid(world,
-                               world->tempGrid,
-                               world->climateGridWidth,
-                               world->climateGridHeight,
-                               "ENGINE_AZGAAR_CLIMATE_SIGMA",
-                               "temperature");
-        azgaarGaussianBlurGrid(world,
-                               world->precGrid,
-                               world->climateGridWidth,
-                               world->climateGridHeight,
-                               "ENGINE_AZGAAR_CLIMATE_SIGMA",
-                               "precipitation");
-        azgaarGaussianBlurGrid(world,
-                               world->coastGrid,
-                               world->climateGridWidth,
-                               world->climateGridHeight,
-                               "ENGINE_AZGAAR_CLIMATE_SIGMA",
-                               "coast");
+    if (hasClimate) {
         utils::info("Azgaar climate grids built: %ux%u (temp/prec/coast blurred, biome nearest), "
              "winds=[%.0f %.0f %.0f %.0f %.0f %.0f], maxLand=%.0f m",
              world->climateGridWidth,
