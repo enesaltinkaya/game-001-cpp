@@ -13,6 +13,7 @@ export ASAN_SYMBOLIZER_PATH=/usr/bin/llvm-symbolizer
 export LSAN_OPTIONS=suppressions="$ROOT/scripts/lsan_suppress.txt"
 export VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/nvidia_icd.json
 
-export LD_PRELOAD=/home/enes/Sdks/renderdoc_2026_03_26_18e6d687/lib/librenderdoc.so
+export LD_PRELOAD=/home/enes/Apps/renderdoc/build/lib/librenderdoc.so
+export ENABLE_VULKAN_RENDERDOC_CAPTURE=1
 
 "$ROOT/build/c-game/c-game"

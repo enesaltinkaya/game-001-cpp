@@ -132,6 +132,13 @@ patches, volk integration, and the C API usage.
 The library source and build script live at:
 `/home/enes/Projects/c/cpp-thirdparty/fsr3.1/`
 
+## RenderDoc (frame capture & inspection)
+
+For any work involving RenderDoc, frame captures, or GPU debugging, read
+`docs/renderdoc-capture.md` first. It documents the local v1.46-dev build,
+the implicit-layer hooking setup (required because the engine uses volk),
+the programmatic capture env vars, and the headless Python replay recipe.
+
 ## Camera
 
 Key files:
