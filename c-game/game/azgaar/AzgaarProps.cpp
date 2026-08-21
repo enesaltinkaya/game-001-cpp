@@ -2892,6 +2892,13 @@ void azgaarPropsInit(const AzgaarWorld* world) {
     engine::vulkanAzgaarPropsSetMeshes(verts.data(), vCount, idx.data(), iCount);
     engine::vulkanAzgaarPropsSetVariants(variants.data(), variantCount);
 
+    // Give the pass' per-tile frustum cull a Y range that covers this world's
+    // terrain (its default [-20, 40] m wrongly culls whole tiles whenever the
+    // bottom frustum plane drops between the box top and highland ground).
+    float tileYMin = azgaarSeaLevelMeters(world) - 20.0f;
+    float tileYMax = fmaxf(40.0f, world->maxLandHeightM + 64.0f);
+    engine::vulkanAzgaarPropsSetTileYBounds(tileYMin, tileYMax);
+
     // Reuse the pool from a previous world: azgaarPropsDestroy() must not
     // destroy it (thpool's keepalive flag is process-wide — destroying any
     // pool kills the workers of every pool, see azgaarPropsDestroy).

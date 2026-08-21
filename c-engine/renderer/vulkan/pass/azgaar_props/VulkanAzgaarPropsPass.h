@@ -125,6 +125,13 @@ void vulkanAzgaarPropsSetTile(i32 tileX, i32 tileZ, u64 readyStamp,
                                const PropTileRange* ranges, u32 rangeCount);
 void vulkanAzgaarPropsClearTile(i32 tileX, i32 tileZ);
 void vulkanAzgaarPropsClearAll(void);
+// World-space Y range of the per-tile frustum-cull AABBs.  The pass only knows
+// the tile XZ footprint; the vertical extent of a world's terrain (and thus of
+// its props) is scene-specific.  A box too low is culled whenever the bottom
+// frustum plane passes between its top and the actual ground, which made whole
+// highland tiles (terrain well above the default 40 m ceiling) vanish without
+// warning.  Called by the owning scene at load/teardown.
+void vulkanAzgaarPropsSetTileYBounds(float yMin, float yMax);
 
 // ── Whole-map global instance buffer (settlement buildings, workstream D) ──
 // Unlike tiles (streaming, per-tile buffers), settlement buildings are one

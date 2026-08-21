@@ -66,6 +66,14 @@ typedef struct PropGpuTile {
 } PropGpuTile;
 static std::vector<PropGpuTile>   gpuTiles   = {};
 
+// World-space Y range of the per-tile frustum-cull AABBs (the pass only knows
+// the tile XZ footprint; the terrain height span is scene-specific).  A box
+// whose top sits below the actual ground is wrongly culled whenever the bottom
+// frustum plane passes between the two, so the owning scene must set a range
+// that covers its terrain (vulkanAzgaarPropsSetTileYBounds).
+static float tileAabbYMin = -20.0f;
+static float tileAabbYMax = 40.0f;
+
 // Pending tile uploads.  The instance buffer is BUILT (VMA alloc + staging
 // copy) on the enqueueing thread (props pool worker, or the main thread at
 // world load); the copy is submitted non-blocking (vulkanTransientEndAsync)
@@ -360,6 +368,14 @@ void vulkanAzgaarPropsClearAll(void) {
     // Flag drained by the render thread (avoids touching gpuTiles off-thread).
     utils::threadLock(&uploadLock);
     clearAllFlag = true;
+    utils::threadUnlock(&uploadLock);
+}
+
+void vulkanAzgaarPropsSetTileYBounds(float yMin, float yMax) {
+    if (yMin >= yMax) return;
+    utils::threadLock(&uploadLock);
+    tileAabbYMin = yMin;
+    tileAabbYMax = yMax;
     utils::threadUnlock(&uploadLock);
 }
 
@@ -689,6 +705,7 @@ void VulkanAzgaarPropsPass::update() {
     u32  tileCount  = static_cast<i32>(gpuTiles.size());
     bool hasGlobal  = gpuGlobal.inUse && gpuGlobal.instanceCount > 0;
     bool hasLandmarks = gpuLandmarks.inUse && gpuLandmarks.instanceCount > 0;
+    float tileYMin   = tileAabbYMin, tileYMax = tileAabbYMax;  // per-tile cull AABB Y range
     utils::threadUnlock(&uploadLock);
 
     if (!hasMesh || !hasVariants || (tileCount == 0 && !hasGlobal && !hasLandmarks)) return;
@@ -730,8 +747,8 @@ void VulkanAzgaarPropsPass::update() {
 
         // Tile world AABB (y range is loose; props are small).
         float half = 64.0f; // prop reach beyond the tile origin (trees/rocks)
-        vec3 bmin = {e->tileX * 2048.0f - half, -20.0f, e->tileZ * 2048.0f - half};
-        vec3 bmax = {bmin[0] + 2048.0f + 2.0f * half, 40.0f, bmin[2] + 2048.0f + 2.0f * half};
+        vec3 bmin = {e->tileX * 2048.0f - half, tileYMin, e->tileZ * 2048.0f - half};
+        vec3 bmax = {bmin[0] + 2048.0f + 2.0f * half, tileYMax, bmin[2] + 2048.0f + 2.0f * half};
         if (aabbOutsideFrustum(bmin, bmax, (vec4*)planes)) continue;
 
         for (u32 r = 0u; r < e->rangeCount; r++) {
@@ -788,6 +805,7 @@ void vulkanAzgaarPropsDrawShadow(VulkanCommand* cmd, u32 cascadeIndex) {
     u32  tileCount  = static_cast<i32>(gpuTiles.size());
     bool hasGlobal  = gpuGlobal.inUse && gpuGlobal.instanceCount > 0;
     bool hasLandmarks = gpuLandmarks.inUse && gpuLandmarks.instanceCount > 0;
+    float tileYMin   = tileAabbYMin, tileYMax = tileAabbYMax;  // per-tile cull AABB Y range
     utils::threadUnlock(&uploadLock);
 
     if (!hasMesh || !hasVariants || (tileCount == 0 && !hasGlobal && !hasLandmarks)) return;
@@ -806,8 +824,8 @@ void vulkanAzgaarPropsDrawShadow(VulkanCommand* cmd, u32 cascadeIndex) {
         if (!e->inUse || e->instanceCount == 0) continue;
 
         float half = 64.0f;
-        vec3 bmin = {e->tileX * 2048.0f - half, -20.0f, e->tileZ * 2048.0f - half};
-        vec3 bmax = {bmin[0] + 2048.0f + 2.0f * half, 40.0f, bmin[2] + 2048.0f + 2.0f * half};
+        vec3 bmin = {e->tileX * 2048.0f - half, tileYMin, e->tileZ * 2048.0f - half};
+        vec3 bmax = {bmin[0] + 2048.0f + 2.0f * half, tileYMax, bmin[2] + 2048.0f + 2.0f * half};
         if (aabbOutsideFrustum(bmin, bmax, (vec4*)planes)) continue;
 
         for (u32 r = 0u; r < e->rangeCount; r++) {
@@ -860,6 +878,7 @@ void vulkanAzgaarPropsDrawPrepass(void) {
     u32  tileCount  = static_cast<i32>(gpuTiles.size());
     bool hasGlobal  = gpuGlobal.inUse && gpuGlobal.instanceCount > 0;
     bool hasLandmarks = gpuLandmarks.inUse && gpuLandmarks.instanceCount > 0;
+    float tileYMin   = tileAabbYMin, tileYMax = tileAabbYMax;  // per-tile cull AABB Y range
     utils::threadUnlock(&uploadLock);
 
     if (!hasMesh || !hasVariants || (tileCount == 0 && !hasGlobal && !hasLandmarks)) return;
@@ -892,8 +911,8 @@ void vulkanAzgaarPropsDrawPrepass(void) {
         if (!e->inUse || e->instanceCount == 0) continue;
 
         float half = 64.0f;
-        vec3 bmin = {e->tileX * 2048.0f - half, -20.0f, e->tileZ * 2048.0f - half};
-        vec3 bmax = {bmin[0] + 2048.0f + 2.0f * half, 40.0f, bmin[2] + 2048.0f + 2.0f * half};
+        vec3 bmin = {e->tileX * 2048.0f - half, tileYMin, e->tileZ * 2048.0f - half};
+        vec3 bmax = {bmin[0] + 2048.0f + 2.0f * half, tileYMax, bmin[2] + 2048.0f + 2.0f * half};
         if (aabbOutsideFrustum(bmin, bmax, (vec4*)planes)) continue;
 
         for (u32 r = 0u; r < e->rangeCount; r++) {
