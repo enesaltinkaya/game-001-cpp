@@ -2085,9 +2085,13 @@ static bool azgaarWorldLoadMap(AzgaarWorld* world, const char* path) {
     // Smooth the climate scalar fields with the same Gaussian so the snow
     // line / weather fields don't follow pixel-hard Voronoi borders.  The
     // biome id field stays nearest (ids are not interpolable).
+    // Declared at function scope (like heightJob): the jobs dereference these
+    // from pool threads while main blocks in threadPoolWait, so the array must
+    // stay in scope across that call (ASan flags it as stack-use-after-scope
+    // otherwise).
+    AzgaarBlurJob climateJobs[3]       = {};
     if (hasClimate) {
         const char* climateEnv         = "ENGINE_AZGAAR_CLIMATE_SIGMA";
-        AzgaarBlurJob climateJobs[3]   = {};
         climateJobs[0] = {.world = world, .grid = &world->tempGrid,  .w = world->climateGridWidth, .h = world->climateGridHeight, .envName = climateEnv, .label = "temperature"};
         climateJobs[1] = {.world = world, .grid = &world->precGrid,  .w = world->climateGridWidth, .h = world->climateGridHeight, .envName = climateEnv, .label = "precipitation"};
         climateJobs[2] = {.world = world, .grid = &world->coastGrid, .w = world->climateGridWidth, .h = world->climateGridHeight, .envName = climateEnv, .label = "coast"};
