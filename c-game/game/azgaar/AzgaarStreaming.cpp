@@ -24,8 +24,10 @@ static const AzgaarWorld* streamWorld;
 // TEMP DEBUG: ENGINE_CAM_TELEPORT="x,y,z,afterMs" teleports the player
 // (and with them the camera + heightmap streaming window) after afterMs
 // milliseconds — used to reach a specific biome/settlement/river for targeted
-// screenshots.  Y is the desired camera height; the player is placed 40 m
-// below it and physics settles it onto the terrain.
+// screenshots.  Y is the desired camera height; the player is placed 1 m
+// ABOVE the terrain height sampled at (x,z) so it stands on the ground
+// instead of falling through it (dropping from above the camera would sink
+// it into lakes -> underwater camera -> blue frame).
 static void tempCameraTeleport(void) {
     static char* env = nullptr;
     if (!env) env = getenv("ENGINE_CAM_TELEPORT");
@@ -38,7 +40,19 @@ static void tempCameraTeleport(void) {
     if (sscanf(env, "%f,%f,%f,%f", &x, &y, &z, &afterMs) != 4) return;
     if (done || now - startMs < afterMs) return;
 
-    vec3 pos = {x, y - 40.0f, z};
+    const AzgaarWorld* world = loadingAzgaarGetWorld();
+    float playerY            = y - 40.0f;  // fallback when no world is loaded
+    if (world) {
+        // World metres -> map pixels (inverse of azgaarMapToWorld), then the
+        // canonical natural-surface height in metres.
+        float xPx = static_cast<float>(world->widthPx) * 0.5f -
+                    x / static_cast<float>(world->metersPerPixel);
+        float zPx = static_cast<float>(world->heightPx) * 0.5f -
+                    z / static_cast<float>(world->metersPerPixel);
+        playerY = azgaarHeightToMeters(world, azgaarWorldSampleHeightNearest(world, xPx, zPx)) + 1.0f;
+    }
+
+    vec3 pos = {x, playerY, z};
     if (playerTeleportTo(pos)) {
         done = 1;
         utils::info("TEMP player teleport -> (%.0f,%.0f,%.0f)", static_cast<double>(x), static_cast<double>(y), static_cast<double>(z));

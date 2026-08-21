@@ -128,7 +128,13 @@ void main() {
     // sky (same grazing-angle guard as the terrain pass).
     float shadowAmbientFade = mix(1.0 - SHADOW_DARKNESS, 1.0, mix(1.0, cascadeShadow, NdotL));
 
-    vec3 color = albedo * (ambient * shadowAmbientFade + sunColor * NdotL * shadow);
+    // Energy-consistent with the PBR passes: the Lambert diffuse integrates
+    // to 1/PI, so the direct sun term carries the same /PI that scene.frag
+    // and heightmap_terrain.frag apply.  Without it a sun-facing roof slope
+    // reaches HDR ~1.0+ (blown-out pastel against the dim PBR ground below
+    // it, e.g. house roofs reading as glowing white triangles) while the
+    // sibling slope stays deep brown.
+    vec3 color = albedo * (ambient * shadowAmbientFade + (sunColor / PI) * NdotL * shadow);
 
     if (any(isnan(color)) || any(isinf(color))) color = vec3(0.0);
     outColor    = vec4(color, 1.0); // opaque: the LOD hard switch is resolved in the vertex shader

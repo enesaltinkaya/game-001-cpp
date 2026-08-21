@@ -536,11 +536,17 @@ mbGableRoof(MeshBuilder* mb, float cx, float cz, float baseY, float topY, float 
     u32 fr = mbAddVert(mb, cx + hx, baseY, cz - hz, 0.0f, 0.6f, -0.4f, 1, 1);
     u32 rg = mbAddVert(mb, cx, topY, cz, 0.0f, 1.0f, 0.0f, 0.5, 1);
     mbTri(mb, rl, rr, rg);  // back slope
-    mbTri(mb, fl, fr, rg);  // front slope
+    mbTri(mb, fl, rg, fr);  // front slope (CCW from outside; the old (fl,fr,rg)
+                            // winding rasterized as a BACK face, so the shader'
+                            // gl_FrontFacing flip shaded it as the roof's dark
+                            // underside -- lit only by a sun "below" the
+                            // horizon, i.e. opposite of the real sun direction) (CCW from outside; the old (fl,fr,rg)
+                            // winding rasterized as a BACK face, so the shader'
+                            // gl_FrontFacing flip shaded it as the roof's dark
+                            // underside -- lit only by a sun "below" the
+                            // horizon, i.e. opposite of the real sun direction)
     mbTri(mb, fl, rl, rg);  // left gable
-    mbTri(mb, fr, rg, rr);  // right gable (CCW from outside; (fr,rr,rg) wound
-                            // inward, so the shader flipped its normal and the
-                            // face shaded as its dark underside)
+    mbTri(mb, fr, rg, rr);  // right gable
 }
 
 // Per-species geometry builders (unit height, base at y=0).

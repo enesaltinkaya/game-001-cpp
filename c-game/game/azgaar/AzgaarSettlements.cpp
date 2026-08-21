@@ -559,6 +559,15 @@ void azgaarSettlementsInit(const AzgaarWorld* world,
                                     g_ranges.data(), g_rangeCount, aabbMin, aabbMax, false);
         utils::info("azgaarSettlements: uploaded %u building instances in %u species ranges",
              g_instanceCount, g_rangeCount);
+
+        /* TEMP DEBUG: dump instance positions for camera placement. */
+        if (getenv("AZGAAR_DEBUG_DUMP_BUILDINGS")) {
+            for (u32 i = 0; i < g_instanceCount; i++) {
+                const engine::PropInstance* p = &g_instances[i];
+                utils::info("bldg %u sp=%u pos=(%.1f,%.1f,%.1f)", i, p->species,
+                     (double)p->pos[0], (double)p->pos[1], (double)p->pos[2]);
+            }
+        }
     }
 }
 
