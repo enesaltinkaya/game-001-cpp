@@ -57,7 +57,7 @@ static const char* const stageTexts[] = {
     [AZGAAR_LOAD_STAGE_TERRAIN]    = "Generating Azgaar terrain tiles...",
     [AZGAAR_LOAD_STAGE_ANIMATIONS] = "Loading animations...",
     [AZGAAR_LOAD_STAGE_READY]      = "Azgaar world loaded...",
-    [AZGAAR_LOAD_STAGE_ERROR]      = "Failed to load Azgaar world. Press ESC to return.",
+    [AZGAAR_LOAD_STAGE_ERROR]      = "Failed to load Azgaar world.",
 };
 
 static const char* const azgaarMapPath = "azgaar/Chilerel 2026-08-11-15-35.map";
@@ -68,6 +68,10 @@ static void* document;
 static void* model;
 static char stageTextBuf[128];
 static char* stageTextPtr = stageTextBuf;
+// Shown below the stage text; only non-empty on the error stage ("Press ESC
+// to return") since a running load can no longer be cancelled.
+static char hintBuf[64];
+static char* hintPtr = hintBuf;
 static AzgaarWorld azgaarWorld;
 static bool worldLoaded;  // azgaarWorld holds valid data
 // Climate textures (workstream A): static per-world RGBA8 uploads sampled by
@@ -405,7 +409,7 @@ static void azgaarHeightmapDetach(void) {
 static void loadingAzgaarStartLoad(void* _) {
     static_cast<void>(_);
     startLoadTaskKey = 0;
-    if (cancelled) return;  // state was exited (ESC) before the deferred start ran
+    if (cancelled) return;  // state was exited before the deferred start ran
 
     loadingAzgaarReleaseWorld();  // free any previously retained world
     azgaarWorld = AzgaarWorld{};
@@ -503,6 +507,7 @@ void LoadingAzgaarSystem::added() {
     document = rmlNewDocument("gui/loading/loading.html");
     model    = rmlCreateModel("loading");
     rmlBindCharPointer(model, "stage", &stageTextPtr);
+    rmlBindCharPointer(model, "hint", &hintPtr);
     rmlLoadDocument(document);
     rmlShowDocument(document);
 }
@@ -572,13 +577,17 @@ void LoadingAzgaarSystem::update() {
 
     checkReady();
 
-    snprintf(stageTextBuf, sizeof(stageTextBuf), "%s", stageTexts[loadStage]);
-    rmlUpdateDirtyAll(model);
-
-    if (engine::input.pressed == KEY_ESCAPE) {
+    // ESC only escapes a *failed* load (the error screen); a running load can
+    // no longer be cancelled.
+    if (engine::input.pressed == KEY_ESCAPE && loadStage == AZGAAR_LOAD_STAGE_ERROR) {
         gameStateTransition(STATE_MAIN_MENU);
         return;
     }
+
+    snprintf(stageTextBuf, sizeof(stageTextBuf), "%s", stageTexts[loadStage]);
+    snprintf(hintBuf, sizeof(hintBuf), "%s",
+             loadStage == AZGAAR_LOAD_STAGE_ERROR ? "Press ESC to return" : "");
+    rmlUpdateDirtyAll(model);
 
     // Transition as soon as everything is ready — no artificial minimum
     // hold on the loading screen.
