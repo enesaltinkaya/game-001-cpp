@@ -11,6 +11,7 @@
 #include <unordered_map>
 #include <string.h>
 #include <math.h>
+#include <memory>
 
 namespace engine {
 AnimationLibrary animationLibrary = {};
@@ -728,6 +729,10 @@ void AnimationSystem::removed() {
             for (auto instance : animator->activeInstances) {
                 delete instance;
             }
+            // Leave the vector empty so the Animator component's own
+            // destructor (animatorComponentDtor) doesn't free them again
+            // when the owning scene is destroyed later.
+            animator->activeInstances.clear();
             g_animatorBoneMaps.erase(animator->entity);
         }
     }
@@ -805,7 +810,8 @@ void animationPlay(Entity* entity, const char* clipName, float speed, bool loop)
     // Get or create animator component
     Animator* animator = getComponent(scene, Animator, entity->id);
     if (!animator) {
-        animator          = createComponent(scene, Animator, entity->id);
+        animator          = createComponentTDtor(scene, Animator, entity->id, animatorComponentDtor,
+                                                 animatorComponentSwapIn);
         animator->entity  = entity;
         animator->mapping = nullptr;
     }
@@ -845,7 +851,8 @@ void animationPlayBlended(Entity* entity,
 
     Animator* animator = getComponent(scene, Animator, entity->id);
     if (!animator) {
-        animator          = createComponent(scene, Animator, entity->id);
+        animator          = createComponentTDtor(scene, Animator, entity->id, animatorComponentDtor,
+                                                 animatorComponentSwapIn);
         animator->entity  = entity;
         animator->mapping = nullptr;
     }
@@ -1083,10 +1090,36 @@ void animationRemoveEventCallback(const char* clipName, const char* eventName) {
     // Implementation similar to add
 }
 
+static void freeAnimatorInstances(Animator* animator) {
+    for (size_t i = 0; i < animator->activeInstances.size(); i++) {
+        if (animator->activeInstances[i]) delete animator->activeInstances[i];
+    }
+    animator->activeInstances.clear();
+}
+
+void animatorComponentDtor(void* pComponent) {
+    Animator* animator = static_cast<Animator*>(pComponent);
+    // Release heap AnimationInstances still owned by this component, then
+    // destroy the in-place component itself.  (g_animatorBoneMaps keys on the
+    // owning entity, so nothing else here outlives the component's owner.)
+    freeAnimatorInstances(animator);
+    std::destroy_at(animator);
+}
+
+void animatorComponentSwapIn(void* pDst, void* pSrc) {
+    Animator* dst = static_cast<Animator*>(pDst);
+    Animator* src = static_cast<Animator*>(pSrc);
+    if (dst == src) return;
+    freeAnimatorInstances(dst);
+    dst->~Animator();
+    ::new (dst) Animator(std::move(*src));  // leaves src moved-from but valid
+}
+
 void animationSetRemapping(Entity* entity, const JointMapping* mapping) {
     Animator* animator = getComponent(entity->scene, Animator, entity->id);
     if (!animator) {
-        animator         = createComponent(entity->scene, Animator, entity->id);
+        animator         = createComponentTDtor(entity->scene, Animator, entity->id,
+                                                animatorComponentDtor, animatorComponentSwapIn);
         animator->entity = entity;
     }
 

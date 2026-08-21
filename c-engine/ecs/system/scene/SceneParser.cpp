@@ -717,7 +717,7 @@ void parseMesh(Scene* scene, cgltf_node* node, Entity* entity) {
         return;
     }
 
-    Mesh* mesh            = createComponent(scene, Mesh, entity->id);
+    Mesh* mesh            = createComponentT(scene, Mesh, entity->id);
     InstanceData instance = {.entity = entity->id};
     mesh->instances.push_back(instance);
     meshCache[meshKey] = entity->id;
@@ -1027,7 +1027,7 @@ void parseSkin(Scene* scene, cgltf_node* node, Entity* entity) {
     }
 
     cgltf_skin* cgltfSkin = node->skin;
-    Skin* skin            = createComponent(scene, Skin, entity->id);
+    Skin* skin            = createComponentT(scene, Skin, entity->id);
 
     // Copy joints - map from cgltf_node pointers to entity IDs
     for (u64 i = 0; i < cgltfSkin->joints_count; i++) {

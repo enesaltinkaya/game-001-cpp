@@ -134,6 +134,12 @@ struct Animator {
 
 REGISTER_COMPONENT(Animator);
 
+// Callbacks used by createComponentTDtor() for the Animator component:
+// release any AnimationInstances still owned by the component (plain storage
+// would leak the instances and the vector) before destroying/relocating it.
+void animatorComponentDtor(void* pComponent);
+void animatorComponentSwapIn(void* pDst, void* pSrc);
+
 /*
  * Animation Library - Global storage for all loaded animations
  */

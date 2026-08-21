@@ -862,7 +862,7 @@ static void enemySetupComponents(engine::Scene* scene,
 static engine::Scene* runtimeScene;
 
 static engine::Mesh* enemyCloneMesh(engine::Scene* dstScene, u32 dstEntityId, engine::Mesh* srcMesh) {
-    engine::Mesh* dstMesh = createComponent(dstScene, engine::Mesh, dstEntityId);
+    engine::Mesh* dstMesh = createComponentT(dstScene, engine::Mesh, dstEntityId);
 
     // Copy local AABB
     glm_vec3_copy(srcMesh->aabbLocal[0], dstMesh->aabbLocal[0]);

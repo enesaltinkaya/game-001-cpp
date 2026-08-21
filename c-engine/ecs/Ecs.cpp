@@ -75,6 +75,12 @@ void ecsDestroy(void) {
     for (i32 i = (i32)static_cast<i32>(ecs.scenes.size()) - 1; i >= 0; i--) {
         sceneDestroy(ecs.scenes[i]);
     }
+
+    // The default scene is statically allocated and never added to
+    // ecs.scenes, so free only its owned contents (component sets, entities,
+    // extras).  Systems that used it (camera, transform db, ...) are already
+    // destroyed above.
+    sceneCleanupContents(ecs.defaultScene);
 }
 
 void ecsPreUpdate(void) {  // runs every frame

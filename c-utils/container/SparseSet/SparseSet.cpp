@@ -7,11 +7,26 @@ namespace utils {
 SparseSet* ssNew(u32 elementSize) {
     SparseSet* ss = new SparseSet();
     ss->elementSize = elementSize;
+    ss->destroy     = nullptr;
+    ss->swapIn      = nullptr;
+    return ss;
+}
+
+SparseSet* ssNewWithDestructor(u32 elementSize, void (*destroy)(void*), void (*swapIn)(void*, void*)) {
+    SparseSet* ss = ssNew(elementSize);
+    ss->destroy   = destroy;
+    ss->swapIn    = swapIn;
     return ss;
 }
 
 void ssDestroy(void* pss) {
-    delete static_cast<SparseSet*>(pss);
+    SparseSet* ss = static_cast<SparseSet*>(pss);
+    if (ss->destroy) {
+        for (u32 i = 0; i < ss->size; i++) {
+            ss->destroy(ss->data.data() + (static_cast<size_t>(i) * ss->elementSize));
+        }
+    }
+    delete ss;
 }
 
 void ssReserve(SparseSet* ss, u32 capacity) {
@@ -59,9 +74,22 @@ bool ssRemoveByValue(SparseSet* ss, u32 value) {
     u32 lastDense          = ss->dense[ss->size - 1];
     ss->dense[sparseValue] = lastDense;
     ss->sparse[lastDense]  = sparseValue;
-    std::memcpy(ss->data.data() + static_cast<size_t>(sparseValue) * ss->elementSize,
-                ss->data.data() + static_cast<size_t>(ss->size - 1) * ss->elementSize,
-                ss->elementSize);
+    char* dst = ss->data.data() + (static_cast<size_t>(sparseValue) * ss->elementSize);
+    char* src = ss->data.data() + (static_cast<size_t>((ss->size - 1) * ss->elementSize));
+    if (dst != src) {
+        // For C++ elements, transfer contents with a proper move-assign so
+        // the destination's old members are freed and src stays valid; a raw
+        // byte copy would alias the same heap buffers in both slots.
+        if (ss->swapIn) {
+            ss->swapIn(dst, src);
+        } else {
+            std::memcpy(dst, src, ss->elementSize);
+        }
+    } else if (ss->destroy) {
+        // Removing the last live element: its object now sits in a dead slot
+        // and would never be destroyed otherwise.
+        ss->destroy(src);
+    }
     ss->size--;
     return true;
 }
@@ -95,6 +123,11 @@ void* ssNewItem(SparseSet* ss, u32 value) {
 }
 
 void ssClear(SparseSet* ss) {
+    if (ss->destroy) {
+        for (u32 i = 0; i < ss->size; i++) {
+            ss->destroy(ss->data.data() + (static_cast<size_t>(i) * ss->elementSize));
+        }
+    }
     ss->size = 0;
     ss->dense.clear();
     ss->sparse.clear();

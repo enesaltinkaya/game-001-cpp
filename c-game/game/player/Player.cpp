@@ -1149,7 +1149,9 @@ static void playerPlayLocomotionBlend(engine::Entity* entity,
                                       float blendDuration) {
     engine::Animator* animator = getComponent(entity->scene, engine::Animator, entity->id);
     if (!animator) {
-        animator          = createComponent(entity->scene, engine::Animator, entity->id);
+        animator          = createComponentTDtor(entity->scene, engine::Animator, entity->id,
+                                                 engine::animatorComponentDtor,
+                                                 engine::animatorComponentSwapIn);
         animator->entity  = entity;
         animator->mapping = nullptr;
     }

@@ -63,6 +63,11 @@ SceneSystem sceneSystem;
 SceneSystem::SceneSystem() : System("sceneSystem") {}
 
 void* F_sceneCreateComponent(Scene* scene, u32 entity, u64* typeIdPtr, u64 size) {
+    return F_sceneCreateComponentDtor(scene, entity, typeIdPtr, size, nullptr, nullptr);
+}
+
+void* F_sceneCreateComponentDtor(Scene* scene, u32 entity, u64* typeIdPtr, u64 size,
+                                 void (*destroy)(void*), void (*swapIn)(void*, void*)) {
     THREAD_LOCK;
     if (*typeIdPtr == 0) *typeIdPtr = ++ComponentTypeCounter;
     THREAD_UNLOCK;
@@ -73,7 +78,13 @@ void* F_sceneCreateComponent(Scene* scene, u32 entity, u64* typeIdPtr, u64 size)
     }
 
     if (!scene->components[id]) {
-        scene->components[id] = utils::ssNew(size);
+        scene->components[id] = utils::ssNewWithDestructor(size, destroy, swapIn);
+    } else if (scene->components[id]->destroy != destroy) {
+        // Mixing plain and tracked creation for one type would silently leak
+        // or double-free component memory; treat it as a programming error.
+        utils::error("sceneSystem: component type %llu created with mismatched destructor "
+                     "(mixing createComponent and createComponentT for one type)",
+                     (unsigned long long)id);
     }
 
     return utils::ssNewItem(scene->components[id], entity);
@@ -195,6 +206,30 @@ void destroyEntity(Entity* entity) {
     delete entity;
 }
 
+void sceneCleanupContents(Scene* scene) {
+    if (!scene) return;
+    for (utils::SparseSet* ss : scene->components) {
+        if (ss) utils::ssDestroy(ss);  // runs per-element C++ destructors first
+    }
+    scene->components.clear();
+
+    for (Entity* e : scene->entities) {
+        if (e->name) free(const_cast<char*>(e->name));
+        delete e;
+    }
+    scene->entities.clear();
+    scene->entityMap.clear();
+    scene->entityFreeList.clear();
+    scene->activeEntities.clear();
+    scene->activeEntityRemoveList.clear();
+
+    for (const auto& entry : scene->extras) {
+        jsonFree(entry.second);
+    }
+    scene->extras.clear();
+    utils::stringDestroy(&scene->name);
+}
+
 void sceneDestroy(Scene* scene) {
     if (!scene) return;
     // An async scene load may still be in flight: the worker thread is still
@@ -208,19 +243,7 @@ void sceneDestroy(Scene* scene) {
         utils::warn("sceneSystem: scene destroy deferred until the in-flight async load completes");
         return;
     }
-    for (utils::SparseSet* ss : scene->components) {
-        if (ss) utils::ssDestroy(ss);
-    }
-
-    for (Entity* e : scene->entities) {
-        if (e->name) free(const_cast<char*>(e->name));
-        delete e;
-    }
-
-    for (const auto& entry : scene->extras) {
-        jsonFree(entry.second);
-    }
-    utils::stringDestroy(&scene->name);
+    sceneCleanupContents(scene);
 
     for (i32 i = 0, si = static_cast<i32>(static_cast<i32>(ecs.scenes.size())); i < si; i++) {
         if (ecs.scenes[i] == scene) {
