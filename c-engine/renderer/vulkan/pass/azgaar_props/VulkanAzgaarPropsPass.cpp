@@ -228,6 +228,19 @@ static void recreatePipelines(void) {
     // Depth/velocity pre-pass pipe: writes motion vectors (velocity) and
     // view-space normal XY into the same attachments the depth pass owns,
     // so FSR gets valid per-pixel motion vectors for animated props.
+    //
+    // It must ALSO write depth (not depth-test-only): GTAO, contact shadow
+    // and HiZ all run BEFORE this pass' colour draws and consume the main
+    // depth buffer.  Without prop depth in that buffer they reconstruct a
+    // surface that ignores the props (a building's pixels read as the grass
+    // behind it, while viewNormal carries the building's normal) and emit
+    // phantom occlusion blobs shaped like the props themselves; the geometry
+    // shaders then multiply those blobs into their shading, so with GTAO
+    // enabled the props look see-through (e.g. a character silhouette shows
+    // up on a building wall behind the character).  Safe to write here: the
+    // pre-pass rasterizes with the exact same jittered projection, wind
+    // sway and LOD switch as the colour pass, so the colour pass' depth
+    // test (GREATER_OR_EQUAL) passes on equal values.
     prepassPipe = vulkanCreatePipe(
         .name                 = "azgaar_props_depth_prepass",
         .vs                   = "shaders/pass/azgaar_props/spv/azgaar_props_depth.vert.spv",
@@ -236,8 +249,6 @@ static void recreatePipelines(void) {
         .colorFormat2         = VK_FORMAT_R16G16_SNORM,
         .depthFormat          = VK_FORMAT_D32_SFLOAT,
         .noCull               = 1,
-        .depthTestOnly        = 1,
-        .depthCompareOp       = VK_COMPARE_OP_GREATER_OR_EQUAL,
         .vertexAttributes     = depthPrepassAttrs,
         .vertexAttributeCount = 10,
         .vertexBindings       = vertexBindings,

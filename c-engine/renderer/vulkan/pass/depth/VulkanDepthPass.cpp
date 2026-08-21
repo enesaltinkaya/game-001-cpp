@@ -304,7 +304,9 @@ Entity* camEntity = cameraGetEntity();
 
     // Azgaar props need motion vectors for FSR; the prepass renders the
     // animated (wind-swayed) props into the velocity / view-normal
-    // attachments.  No-op when props are not active.
+    // attachments and writes their depth so pre-colour consumers (GTAO,
+    // contact shadow, HiZ) see prop geometry.  No-op when props are not
+    // active.
     vulkanAzgaarPropsDrawPrepass();
 
     vulkanEndRender(cmd);
