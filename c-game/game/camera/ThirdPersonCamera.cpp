@@ -12,7 +12,6 @@
 // ── Orbit camera parameters (1 unit = 1 meter, character height 1.39m) ──────
 namespace game {
 static float tpCameraDistance    = 10.0f;  // default orbit distance (m)
-static float tpCameraHeight      = 1.0f;  // base height offset above look-at (m)
 static float tpCameraSensitivity = 0.15f;
 static float tpPitchMin          = -20.0f * GLM_PIf / 180.0f;
 static float tpPitchMax          = 60.0f * GLM_PIf / 180.0f;
@@ -145,14 +144,16 @@ void thirdPersonCameraUpdate(void) {
     glm_vec3_copy(transform->pos, playerPos);
     playerPos[1] += tpLookAtHeight;
 
-    // Spherical offset from the look-at point
-    float cp    = cosf(camPitch);
-    float sp    = sinf(camPitch);
-    vec3 offset = {
-        -sinf(camYaw) * cp * tpCam.distance,
-        sp * tpCam.distance + tpCameraHeight,
-        -cosf(camYaw) * cp * tpCam.distance,
-    };
+    // Camera offset from the look-at point: a fixed spherical DIRECTION
+    // (from yaw/pitch) scaled by the zoom distance. Scaling the whole
+    // vector means scrolling the wheel slides the camera along a straight
+    // line (the view ray) toward/away from the character while preserving
+    // the viewing angle — no arc, and no flip to top-down when close.
+    float cp   = cosf(camPitch);
+    float sp   = sinf(camPitch);
+    vec3 dir   = {-sinf(camYaw) * cp, sp, -cosf(camYaw) * cp};
+    vec3 offset;
+    glm_vec3_scale(dir, tpCam.distance, offset);
 
     vec3 desiredCamPos;
     glm_vec3_add(playerPos, offset, desiredCamPos);
@@ -231,7 +232,7 @@ void thirdPersonCameraUpdate(void) {
         if (wasClamped) {
             tpCam.smoothDist = clampedDist;
         } else {
-            float t          = glm_clamp(3.0f * utils::timer.dt, 0.0f, 1.0f);
+            float t          = glm_clamp(12.0f * utils::timer.dt, 0.0f, 1.0f);
             tpCam.smoothDist = glm_lerp(tpCam.smoothDist, clampedDist, t);
         }
 

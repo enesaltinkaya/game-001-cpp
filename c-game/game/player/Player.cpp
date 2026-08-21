@@ -1239,7 +1239,7 @@ static void playerMovementTopDownOnly(void) {
     if (gCameraMode != CAM_MODE_ISO) {
         float zoomDistance = thirdPersonCameraGetDistance();
         if (playerInput.scrollY != 0) {
-            zoomDistance -= playerInput.scrollY * 0.5f;
+            zoomDistance -= playerInput.scrollY * 2.0f;
             zoomDistance = glm_clamp(zoomDistance, 1.5f, 20.0f);
             thirdPersonCameraSetDistance(zoomDistance);
         }
