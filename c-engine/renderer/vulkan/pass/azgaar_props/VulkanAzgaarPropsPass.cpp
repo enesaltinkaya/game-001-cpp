@@ -298,17 +298,44 @@ void vulkanAzgaarPropsSetMeshes(const void* verts, u32 vertCount,
         meshVbo = vulkanCreateGpuBuffer(
             utils::strtmp("azgaar_props_mesh_vbo"),
             vertCount * sizeof(PropsVertex),
-            VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+            VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+                VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
         meshIbo = vulkanCreateGpuBuffer(
             utils::strtmp("azgaar_props_mesh_ibos"),
             idxCount * sizeof(u32),
-            VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+            VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+                VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
         VulkanCommand* cmd = vulkanTransientBegin();
         vulkanCopy(.cmd = cmd, .source.data = (void*)verts, .target.buf = &meshVbo,
                    .size = static_cast<u32>(vertCount * sizeof(PropsVertex)));
         vulkanCopy(.cmd = cmd, .source.data = (void*)idx, .target.buf = &meshIbo,
                    .size = static_cast<u32>(idxCount * sizeof(u32)));
         vulkanTransientEnd(cmd, 1);
+
+        // [TEMP DEBUG] read the device buffers back to verify the upload.
+        if (getenv("ENGINE_PROPS_READBACK")) {
+            VulkanBuffer rbIbo = vulkanCreateCpuBuffer(utils::strtmp("azgaar_props_rb_ibo"), idxCount * sizeof(u32),
+                VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+            VulkanBuffer rbVbo = vulkanCreateCpuBuffer(utils::strtmp("azgaar_props_rb_vbo"), vertCount * sizeof(PropsVertex),
+                VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+            VulkanCommand* rc = vulkanTransientBegin();
+            vulkanCopy(.cmd = rc, .source.buf = &meshIbo, .target.buf = &rbIbo, .size = static_cast<u32>(idxCount * sizeof(u32)));
+            vulkanCopy(.cmd = rc, .source.buf = &meshVbo, .target.buf = &rbVbo, .size = static_cast<u32>(vertCount * sizeof(PropsVertex)));
+            vulkanTransientEnd(rc, 1);  // waits: data now in host memory
+            FILE* fi = fopen("/tmp/gpu_readback_ibo.bin", "wb");
+            if (fi) {
+                fwrite(rbIbo.vmaInfo.pMappedData, 1, idxCount * sizeof(u32), fi);
+                fclose(fi);
+            }
+            FILE* fv = fopen("/tmp/gpu_readback_vbo.bin", "wb");
+            if (fv) {
+                fwrite(rbVbo.vmaInfo.pMappedData, 1, vertCount * sizeof(PropsVertex), fv);
+                fclose(fv);
+            }
+            utils::info("azgaarProps: READBACK wrote /tmp/gpu_readback_{ibo,vbo}.bin (%u idx, %u verts)", idxCount, vertCount);
+            vulkanDestroyBuffer(&rbIbo, NULL);
+            vulkanDestroyBuffer(&rbVbo, NULL);
+        }
     } else {
         meshVbo = VulkanBuffer{};
         meshIbo = VulkanBuffer{};
@@ -351,7 +378,8 @@ void vulkanAzgaarPropsSetTile(i32 tileX, i32 tileZ, u64 readyStamp,
         p.ibo = vulkanCreateGpuBuffer("azgaar_props_inst",
                                       need,
                                       VK_BUFFER_USAGE_VERTEX_BUFFER_BIT |
-                                          VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+                                          VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+                                          VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
         VulkanCommand* cmd = vulkanTransientBegin();
         vulkanCopy(.cmd = cmd, .source.data = (void*)instances, .target.buf = &p.ibo,
                    .size = static_cast<u32>(need));
@@ -409,11 +437,31 @@ static void enqueueGlobal(std::vector<PendingGlobalUpload>* queue,
         p.ibo = vulkanCreateGpuBuffer("azgaar_props_inst",
                                       need,
                                       VK_BUFFER_USAGE_VERTEX_BUFFER_BIT |
-                                          VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+                                          VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+                                          VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
         VulkanCommand* cmd = vulkanTransientBegin();
         vulkanCopy(.cmd = cmd, .source.data = (void*)instances, .target.buf = &p.ibo,
                    .size = static_cast<u32>(need));
         vulkanTransientEnd(cmd, 1);
+
+        // [TEMP DEBUG] read back the instance buffer.
+        if (getenv("ENGINE_PROPS_READBACK")) {
+            const char* slot = (queue == &pendingLandmarks) ? "landmark" : "settle";
+            VulkanBuffer rb = vulkanCreateCpuBuffer(utils::strtmp("azgaar_props_rb_inst"), need,
+                VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+            VulkanCommand* rc = vulkanTransientBegin();
+            vulkanCopy(.cmd = rc, .source.buf = &p.ibo, .target.buf = &rb, .size = static_cast<u32>(need));
+            vulkanTransientEnd(rc, 1);
+            char path[128];
+            snprintf(path, sizeof(path), "/tmp/gpu_readback_%s_inst.bin", slot);
+            FILE* f = fopen(path, "wb");
+            if (f) {
+                fwrite(rb.vmaInfo.pMappedData, 1, need, f);
+                fclose(f);
+            }
+            utils::info("azgaarProps: READBACK wrote %s (%u instances)", path, instanceCount);
+            vulkanDestroyBuffer(&rb, NULL);
+        }
     }
     if (ranges && rangeCount > 0) {
         p.ranges.assign(ranges, ranges + rangeCount);

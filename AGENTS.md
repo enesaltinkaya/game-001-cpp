@@ -43,7 +43,31 @@ frames exactly that object.
 - If a different vantage point is genuinely needed for verification,
   **ask the user** to park the player there (or approve a temporary change)
   before touching anything.
-  
+
+## RenderDoc (frame capture & inspection)
+
+For any work involving RenderDoc, frame captures, or GPU debugging, read
+`docs/renderdoc-capture.md` first. It documents the local v1.46-dev build,
+the implicit-layer hooking setup (required because the engine uses volk),
+the programmatic capture env vars, and the headless Python replay recipe.
+
+Quick start (debug builds, Linux):
+
+```bash
+# Headless capture; .rdc lands in /tmp/RenderDoc/ (~1 GB each, clean up old ones)
+ENGINE_RENDERDOC_CAPTURE=1 ENGINE_RENDERDOC_CAPTURE_DELAY_MS=6000 \
+ENGINE_SKIP_MAIN_MENU=1 ENGINE_LOG_TIMEOUT=12000 \
+./scripts/run.sh renderdoc
+
+# Inspect:
+qrenderdoc /tmp/RenderDoc/c-game_*.rdc          # GUI
+PYTHONPATH=/home/enes/Apps/renderdoc/build/lib python3 <script>   # headless replay API
+```
+
+- `run.sh renderdoc` sets `LD_PRELOAD` **and** the implicit layer (`ENABLE_VULKAN_RENDERDOC_CAPTURE=1`) — both are required, since volk's dlopen/dlsym bypasses plain symbol interposition.
+- The trigger delay must land in gameplay: a low value captures the asset-loading phase (0 draw calls).
+- `renderdoc` cannot be combined with the `play` sub-arg (all sub-args test `$1`), hence the explicit `ENGINE_SKIP_MAIN_MENU` / `ENGINE_LOG_TIMEOUT` above.
+
 ## Project overview
 
 - `game-001` is a C++23 game project built with CMake + Ninja.
@@ -214,30 +238,6 @@ patches, volk integration, and the C API usage.
 
 The library source and build script live at:
 `/home/enes/Projects/c/cpp-thirdparty/fsr3.1/`
-
-## RenderDoc (frame capture & inspection)
-
-For any work involving RenderDoc, frame captures, or GPU debugging, read
-`docs/renderdoc-capture.md` first. It documents the local v1.46-dev build,
-the implicit-layer hooking setup (required because the engine uses volk),
-the programmatic capture env vars, and the headless Python replay recipe.
-
-Quick start (debug builds, Linux):
-
-```bash
-# Headless capture; .rdc lands in /tmp/RenderDoc/ (~1 GB each, clean up old ones)
-ENGINE_RENDERDOC_CAPTURE=1 ENGINE_RENDERDOC_CAPTURE_DELAY_MS=6000 \
-ENGINE_SKIP_MAIN_MENU=1 ENGINE_LOG_TIMEOUT=12000 \
-./scripts/run.sh renderdoc
-
-# Inspect:
-qrenderdoc /tmp/RenderDoc/c-game_*.rdc          # GUI
-PYTHONPATH=/home/enes/Apps/renderdoc/build/lib python3 <script>   # headless replay API
-```
-
-- `run.sh renderdoc` sets `LD_PRELOAD` **and** the implicit layer (`ENABLE_VULKAN_RENDERDOC_CAPTURE=1`) — both are required, since volk's dlopen/dlsym bypasses plain symbol interposition.
-- The trigger delay must land in gameplay: a low value captures the asset-loading phase (0 draw calls).
-- `renderdoc` cannot be combined with the `play` sub-arg (all sub-args test `$1`), hence the explicit `ENGINE_SKIP_MAIN_MENU` / `ENGINE_LOG_TIMEOUT` above.
 
 ## Camera
 

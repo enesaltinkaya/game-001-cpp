@@ -229,6 +229,21 @@ static void mbFree(MeshBuilder* mb) {
     mb->idx.shrink_to_fit();
 }
 
+// [TEMP DEBUG] Dump a species builder to an OBJ file for inspection.
+static void propsDumpBuilder(const char* path, const MeshBuilder* mb) {
+    FILE* f = fopen(path, "w");
+    if (!f) return;
+    for (u32 i = 0; i < mb->vertCount; i++) {
+        const engine::PropsVertex* p = &mb->verts[i];
+        fprintf(f, "v %f %f %f\n", p->position[0], p->position[1], p->position[2]);
+    }
+    for (u32 i = 0; i < mb->idxCount; i += 3) {
+        fprintf(f, "f %u %u %u\n", mb->idx[i] + 1, mb->idx[i + 1] + 1, mb->idx[i + 2] + 1);
+    }
+    fclose(f);
+    utils::info("azgaarProps: dumped %s (%u verts, %u idx)", path, mb->vertCount, mb->idxCount);
+}
+
 static u32 mbAddVert(MeshBuilder* mb,
                      float x,
                      float y,
@@ -325,19 +340,28 @@ static u32 mbCone(MeshBuilder* mb,
         // Band must wind CCW from OUTSIDE (front face).  The old winding was
         // clockwise, so these sides rasterized as back faces and the
         // fragment shader' gl_FrontFacing flip inverted their normals.
+        //
+        // The quad splits along ONE diagonal (b0->t1).  The second tri used
+        // to be (b0, t0, b1) — the OTHER diagonal — so the two tris only met
+        // at the base edge and left the top corner (t0, t1, centre) of every
+        // segment uncovered: a row of sky wedges under the roofline, the
+        // "jagged crown" visible on the citadel tower / lighthouse.
         mbTri(mb, b0, t1, b1);
-        mbTri(mb, b0, t0, b1);
+        mbTri(mb, b0, t0, t1);
     }
     // Flat top cap (so cones read solid from below).  The band interleaves
     // four verts per segment (b0, b1, t0, t1), so the top ring is NOT a
     // contiguous block: segment s' top verts sit at ring0 + 4*s + 2/3.
-    // (The old fan used ring0 + s, mixing base-ring verts into the cap and
-    // throwing giant spikes through the cone — visible on the lighthouse.)
+    // Fan the centre to the CONSECUTIVE top verts of each segment (t0->t1,
+    // one segment apart) so the triangles tile the whole disc.  Fanning to
+    // the next segment' t1 (4*(s+1)+3) instead makes each chord skip a
+    // vertex and leaves the circular segment uncovered — a jagged crown
+    // instead of a solid cap (visible on the lighthouse).
     if (topR > 0.001f) {
         u32 c = mbAddVert(mb, cx, topY, cz, 0.0f, 1.0f, 0.0f, 0.5f, 1.0f);
         for (u32 s = 0; s < sides; s++) {
             u32 t0 = ring0 + 4u * s + 2u;
-            u32 t1 = ring0 + 4u * ((s + 1u) % sides) + 3u;
+            u32 t1 = ring0 + 4u * s + 3u;
             mbTri(mb, c, t1, t0);  // CCW from above (front face, normal +Y)
         }
     }
@@ -1074,6 +1098,13 @@ static void buildAllMeshes(std::vector<engine::PropVariantRange>& outVariants,
     buildMineFrame(&builders[AZGAAR_PROP_MINE_FRAME]);
     buildBridge(&builders[AZGAAR_PROP_BRIDGE]);
 
+    // [TEMP DEBUG]
+    if (getenv("ENGINE_AZGAAR_PROPS_DUMP")) {
+        propsDumpBuilder("/tmp/props_lighthouse.obj", &builders[AZGAAR_PROP_LIGHTHOUSE]);
+        propsDumpBuilder("/tmp/props_lighthouse_cap.obj", &builders[AZGAAR_PROP_LIGHTHOUSE_CAP]);
+        propsDumpBuilder("/tmp/props_tower.obj", &builders[AZGAAR_PROP_TOWER]);
+    }
+
     // Count the authored deciduous objects (one Mesh component per variant).
     // The scene load is async, so only extract once the scene is fully
     // parsed (ready); otherwise fall back to the procedural placeholder.
@@ -1247,6 +1278,42 @@ static void buildAllMeshes(std::vector<engine::PropVariantRange>& outVariants,
     outVertCount    = totalVerts;
     outIdxCount     = totalIdx;
     outVariantCount = totalRows;
+
+    // [TEMP DEBUG] merged mesh dump
+    if (getenv("ENGINE_AZGAAR_PROPS_DUMP")) {
+        FILE* fm = fopen("/tmp/props_merged.idx.bin", "wb");
+        if (fm) {
+            fwrite(outIdx.data(), sizeof(u32), outIdx.size(), fm);
+            fclose(fm);
+        }
+        FILE* fv = fopen("/tmp/props_merged_verts.txt", "w");
+        if (fv) {
+            for (u32 i = 0; i < outVertCount; i++) {
+                const engine::PropsVertex* p = &outVerts[i];
+                fprintf(fv, "%d %f %f %f\n", i, p->position[0], p->position[1], p->position[2]);
+            }
+            fclose(fv);
+        }
+        FILE* ft = fopen("/tmp/props_merged_variants.txt", "w");
+        if (ft) {
+            for (u32 r = 0; r < outVariantCount; r++) {
+                const engine::PropVariantRange* vr = &outVariants[r];
+                fprintf(ft, "row=%u species=%u variant=%u idxOff=%u idxCnt=%u bmin=(%f,%f,%f) bmax=(%f,%f,%f) sway=%.2f flags=%u lod=%u\n",
+                     r, vr->species, vr->variant, vr->indexOffset, vr->indexCount,
+                     vr->boundsMin[0], vr->boundsMin[1], vr->boundsMin[2],
+                     vr->boundsMax[0], vr->boundsMax[1], vr->boundsMax[2],
+                     vr->swayFactor, vr->flags, vr->lodRole);
+            }
+            fclose(ft);
+        }
+        utils::info("azgaarProps: dumped merged mesh (%u verts, %u idx, %u variant rows)",
+             outVertCount, outIdxCount, outVariantCount);
+        FILE* fr = fopen("/tmp/props_merged_verts_raw.bin", "wb");
+        if (fr) {
+            fwrite(outVerts.data(), sizeof(engine::PropsVertex), outVerts.size(), fr);
+            fclose(fr);
+        }
+    }
 
     for (u32 s = 0; s < AZGAAR_PROP_COUNT; s++) {
         mbFree(&builders[s]);

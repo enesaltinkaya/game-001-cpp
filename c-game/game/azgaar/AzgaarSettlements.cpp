@@ -557,6 +557,13 @@ void azgaarSettlementsInit(const AzgaarWorld* world,
         float aabbMax[3] = {halfW, world->maxLandHeightM + 20.0f, halfH};
         azgaarPropsRegisterGlobal(g_instances.data(), g_instanceCount,
                                     g_ranges.data(), g_rangeCount, aabbMin, aabbMax, false);
+        if (getenv("ENGINE_AZGAAR_PROPS_DUMP")) {
+            FILE* f = fopen("/tmp/cpu_settle_inst.bin", "wb");
+            if (f) {
+                fwrite(g_instances.data(), sizeof(engine::PropInstance), g_instances.size(), f);
+                fclose(f);
+            }
+        }
         utils::info("azgaarSettlements: uploaded %u building instances in %u species ranges",
              g_instanceCount, g_rangeCount);
 
@@ -564,8 +571,9 @@ void azgaarSettlementsInit(const AzgaarWorld* world,
         if (getenv("AZGAAR_DEBUG_DUMP_BUILDINGS")) {
             for (u32 i = 0; i < g_instanceCount; i++) {
                 const engine::PropInstance* p = &g_instances[i];
-                utils::info("bldg %u sp=%u pos=(%.1f,%.1f,%.1f)", i, p->species,
-                     (double)p->pos[0], (double)p->pos[1], (double)p->pos[2]);
+                utils::info("bldg %u sp=%u pos=(%.1f,%.1f,%.1f) yaw=%.2f scale=%.2f", i, p->species,
+                     (double)p->pos[0], (double)p->pos[1], (double)p->pos[2],
+                     (double)p->yaw, (double)p->scale);
             }
         }
     }
