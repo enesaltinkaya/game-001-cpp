@@ -486,12 +486,10 @@ static void playerSceneLoaded(engine::Scene* scene, void*) {
     }
 }
 
-static void waitAsecondTemp(void*) {
-    engine::sceneLoadCb("models/eve.dat", playerSceneLoaded, nullptr);
-}
-
 static void animationsLoaded(void*) {
-    utils::futureTaskAdd(1000, waitAsecondTemp, nullptr);
+    // Load immediately — the character's waitingForGround gate holds it at
+    // spawn until the streaming heightfield body under it exists.
+    engine::sceneLoadCb("models/eve.dat", playerSceneLoaded, nullptr);
 }
 
 void PlayerSystem::added() {
