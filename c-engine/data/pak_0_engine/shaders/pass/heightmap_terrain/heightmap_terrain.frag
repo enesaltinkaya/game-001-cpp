@@ -214,6 +214,7 @@ void main() {
     bool climateOn  = sceneBuffer.terrain.climateParams.w > 0.5 && biomeColorIndex != 0u &&
                      climateIndex != 0u && mapExtent.x > 1.0 && mapExtent.y > 1.0;
     vec4 climate    = vec4(0.0);
+    vec2 mapUV      = vec2(0.0);
     float landMask  = smoothstep(0.0, 0.2, inWorldPos.y);  // sea level = 0 m
     float snowT     = 0.0;
     float beachT    = 0.0;
@@ -221,7 +222,7 @@ void main() {
     uint snowAlbedo = sceneBuffer.terrain.snowAlbedoIndex;
 
     if (climateOn) {
-        vec2 mapUV = clamp(
+        mapUV = clamp(
             vec2((sceneBuffer.terrain.worldMax.x - inWorldPos.x) / mapExtent.x,
                  (sceneBuffer.terrain.worldMax.z - inWorldPos.z) / mapExtent.y),
             0.0, 1.0);
@@ -331,13 +332,24 @@ void main() {
     // natural altitude snow line; the Glacier biome is snow unconditionally.
     // A value-noise breakup keeps the line from reading as a contour.
     if (climateOn) {
+        // The A channel carries discrete biome ids (nearest-cell values), so
+        // it must be read through a NEAREST sampler: bilinear-filtering ids
+        // invents bogus intermediate biomes, and Wetland (id 12) numerically
+        // outranks Glacier (id 11), which made whole wetlands render as snow
+        // behind the old >= 10.5 threshold.  Exact-id match on the snapped
+        // value instead.
+        vec4 climateNearest = texture(
+            sampler2D(textures[nonuniformEXT(climateIndex)], samplers[SAMPLER_NEAREST]),
+            mapUV);
         float tempC   = climate.r * 255.0 - AZGAAR_CLIMATE_TEMP_BIAS;
-        float biomeId = floor(climate.a * 255.0 + 0.5);
+        float biomeId = floor(climateNearest.a * 255.0 + 0.5);
         float snowLo  = sceneBuffer.terrain.climateParams.x;
         float snowHi  = sceneBuffer.terrain.climateParams.y;
 
         snowT = 1.0 - smoothstep(snowLo, snowHi, tempC);
-        snowT = max(snowT, step(AZGAAR_BIOME_GLACIER - 0.5, biomeId));
+        snowT = max(snowT,
+                    (biomeId > AZGAAR_BIOME_GLACIER - 0.5 &&
+                     biomeId < AZGAAR_BIOME_GLACIER + 0.5) ? 1.0 : 0.0);
         snowT *= landMask;
         snowT *= 0.75 + 0.25 * (0.5 + 0.5 * microValueNoise(inWorldPos.xz * 0.02));
 
