@@ -304,13 +304,30 @@ void vulkanSaveImage(VulkanImage* img, const char* path) {
 #include <dlfcn.h>
 static RENDERDOC_API_1_1_2* rdoc_api = nullptr;
 
+static const char* kDefaultRdocLib = "/home/enes/Apps/renderdoc/build/lib/librenderdoc.so";
+
 void* initRenderDocAPI(void) {
     if (rdoc_api) {
         return rdoc_api;
     }
 
-    void* module = nullptr;
-    module       = dlopen("librenderdoc.so", RTLD_NOLOAD | RTLD_NOW);
+    const char* libPath = getenv("ENGINE_RENDERDOC_LIB");
+    if (!libPath || !*libPath) libPath = kDefaultRdocLib;
+
+    // Prefer an already-loaded copy (LD_PRELOAD / implicit layer) so we talk
+    // to the instance whose Vulkan hooks are active.
+    void* module = dlopen(libPath, RTLD_NOLOAD | RTLD_NOW);
+    if (module) {
+        printf("RenderDoc: using loaded %s\n", libPath);
+    } else {
+        // Not preloaded: load it anyway so the API is reachable. Captures
+        // only work when the lib was preloaded (or the implicit layer is
+        // enabled), i.e. its Vulkan hooks were installed at process start.
+        module = dlopen(libPath, RTLD_NOW);
+        if (module) {
+            printf("RenderDoc: loaded %s (was not preloaded - capture may not hook Vulkan)\n", libPath);
+        }
+    }
     if (module) {
         pRENDERDOC_GetAPI RENDERDOC_GetAPI =
             (pRENDERDOC_GetAPI)dlsym(module, "RENDERDOC_GetAPI");
@@ -331,13 +348,18 @@ void* initRenderDocAPI(void) {
 
 static void doCapture(void* pRenderDoc) {
     RENDERDOC_API_1_1_2* renderDoc  = static_cast<RENDERDOC_API_1_1_2*>(pRenderDoc);
+    printf("RenderDoc: TriggerCapture called (look for the .rdc in /tmp/RenderDoc)\n");
     renderDoc->TriggerCapture();
 }
 
 void captureFrameRenderDoc(void) {
     RENDERDOC_API_1_1_2* renderDoc  = static_cast<RENDERDOC_API_1_1_2*>(initRenderDocAPI());
     if (renderDoc) {
-        utils::futureTaskAdd(1000, doCapture, renderDoc);
+        int delayMs = 1000;
+        const char* delayEnv = getenv("ENGINE_RENDERDOC_CAPTURE_DELAY_MS");
+        if (delayEnv && *delayEnv) delayMs = atoi(delayEnv);
+        if (delayMs < 0) delayMs = 0;
+        utils::futureTaskAdd(delayMs, doCapture, renderDoc);
     }
 }
 #endif

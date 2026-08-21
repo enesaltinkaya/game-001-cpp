@@ -13,8 +13,12 @@ export ASAN_SYMBOLIZER_PATH=/usr/bin/llvm-symbolizer
 export LSAN_OPTIONS=suppressions="$ROOT/scripts/lsan_suppress.txt"
 
 if [[ $1 == "renderdoc" ]]; then
-    # export LD_PRELOAD=/home/enes/Sdks/renderdoc/lib/librenderdoc.so
-    export LD_PRELOAD=librenderdoc.so
+    # App-side API (TriggerCapture) via preload; hooks come from the implicit
+    # Vulkan layer (required: the engine loads Vulkan entry points through
+    # volk dlopen/dlsym, which plain symbol interposition cannot intercept).
+    # Both use the same library file, so only one RenderDoc instance maps.
+    export LD_PRELOAD=/home/enes/Apps/renderdoc/build/lib/librenderdoc.so
+    export ENABLE_VULKAN_RENDERDOC_CAPTURE=1
 fi
 
 if [[ $1 == "screenshot" ]]; then

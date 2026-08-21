@@ -227,11 +227,11 @@ void vulkanInit(void) {
     }
 #endif
 
-    // #ifndef NDEBUG
-    // #ifdef __linux__
-    // captureFrameRenderDoc();
-    // #endif
-    // #endif
+    #ifdef __linux__
+    if (getenv("ENGINE_RENDERDOC_CAPTURE")) {
+        captureFrameRenderDoc();
+    }
+    #endif
 }
 
 static void vulkanDestroyDelayed(void* _) {

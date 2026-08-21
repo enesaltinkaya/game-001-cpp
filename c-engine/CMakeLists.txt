@@ -16,7 +16,7 @@ if (WIN32)
     target_include_directories(c-engine PUBLIC /home/enes/Sdks/VulkanSDK-win/1.4.313.0/Include/)
 elseif (LINUX)
     target_include_directories(c-engine PUBLIC /home/enes/Sdks/VulkanSDK-linux/1.4.313.0/x86_64/include/)
-    target_include_directories(c-engine PUBLIC /var/home/enes/Sdks/renderdoc/include/)
+    target_include_directories(c-engine PUBLIC /home/enes/Apps/renderdoc/renderdoc/api/app/)
 endif ()
 
 target_precompile_headers(c-engine PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/pch.h)
