@@ -264,15 +264,25 @@ void VulkanGtaoPass::update() {
     VulkanImage* velocityImg = vulkanFrameResourcesGetVelocity();
 
     /* Temporal accumulation is essential to smooth out per-pixel AO
-     * noise and sub-pixel jitter variation when FSR / Native AA is
-     * active.  Without it, GTAO noise "swims" with camera motion and
-     * alpha-cutout edges (grass, foliage) flicker violently because
-     * the raw GTAO + spatial filter cannot resolve sub-pixel changes.
-     * The temporal shader uses a conservative blend (10% current for
-     * static pixels) and variance clipping, mirroring the contact
-     * shadow pass approach.  Double accumulation with FSR's own
-     * temporal pass is harmless in practice.                              */
-    char useTemporal = temporalAAActive && velocityImg && velocityImg->img;
+     * noise and sub-pixel jitter variation.  Without it the raw GTAO +
+     * spatial filter leaves a visible dither pattern wherever a
+     * grazing-angle occluder sits close to the surface (e.g. ground at
+     * the base of a building wall): the per-pixel noise offsets make
+     * the horizon search flip between "occluded" / "not occluded"
+     * pixel-to-pixel, and the small edge-aware spatial kernel cannot
+     * average that away.
+     *
+     * The velocity buffer is written by the depth pre-pass every frame
+     * (independent of the upscaler), so the temporal pass runs
+     * unconditionally when it exists.  With FSR / Native AA the camera
+     * jitter provides sub-pixel sampling and the raw shader keeps its
+     * noise fixed between frames; without it the per-frame noise branch
+     * (frameIndex) decorrelates the sampling and the conservative blend
+     * (2-5% current for static pixels) + variance clipping averages it
+     * out, mirroring the contact shadow pass approach.  Double
+     * accumulation with FSR's own temporal pass is harmless in
+     * practice.                                                            */
+    char useTemporal = velocityImg && velocityImg->img;
 
     if (!useTemporal) {
         gtaoHistoryValid = 0;
@@ -307,7 +317,7 @@ void VulkanGtaoPass::update() {
         .projM11          = camera->cameraUbo.projection[1][1],
         .jitterX          = jitterX,
         .jitterY          = jitterY,
-        .frameIndex       = temporalAAActive ? (camera->frameIndex % 64u) : 0u,
+        .frameIndex       = camera->frameIndex % 64u,
         .temporalAAActive = temporalAAActive ? 1u : 0u,
         .radius           = 2.0f,
         .falloffEnd       = 4.0f,

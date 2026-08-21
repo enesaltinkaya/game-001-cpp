@@ -107,7 +107,10 @@ void main() {
      * discrete 6-directional sampling — not vary frame-to-frame.
      *
      * Strategy:
-     *   temporalAAActive == 0  → frame-varying noise (no history).
+     *   temporalAAActive == 0  → frame-varying noise.  The GTAO temporal
+     *                            pass (always active while a velocity
+     *                            buffer exists) averages the per-frame
+     *                            samples, converging to a smooth result.
      *   temporalAAActive == 1  → fixed per-pixel noise (no frame dep).
      *                            Temporal pass averages the residual
      *                            directional-quantisation error over time.

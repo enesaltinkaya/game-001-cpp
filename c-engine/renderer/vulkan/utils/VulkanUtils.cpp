@@ -193,6 +193,45 @@ static bool isFloatFormat(VkFormat fmt) {
     }
 }
 
+static bool isHalfFloatFormat(VkFormat fmt) {
+    switch (fmt) {
+        case VK_FORMAT_R16_SFLOAT:
+        case VK_FORMAT_R16G16_SFLOAT:
+        case VK_FORMAT_R16G16B16_SFLOAT:
+        case VK_FORMAT_R16G16B16A16_SFLOAT:
+            return true;
+        default:
+            return false;
+    }
+}
+
+/* IEEE 754 binary16 -> binary32. */
+static float halfToFloat(u16 h) {
+    u32 sign = (h & 0x8000u) << 16;
+    u32 exp  = (h >> 10) & 0x1fu;
+    u32 mant = h & 0x3ffu;
+    u32 out;
+    if (exp == 0u) {
+        if (mant == 0u) {
+            out = sign;
+        } else {
+            u32 e = 127u - 15u + 1u;
+            while (!(mant & 0x400u)) {
+                mant <<= 1;
+                e--;
+            }
+            out = sign | (e << 23) | ((mant & 0x3ffu) << 13);
+        }
+    } else if (exp == 31u) {
+        out = sign | 0x7f800000u | (mant << 13);
+    } else {
+        out = sign | ((exp + 127u - 15u) << 23) | (mant << 13);
+    }
+    float f;
+    memcpy(&f, &out, sizeof(f));
+    return f;
+}
+
 static int formatChannelCount(VkFormat fmt) {
     switch (fmt) {
         case VK_FORMAT_R8_UNORM:
@@ -227,7 +266,14 @@ void vulkanSaveImage(VulkanImage* img, const char* path) {
     u32 w = img->extent.width;
     u32 h = img->extent.height;
     int channels = formatChannelCount(img->format);
-    u64 pixelSize = isFloatFormat(img->format) ? (u64)channels * sizeof(float) : (u64)channels;
+    u64 pixelSize;
+    if (isHalfFloatFormat(img->format)) {
+        pixelSize = (u64)channels * sizeof(u16);
+    } else if (isFloatFormat(img->format)) {
+        pixelSize = (u64)channels * sizeof(float);
+    } else {
+        pixelSize = (u64)channels;
+    }
     u64 bufSize = (u64)w * h * pixelSize;
 
     VulkanBuffer readback = vulkanCreateReadbackBuffer("saveImage", bufSize, 0);
@@ -247,15 +293,24 @@ void vulkanSaveImage(VulkanImage* img, const char* path) {
 
     int ok;
     if (isFloatFormat(img->format)) {
-        // Float image: find min/max per channel, remap to 0-255 PNG
-        float* src = (float*)pixels;
+        // Float image: normalise to float32 (16-bit formats are stored as
+        // half floats), find min/max per channel, remap to 0-255 PNG.
         u64 numPixels = (u64)w * h;
+        float* vals = static_cast<float*>(malloc(numPixels * channels * sizeof(float)));
+        if (isHalfFloatFormat(img->format)) {
+            const u16* src16 = (const u16*)pixels;
+            for (u64 i = 0; i < numPixels * channels; i++) {
+                vals[i] = halfToFloat(src16[i]);
+            }
+        } else {
+            memcpy(vals, pixels, numPixels * channels * sizeof(float));
+        }
 
         float minV[4] = {FLT_MAX, FLT_MAX, FLT_MAX, FLT_MAX};
         float maxV[4] = {-FLT_MAX, -FLT_MAX, -FLT_MAX, -FLT_MAX};
         for (u64 i = 0; i < numPixels; i++) {
             for (int c = 0; c < channels; c++) {
-                float v = src[i * channels + c];
+                float v = vals[i * channels + c];
                 if (v < minV[c]) minV[c] = v;
                 if (v > maxV[c]) maxV[c] = v;
             }
@@ -268,12 +323,13 @@ void vulkanSaveImage(VulkanImage* img, const char* path) {
         u8* jpg = static_cast<u8*>(malloc(numPixels * channels));
         for (u64 i = 0; i < numPixels; i++) {
             for (int c = 0; c < channels; c++) {
-                float v = src[i * channels + c];
+                float v = vals[i * channels + c];
                 float range = maxV[c] - minV[c];
                 float norm = range > 1e-6f ? (v - minV[c]) / range : 0.0f;
                 jpg[i * channels + c] = (u8)(norm * 255.0f + 0.5f);
             }
         }
+        free(vals);
         ok = stbi_write_jpg(path, (int)w, (int)h, channels, jpg, 80);
         free(jpg);
     } else {
