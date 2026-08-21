@@ -328,13 +328,17 @@ static u32 mbCone(MeshBuilder* mb,
         mbTri(mb, b0, t1, b1);
         mbTri(mb, b0, t0, b1);
     }
-    // Flat top cap (so cones read solid from below).
+    // Flat top cap (so cones read solid from below).  The band interleaves
+    // four verts per segment (b0, b1, t0, t1), so the top ring is NOT a
+    // contiguous block: segment s' top verts sit at ring0 + 4*s + 2/3.
+    // (The old fan used ring0 + s, mixing base-ring verts into the cap and
+    // throwing giant spikes through the cone — visible on the lighthouse.)
     if (topR > 0.001f) {
         u32 c = mbAddVert(mb, cx, topY, cz, 0.0f, 1.0f, 0.0f, 0.5f, 1.0f);
         for (u32 s = 0; s < sides; s++) {
-            u32 t0 = ring0 + s;
-            u32 t1 = ring0 + ((s + 1) % sides);
-            mbTri(mb, c, t1, t0);
+            u32 t0 = ring0 + 4u * s + 2u;
+            u32 t1 = ring0 + 4u * ((s + 1u) % sides) + 3u;
+            mbTri(mb, c, t1, t0);  // CCW from above (front face, normal +Y)
         }
     }
     return ring0;

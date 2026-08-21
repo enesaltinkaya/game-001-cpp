@@ -115,6 +115,21 @@ inherited through `run.sh`:
 ENGINE_HIDE_GUI=1 ./scripts/run.sh play screenshot /tmp/clean.jpg
 ```
 
+### Parked player / camera — do not disturb
+
+Where each `play` run starts comes from the saved transforms in
+`build/c-game/data/db/db.db` (SQLite `transform` table: `player`, `camera`,
+`flying_camera`; loaded via `transformDbLoad`, written back on exit). The
+user parks the player next to the object under test so a screenshot run
+frames exactly that object.
+
+- **Do not move the parked player/camera.** Never edit or delete those db
+  rows, and never patch spawn code (`playerGetSpawn()` etc.) to aim
+  elsewhere — it destroys the parked setup and wastes the whole session.
+- If a different vantage point is genuinely needed for verification,
+  **ask the user** to park the player there (or approve a temporary change)
+  before touching anything.
+
 ### Saving Vulkan images to disk
 
 - `vulkanScreenshot(path)` — saves the current swapchain image as JPG.
