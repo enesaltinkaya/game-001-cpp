@@ -295,26 +295,38 @@ static u32 mbCone(MeshBuilder* mb,
                   float topY,
                   float baseR,
                   float topR,
-                  u32 sides,
-                  float nx,
-                  float nz) {
+                  u32 sides) {
     if (sides < 3) sides = 3;
-    float span = topY - baseY;
+    float span  = topY - baseY;
     if (span <= 0.0f) span = 0.001f;
-    float slopeN = 1.0f / sqrtf((topR - baseR) * (topR - baseR) + span * span);
-    float ny     = (topR - baseR) * slopeN;  // outward-ish; good enough for lighting
-    ny           = -ny;                      // point outward/up
-    u32 ring0    = mb->vertCount;
+    // Outward side normal per segment: radial part weighted by the height
+    // span, vertical part by the taper (baseR > topR tilts it upward, equal
+    // radii -> purely radial).  The old code baked ONE vertical normal for
+    // the whole cone, which degenerated to (0,0,0) for straight cylinders
+    // (tower shafts, gate posts, lighthouse lantern, ...) and handed
+    // normalize() an undefined input, so those parts shaded flat/dead.
+    float taper = baseR - topR;
+    float inv   = 1.0f / sqrtf(span * span + taper * taper);
+    float nr    = span * inv;
+    float ny    = taper * inv;
+    u32 ring0   = mb->vertCount;
     for (u32 s = 0; s < sides; s++) {
         float a0 = static_cast<float>(s) / static_cast<float>(sides) * 2.0f * M_PI;
         float a1 = static_cast<float>(s + 1) / static_cast<float>(sides) * 2.0f * M_PI;
+        float am = 0.5f * (a0 + a1);  // segment centre: shared flat normal
+        float nx = cosf(am) * nr;
+        float nz = sinf(am) * nr;
         u32 b0 =
             mbAddVert(mb, cx + cosf(a0) * baseR, baseY, cz + sinf(a0) * baseR, nx, ny, nz, 0, 0);
         u32 b1 =
             mbAddVert(mb, cx + cosf(a1) * baseR, baseY, cz + sinf(a1) * baseR, nx, ny, nz, 0, 0);
         u32 t0 = mbAddVert(mb, cx + cosf(a0) * topR, topY, cz + sinf(a0) * topR, nx, ny, nz, 0, 1);
         u32 t1 = mbAddVert(mb, cx + cosf(a1) * topR, topY, cz + sinf(a1) * topR, nx, ny, nz, 0, 1);
-        mbQuad(mb, b0, b1, t1, t0);
+        // Band must wind CCW from OUTSIDE (front face).  The old winding was
+        // clockwise, so these sides rasterized as back faces and the
+        // fragment shader' gl_FrontFacing flip inverted their normals.
+        mbTri(mb, b0, t1, b1);
+        mbTri(mb, b0, t0, b1);
     }
     // Flat top cap (so cones read solid from below).
     if (topR > 0.001f) {
@@ -331,14 +343,14 @@ static u32 mbCone(MeshBuilder* mb,
 // A solid cylinder (side + base + top).  Convenience wrapper over mbCone.
 static void
 mbCylinder(MeshBuilder* mb, float cx, float cz, float baseY, float topY, float r, u32 sides) {
-    mbCone(mb, cx, cz, baseY, topY, r, r, sides, 0.0f, 0.0f);
+    mbCone(mb, cx, cz, baseY, topY, r, r, sides);
     u32 c0 = mbAddVert(mb, cx, baseY, cz, 0.0f, -1.0f, 0.0f, 0.5f, 0.0f);
     for (u32 s = 0; s < sides; s++) {
         float a0 = static_cast<float>(s) / static_cast<float>(sides) * 2.0f * M_PI;
         float a1 = static_cast<float>(s + 1) / static_cast<float>(sides) * 2.0f * M_PI;
         u32 b0   = mbAddVert(mb, cx + cosf(a0) * r, baseY, cz + sinf(a0) * r, 0, -1, 0, 0, 0);
         u32 b1   = mbAddVert(mb, cx + cosf(a1) * r, baseY, cz + sinf(a1) * r, 0, -1, 0, 0, 0);
-        mbTri(mb, c0, b1, b0);
+        mbTri(mb, c0, b0, b1);  // CCW from below (front face, normal -Y)
     }
 }
 
@@ -475,32 +487,43 @@ static void mbFlower(MeshBuilder* mb) {
 }
 
 // A box from baseY..topY centred at (cx, cz) with half-widths hx/hz:
-// 8 verts, 12 tris, outward normals per face.
+// 24 verts (4 per face, flat per-face outward normals), 12 tris.
+//
+// The old 8-vert variant reused the bottom/top corner verts for the side
+// faces, so every wall interpolated its normal between (0,-1,0) and
+// (0,1,0): one half of each wall lit like the ground (dark bounce ambient,
+// NdotL == 0 -> no sun term and no shadow fade) while the other half lit
+// like a roof (bright, shadowed) -- the "light area / dark area" split on
+// buildings.  Per-face verts with the true face normal fix the shading;
+// the corner order winds CCW from OUTSIDE so visible walls stay front
+// faces and the gl_FrontFacing flip only ever hits interior faces.
 static void
 mbBox(MeshBuilder* mb, float cx, float cz, float baseY, float topY, float hx, float hz) {
     float x0 = cx - hx, x1 = cx + hx;
     float z0 = cz - hz, z1 = cz + hz;
-    u32 v[8];
-    v[0] = mbAddVert(mb, x0, baseY, z1, 0.0f, -1.0f, 0.0f, 0, 0);
-    v[1] = mbAddVert(mb, x1, baseY, z1, 0.0f, -1.0f, 0.0f, 1, 0);
-    v[2] = mbAddVert(mb, x1, baseY, z0, 0.0f, -1.0f, 0.0f, 1, 1);
-    v[3] = mbAddVert(mb, x0, baseY, z0, 0.0f, -1.0f, 0.0f, 0, 1);
-    v[4] = mbAddVert(mb, x0, topY, z1, 0.0f, 1.0f, 0.0f, 0, 0);
-    v[5] = mbAddVert(mb, x1, topY, z1, 0.0f, 1.0f, 0.0f, 1, 0);
-    v[6] = mbAddVert(mb, x1, topY, z0, 0.0f, 1.0f, 0.0f, 1, 1);
-    v[7] = mbAddVert(mb, x0, topY, z0, 0.0f, 1.0f, 0.0f, 0, 1);
-    mbTri(mb, v[0], v[1], v[2]);
-    mbTri(mb, v[0], v[2], v[3]);  // bottom
-    mbTri(mb, v[4], v[7], v[6]);
-    mbTri(mb, v[4], v[6], v[5]);  // top
-    mbTri(mb, v[0], v[3], v[7]);
-    mbTri(mb, v[0], v[7], v[4]);  // left (-x)
-    mbTri(mb, v[1], v[5], v[6]);
-    mbTri(mb, v[1], v[6], v[2]);  // right (+x)
-    mbTri(mb, v[3], v[2], v[6]);
-    mbTri(mb, v[3], v[6], v[7]);  // front (z0)
-    mbTri(mb, v[0], v[4], v[5]);
-    mbTri(mb, v[0], v[5], v[1]);  // back (z1)
+
+    struct FaceDef {
+        float p[4][3];
+        float n[3];
+    };
+    const FaceDef faces[6] = {
+        {{{x1, baseY, z1}, {x1, baseY, z0}, {x1, topY, z0}, {x1, topY, z1}}, {1.0f, 0.0f, 0.0f}},      // +x
+        {{{x0, baseY, z1}, {x0, topY, z1}, {x0, topY, z0}, {x0, baseY, z0}}, {-1.0f, 0.0f, 0.0f}},    // -x
+        {{{x0, topY, z1}, {x1, topY, z1}, {x1, topY, z0}, {x0, topY, z0}}, {0.0f, 1.0f, 0.0f}},       // +y
+        {{{x0, baseY, z1}, {x1, baseY, z1}, {x1, baseY, z0}, {x0, baseY, z0}}, {0.0f, -1.0f, 0.0f}},  // -y
+        {{{x0, baseY, z0}, {x0, topY, z0}, {x1, topY, z0}, {x1, baseY, z0}}, {0.0f, 0.0f, -1.0f}},    // -z
+        {{{x0, baseY, z1}, {x1, baseY, z1}, {x1, topY, z1}, {x0, topY, z1}}, {0.0f, 0.0f, 1.0f}},     // +z
+    };
+    for (u32 f = 0; f < 6; f++) {
+        u32 v[4];
+        for (u32 i = 0; i < 4; i++)
+            v[i] = mbAddVert(mb,
+                             faces[f].p[i][0], faces[f].p[i][1], faces[f].p[i][2],
+                             faces[f].n[0], faces[f].n[1], faces[f].n[2],
+                             static_cast<float>(i & 1u), static_cast<float>(i / 2u));
+        mbTri(mb, v[0], v[1], v[2]);
+        mbTri(mb, v[0], v[2], v[3]);
+    }
 }
 
 // Gable roof from a base ring (eaves at baseY) to a single ridge point at
@@ -515,7 +538,9 @@ mbGableRoof(MeshBuilder* mb, float cx, float cz, float baseY, float topY, float 
     mbTri(mb, rl, rr, rg);  // back slope
     mbTri(mb, fl, fr, rg);  // front slope
     mbTri(mb, fl, rl, rg);  // left gable
-    mbTri(mb, fr, rr, rg);  // right gable
+    mbTri(mb, fr, rg, rr);  // right gable (CCW from outside; (fr,rr,rg) wound
+                            // inward, so the shader flipped its normal and the
+                            // face shaded as its dark underside)
 }
 
 // Per-species geometry builders (unit height, base at y=0).
@@ -537,16 +562,16 @@ static void buildConifer(MeshBuilder* mb) {
     u32 trunkStart = mb->vertCount;
     mbCylinder(mb, 0, 0, 0.0f, 0.25f, 0.06f, 6);  // trunk
     mbColorSince(mb, trunkStart, kTrunkColor);
-    mbCone(mb, 0, 0, 0.15f, 0.55f, 0.38f, 0.0f, 7, 0, 0);  // lower cone
-    mbCone(mb, 0, 0, 0.45f, 0.82f, 0.27f, 0.0f, 7, 0, 0);
-    mbCone(mb, 0, 0, 0.72f, 1.0f, 0.16f, 0.0f, 7, 0, 0);
+    mbCone(mb, 0, 0, 0.15f, 0.55f, 0.38f, 0.0f, 7);  // lower cone
+    mbCone(mb, 0, 0, 0.45f, 0.82f, 0.27f, 0.0f, 7);
+    mbCone(mb, 0, 0, 0.72f, 1.0f, 0.16f, 0.0f, 7);
 }
 
 static void buildConiferFar(MeshBuilder* mb) {
     u32 trunkStart = mb->vertCount;
     mbCylinder(mb, 0, 0, 0.0f, 0.3f, 0.06f, 5);
     mbColorSince(mb, trunkStart, kTrunkColor);
-    mbCone(mb, 0, 0, 0.2f, 1.0f, 0.34f, 0.0f, 6, 0, 0);
+    mbCone(mb, 0, 0, 0.2f, 1.0f, 0.34f, 0.0f, 6);
 }
 
 static void buildDeciduous(MeshBuilder* mb) {
@@ -567,14 +592,14 @@ static void buildDeciduousFar(MeshBuilder* mb) {
 static void buildAcacia(MeshBuilder* mb) {
     // slightly bent trunk + a flat, wide canopy disc near the top.
     u32 trunkStart = mb->vertCount;
-    mbCone(mb, 0.05f, 0.0f, 0.0f, 0.7f, 0.07f, 0.05f, 6, 0, 0);
+    mbCone(mb, 0.05f, 0.0f, 0.0f, 0.7f, 0.07f, 0.05f, 6);
     mbColorSince(mb, trunkStart, kTrunkColor);
-    mbCone(mb, 0.1f, 0.0f, 0.68f, 0.82f, 0.55f, 0.5f, 10, 0, 0);  // disc canopy
+    mbCone(mb, 0.1f, 0.0f, 0.68f, 0.82f, 0.55f, 0.5f, 10);  // disc canopy
 }
 
 static void buildPalm(MeshBuilder* mb) {
     u32 trunkStart = mb->vertCount;
-    mbCone(mb, 0.0f, 0.0f, 0.0f, 0.85f, 0.08f, 0.05f, 6, 0, 0);  // trunk
+    mbCone(mb, 0.0f, 0.0f, 0.0f, 0.85f, 0.08f, 0.05f, 6);  // trunk
     mbColorSince(mb, trunkStart, kTrunkColor);
     // fronds: flat quads radiating from the crown.
     u32 crown = 8;
@@ -592,15 +617,15 @@ static void buildPalm(MeshBuilder* mb) {
 
 static void buildCactus(MeshBuilder* mb) {
     mbCylinder(mb, 0, 0, 0.0f, 1.0f, 0.14f, 6);
-    mbCone(mb, 0.14f, 0.0f, 0.35f, 0.6f, 0.09f, 0.06f, 5, 0, 0);   // arm 1
-    mbCone(mb, -0.14f, 0.0f, 0.5f, 0.72f, 0.09f, 0.06f, 5, 0, 0);  // arm 2
+    mbCone(mb, 0.14f, 0.0f, 0.35f, 0.6f, 0.09f, 0.06f, 5);   // arm 1
+    mbCone(mb, -0.14f, 0.0f, 0.5f, 0.72f, 0.09f, 0.06f, 5);  // arm 2
 }
 
 static void buildDeadTree(MeshBuilder* mb) {
     u32 start = mb->vertCount;
-    mbCone(mb, 0, 0, 0.0f, 0.9f, 0.09f, 0.04f, 5, 0, 0);             // trunk
-    mbCone(mb, 0.12f, 0.0f, 0.5f, 0.85f, 0.05f, 0.01f, 4, 0.3f, 0);  // branch
-    mbCone(mb, -0.1f, 0.1f, 0.6f, 0.95f, 0.04f, 0.01f, 4, -0.3f, 0.1f);
+    mbCone(mb, 0, 0, 0.0f, 0.9f, 0.09f, 0.04f, 5);          // trunk
+    mbCone(mb, 0.12f, 0.0f, 0.5f, 0.85f, 0.05f, 0.01f, 4);  // branch
+    mbCone(mb, -0.1f, 0.1f, 0.6f, 0.95f, 0.04f, 0.01f, 4);
     mbColorSince(mb, start, kTrunkColor);  // whole dead tree is woody brown
 }
 
@@ -637,7 +662,7 @@ static void buildHouse(MeshBuilder* mb) {
 
 static void buildTower(MeshBuilder* mb) {
     mbCylinder(mb, 0, 0, 0.0f, 0.8f, 0.2f, 8);
-    mbCone(mb, 0, 0, 0.8f, 1.0f, 0.26f, 0.02f, 8, 0.0f, 0.0f);
+    mbCone(mb, 0, 0, 0.8f, 1.0f, 0.26f, 0.02f, 8);
 }
 
 static void buildWall(MeshBuilder* mb) {
@@ -668,8 +693,8 @@ static void buildDock(MeshBuilder* mb) {
 static void buildGate(MeshBuilder* mb) {
     mbCylinder(mb, -0.45f, 0, 0.0f, 0.85f, 0.14f, 6);
     mbCylinder(mb, 0.45f, 0, 0.0f, 0.85f, 0.14f, 6);
-    mbCone(mb, -0.45f, 0, 0.85f, 1.0f, 0.18f, 0.02f, 6, 0, 0);
-    mbCone(mb, 0.45f, 0, 0.85f, 1.0f, 0.18f, 0.02f, 6, 0, 0);
+    mbCone(mb, -0.45f, 0, 0.85f, 1.0f, 0.18f, 0.02f, 6);
+    mbCone(mb, 0.45f, 0, 0.85f, 1.0f, 0.18f, 0.02f, 6);
     mbBox(mb, 0, 0, 0.85f, 1.0f, 0.55f, 0.12f);  // lintel
 }
 
@@ -691,11 +716,14 @@ static u32 lmRing(MeshBuilder* mb, float y, float r, float nr, float ny, u32 sid
     return first;
 }
 
-// Quad band between two rings (equal side counts).
+// Quad band between two rings (equal side counts).  Winds CCW from OUTSIDE
+// so the exterior faces stay front-facing (the old winding made them back
+// faces whose normals the fragment shader' gl_FrontFacing flip inverted).
 static void lmBand(MeshBuilder* mb, u32 a, u32 b, u32 sides) {
     for (u32 s = 0; s < sides; s++) {
         u32 s1 = (s + 1u) % sides;
-        mbQuad(mb, a + s, a + s1, b + s1, b + s);
+        mbTri(mb, a + s, b + s1, a + s1);
+        mbTri(mb, a + s, b + s, a + s1);
     }
 }
 
@@ -712,7 +740,7 @@ static void buildVolcano(MeshBuilder* mb) {
     lmBand(mb, rim, floorRing, SIDES);
     lmBand(mb, floorRing, vent, SIDES);
     for (u32 s = 0; s < SIDES; s++) {
-        mbTri(mb, vent + s, vent + (s + 1u) % SIDES, apex);
+        mbTri(mb, apex, vent + (s + 1u) % SIDES, vent + s);  // CCW from above
     }
 }
 
@@ -721,7 +749,7 @@ static void buildVolcano(MeshBuilder* mb) {
 // cap instance on top — per-instance tint cannot two-tone one mesh).
 static void buildLighthouse(MeshBuilder* mb) {
     mbBox(mb, 0, 0, 0.0f, 0.03f, 0.19f, 0.19f);  // base plinth
-    mbCone(mb, 0, 0, 0.0f, 0.80f, 0.15f, 0.10f, 10, 0.0f, 0.0f);
+    mbCone(mb, 0, 0, 0.0f, 0.80f, 0.15f, 0.10f, 10);
 }
 
 // The lighthouse cap stands on the tower top: its unit height maps to the
@@ -729,7 +757,7 @@ static void buildLighthouse(MeshBuilder* mb) {
 static void buildLighthouseCap(MeshBuilder* mb) {
     mbCylinder(mb, 0, 0, 0.0f, 0.364f, 0.59f, 10);                  // gallery deck
     mbCylinder(mb, 0, 0, 0.364f, 0.727f, 0.386f, 8);                // lantern room
-    mbCone(mb, 0, 0, 0.727f, 1.0f, 0.409f, 0.055f, 8, 0.0f, 0.0f);  // dome
+    mbCone(mb, 0, 0, 0.727f, 1.0f, 0.409f, 0.055f, 8);  // dome
 }
 
 // Broken column: plinth + fluted-less shaft + crumbled capital.
