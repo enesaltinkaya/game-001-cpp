@@ -81,14 +81,21 @@ void ecsPreUpdate(void) {  // runs every frame
     double now              = utils::nanos();
     ecs.totalCpuElapsed     = ecs.totalCpuElapsedTemp;
     ecs.totalCpuElapsedTemp = now;
-    for (System* system : ecs.systems) {
-        systemPreUpdate(system);
+    /* Index-based iteration: system callbacks may call systemAddNow(), which
+     * can reallocate ecs.systems' internal buffer. Range-for iterators would
+     * dangle after that reallocation (heap-use-after-free). Index access always
+     * resolves through the current storage, so it is safe. Snapshotting the
+     * size means systems added mid-frame start running next frame. */
+    const i32 n = static_cast<i32>(ecs.systems.size());
+    for (i32 i = 0; i < n; i++) {
+        systemPreUpdate(ecs.systems[i]);
     }
 }
 
 static void ecsUpdateForTimer(void) {
-    for (System* system : ecs.systems) {
-        systemUpdate(system);
+    const i32 n = static_cast<i32>(ecs.systems.size());
+    for (i32 i = 0; i < n; i++) {
+        systemUpdate(ecs.systems[i]);
     }
 }
 
@@ -97,8 +104,11 @@ void ecsUpdate(void) {  // might not run every frame, might run multiple times p
 }
 
 void ecsPostUpdate(void) {  // runs every frame
-    for (System* system : ecs.systems) {
-        systemPostUpdate(system);
+    /* Same rationale as ecsPreUpdate: stay safe against mid-loop
+     * systemAddNow()/systemRemove() calls from system callbacks. */
+    const i32 n = static_cast<i32>(ecs.systems.size());
+    for (i32 i = 0; i < n; i++) {
+        systemPostUpdate(ecs.systems[i]);
     }
     ecs.totalCpuElapsedTemp = utils::nanos() - ecs.totalCpuElapsedTemp;
 }
