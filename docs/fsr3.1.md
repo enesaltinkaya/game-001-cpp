@@ -1,6 +1,6 @@
 # FSR 3.1 — Static Library Build (Vulkan, Upscaler Only)
 
-Custom build of AMD FidelityFX FSR 3.1 SDK for use from a **C game engine**
+Custom build of AMD FidelityFX FSR 3.1 SDK for use from a **C++ game engine**
 via Vulkan. Only the **FSR3 Upscaler** component is compiled (no frame
 generation, no DX12 backend).
 
@@ -10,8 +10,8 @@ generation, no DX12 backend).
 
 | Platform        | Output                                         |
 | --------------- | ---------------------------------------------- |
-| Linux (clang)   | `git/sdk/build-linux/libffx_fsr3upscaler_vk.a` |
-| Windows (MinGW) | `git/sdk/build-win/libffx_fsr3upscaler_vk.a`   |
+| Linux (clang++)      | `git/sdk/build-linux/libffx_fsr3upscaler_vk.a` |
+| Windows (clang++/MinGW) | `git/sdk/build-win/libffx_fsr3upscaler_vk.a`  |
 
 ### Compiled C++ Sources
 
@@ -113,7 +113,7 @@ includable from C11 code (committed in git):
 - `FFX_UNUSED` macro
 - Missing standard includes (`<cstring>`, `<cwchar>`, `<cmath>`, `<new>`, `<mutex>`)
 
-## Usage from C
+## Usage
 
 ### Headers
 

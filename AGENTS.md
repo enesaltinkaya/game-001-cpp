@@ -199,6 +199,23 @@ For any work involving RenderDoc, frame captures, or GPU debugging, read
 the implicit-layer hooking setup (required because the engine uses volk),
 the programmatic capture env vars, and the headless Python replay recipe.
 
+Quick start (debug builds, Linux):
+
+```bash
+# Headless capture; .rdc lands in /tmp/RenderDoc/ (~1 GB each, clean up old ones)
+ENGINE_RENDERDOC_CAPTURE=1 ENGINE_RENDERDOC_CAPTURE_DELAY_MS=6000 \
+ENGINE_SKIP_MAIN_MENU=1 ENGINE_LOG_TIMEOUT=12000 \
+./scripts/run.sh renderdoc
+
+# Inspect:
+qrenderdoc /tmp/RenderDoc/c-game_*.rdc          # GUI
+PYTHONPATH=/home/enes/Apps/renderdoc/build/lib python3 <script>   # headless replay API
+```
+
+- `run.sh renderdoc` sets `LD_PRELOAD` **and** the implicit layer (`ENABLE_VULKAN_RENDERDOC_CAPTURE=1`) — both are required, since volk's dlopen/dlsym bypasses plain symbol interposition.
+- The trigger delay must land in gameplay: a low value captures the asset-loading phase (0 draw calls).
+- `renderdoc` cannot be combined with the `play` sub-arg (all sub-args test `$1`), hence the explicit `ENGINE_SKIP_MAIN_MENU` / `ENGINE_LOG_TIMEOUT` above.
+
 ## Camera
 
 Key files:

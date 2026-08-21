@@ -1,27 +1,27 @@
 # Recast NavMesh System
 
-The game uses [Recast/Detour](https://github.com/recastnavigation/recastnavigation) for AI enemy pathfinding. The C++ Recast/Detour library is wrapped in a thin C API so the game code stays pure C.
+The game uses [Recast/Detour](https://github.com/recastnavigation/recastnavigation) for AI enemy pathfinding. The C++ Recast/Detour library is wrapped in a thin `extern "C"` API so the game code never touches Recast's C++ types directly.
 
 ## Architecture Overview
 
 ```
-┌──────────────────────────────────────────────────────────────────┐
-│  c-game (C)                                                     │
-│                                                                  │
-│  NavMeshSystem.c ── navMeshFindPath() ──┐                        │
-│                 ── navMeshClosestPoint()─┤                       │
-│                                          │                       │
-│  EnemySystem.c ── chase/retreat AI ──────┘                       │
-├──────────────────────────────────────────────────────────────────┤
-│  libcrecast.a (C wrapper)                                       │
-│                                                                  │
-│  recast_c_api.cpp  ── RcNavMesh, DtNavMeshQuery opaque types    │
-├──────────────────────────────────────────────────────────────────┤
-│  libRecast.a  +  libDetour.a  (C++ core)                        │
-│                                                                  │
-│  Recast:  heightfield → compact → regions → contours → polymesh │
-│  Detour:  polygonal pathfinding on the baked navmesh             │
-└──────────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────┐
+│  c-game (C++)                                                  │
+│                                                                │
+│  NavMeshSystem.cpp ── navMeshFindPath() ──┐                    │
+│                    ── navMeshClosestPoint()─┤                  │
+│                                          │                     │
+│  EnemySystem.cpp ── chase/retreat AI ──────┘                   │
+├────────────────────────────────────────────────────────────────┤
+│  libcrecast.a (C wrapper)                                      │
+│                                                                │
+│  recast_c_api.cpp  ── RcNavMesh, DtNavMeshQuery opaque types   │
+├────────────────────────────────────────────────────────────────┤
+│  libRecast.a  +  libDetour.a  (C++ core)                       │
+│                                                                │
+│  Recast:  heightfield → compact → regions → contours → polymesh│
+│  Detour:  polygonal pathfinding on the baked navmesh           │
+└────────────────────────────────────────────────────────────────┘
 ```
 
 ## Components
@@ -67,7 +67,7 @@ typedef struct RcNavMeshConfig {
 
 Pass `NULL` to use the defaults shown above.
 
-### 2. NavMesh System (`c-game/game/navmesh/NavMeshSystem.c`)
+### 2. NavMesh System (`c-game/game/navmesh/NavMeshSystem.cpp`)
 
 An ECS system that manages the runtime navmesh instance.
 
@@ -83,18 +83,21 @@ An ECS system that manages the runtime navmesh instance.
 
 **Public API:**
 
-```c
+```cpp
 // Find a path from start to end. Returns waypoint count (0 = no path).
-uint32_t navMeshFindPath(Scene* scene, const float* startPos,
+uint32_t navMeshFindPath(engine::Scene* scene, const float* startPos,
                          const float* endPos, float* outPath, uint32_t maxPath);
 
 // Snap a position to the nearest navmesh point. Returns 1 on success.
-int navMeshClosestPoint(Scene* scene, const float* pos, float* outPoint);
+int navMeshClosestPoint(engine::Scene* scene, const float* pos, float* outPoint);
+
+// Get the loaded navmesh (debug visualization). nullptr if not loaded.
+RcNavMesh* navMeshGetMesh(void);
 ```
 
-Note: `scene` parameter is kept for API consistency but is currently unused — the navmesh is global (single static instance).
+Note: `scene` parameters are kept for API consistency but are currently unused — the navmesh is global (single static instance).
 
-### 3. Enemy AI Integration (`c-game/game/enemy/EnemySystem.c`)
+### 3. Enemy AI Integration (`c-game/game/enemy/EnemySystem.cpp`)
 
 Enemies use the navmesh during `ENEMY_STATE_CHASE` and `ENEMY_STATE_RETREAT`:
 
@@ -237,7 +240,7 @@ libDetour.a        — Detour pathfinding library
 
 Include path: `${thirdparty}/recast/wrapper/src`
 
-The navmesh system is registered in `GameState.c` during gameplay enter, with priority `gameSystem.priority + 1` (after enemy system at 1200, navmesh at 1201).
+The navmesh system is registered in `GameState.cpp` during gameplay enter, with priority `gameSystem.priority + 1` (after enemy system at 1200, navmesh at 1201).
 
 ### Building the third-party libraries
 
