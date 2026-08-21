@@ -25,6 +25,7 @@
 #include "renderer/vulkan/resources/VulkanResourceManager.h"
 #include "rmlui/wrapper/src/crmlui.h"
 #include "timer/Timer.h"
+#include "futuretask/FutureTask.h"
 
 // Forward declare to avoid including AnimatorComponent.h (EventCallback name clash with crmlui.h)
 namespace engine {
@@ -88,6 +89,8 @@ static void azgaarHeightmapVerifyGrid(void* userData);
 static engine::Scene* loadedAnimationsScene;
 static char animationsSignalEmitted;
 static char keepAssetsOnExit;
+// Key of the deferred heavy-init future task (0 = none pending/ran).
+static int startLoadTaskKey;
 
 static void emitAnimationsLoadedIfTerrainReady(void) {
     if (animationsSignalEmitted) return;
@@ -395,14 +398,17 @@ static void azgaarHeightmapDetach(void) {
     heightmapAttached = false;
 }
 
-void loadingAzgaarOnEnter(void) {
-    cancelled = 0;
-    loadStage = AZGAAR_LOAD_STAGE_MAP;
+// Heavy synchronous part of the load (map read/parse, settlement clusters,
+// climate uploads, heightmap host, road corridor/decals).  Runs one frame
+// after loadingAzgaarOnEnter so the transition frame (menu hidden, loading
+// screen shown) gets rendered before this work hitches the main thread.
+static void loadingAzgaarStartLoad(void* _) {
+    static_cast<void>(_);
+    startLoadTaskKey = 0;
+    if (cancelled) return;  // state was exited (ESC) before the deferred start ran
+
     loadingAzgaarReleaseWorld();  // free any previously retained world
-    azgaarWorld             = AzgaarWorld{};
-    loadedAnimationsScene   = nullptr;
-    animationsSignalEmitted = 0;
-    keepAssetsOnExit        = 0;
+    azgaarWorld = AzgaarWorld{};
 
     loadStage = AZGAAR_LOAD_STAGE_WORLD_DATA;
     if (!azgaarWorldLoad(&azgaarWorld, azgaarMapPath)) {
@@ -455,7 +461,30 @@ void loadingAzgaarOnEnter(void) {
     engine::sceneLoadCb("models/animations.dat", azgaarAnimationsLoaded, nullptr);
 }
 
+void loadingAzgaarOnEnter(void) {
+    // Light state setup only (the loading GUI itself is shown by
+    // LoadingAzgaarSystem::added()); the heavy init is deferred to the next
+    // frame so the current frame can present the loading screen instead of
+    // freezing on the still-visible menu.
+    cancelled               = 0;
+    loadStage               = AZGAAR_LOAD_STAGE_MAP;
+    loadedAnimationsScene   = nullptr;
+    animationsSignalEmitted = 0;
+    keepAssetsOnExit        = 0;
+
+    // Drop a pending start from a faster exit/re-enter cycle.
+    if (startLoadTaskKey) {
+        utils::futureTaskRemove(startLoadTaskKey);
+    }
+    startLoadTaskKey = utils::futureTaskAdd(0, loadingAzgaarStartLoad, nullptr);
+}
+
 void loadingAzgaarOnExit(void) {
+    // Cancel a heavy init that has not run yet (exit during the deferral gap).
+    if (startLoadTaskKey) {
+        utils::futureTaskRemove(startLoadTaskKey);
+        startLoadTaskKey = 0;
+    }
     cancelled = 1;
     if (!keepAssetsOnExit) {
         azgaarRoadDecalsClear();

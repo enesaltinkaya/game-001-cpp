@@ -207,6 +207,9 @@ void gameStateLoadingAzgaarEnter(void) {
     // the existing .dat terrain/scene loader.
     engine::systemAddNow(gameSystem.priority + 2, &playerSystem);
     engine::systemAddNow(gameSystem.priority + 1, &loadingAzgaarSystem);
+    // OnEnter is light: it shows the loading screen and defers the heavy sync
+    // world init to the next frame (future task), so the menu-hide transition
+    // frame gets presented before the load work blocks the main thread.
     loadingAzgaarOnEnter();
 }
 

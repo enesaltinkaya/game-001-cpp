@@ -17,6 +17,9 @@ extern LoadingAzgaarSystem loadingAzgaarSystem;
 
 const char* loadingAzgaarStageText(void);
 
+// Light enter: resets state, shows the loading GUI (via the system) and
+// defers the heavy synchronous world init one frame so the transition frame
+// renders before the load hitches the main thread.
 void loadingAzgaarOnEnter(void);
 void loadingAzgaarOnExit(void);
 
