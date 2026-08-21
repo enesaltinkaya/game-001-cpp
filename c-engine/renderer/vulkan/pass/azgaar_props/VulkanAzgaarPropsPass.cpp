@@ -164,6 +164,30 @@ static VkVertexInputAttributeDescription vertexAttrs[] = {
     {.location = 7, .binding = 1, .format = VK_FORMAT_R32_UINT, .offset = 36},
 };
 
+// Per-pipeline subsets of the full attribute list, matching each vertex
+// shader's actual interface.  Extra attributes are legal but the driver's
+// performance layer warns about every attribute not consumed by the shader,
+// so each pipe only declares what its .vert actually reads.
+static VkVertexInputAttributeDescription depthPrepassAttrs[] = {
+    {.location = 0, .binding = 0, .format = VK_FORMAT_R32G32B32_SFLOAT, .offset = 0},
+    {.location = 1, .binding = 0, .format = VK_FORMAT_R32G32B32_SFLOAT, .offset = 12},
+    {.location = 8, .binding = 0, .format = VK_FORMAT_R32G32_SFLOAT, .offset = 40},
+    {.location = 9, .binding = 0, .format = VK_FORMAT_R32_UINT, .offset = 56},
+    {.location = 2, .binding = 1, .format = VK_FORMAT_R32G32B32_SFLOAT, .offset = 0},
+    {.location = 3, .binding = 1, .format = VK_FORMAT_R32_SFLOAT, .offset = 12},
+    {.location = 4, .binding = 1, .format = VK_FORMAT_R32_SFLOAT, .offset = 16},
+    {.location = 5, .binding = 1, .format = VK_FORMAT_R32G32B32_SFLOAT, .offset = 20},
+    {.location = 6, .binding = 1, .format = VK_FORMAT_R32_SFLOAT, .offset = 32},
+    {.location = 7, .binding = 1, .format = VK_FORMAT_R32_UINT, .offset = 36}, // no loc 10 (inVertColor)
+};
+static VkVertexInputAttributeDescription shadowAttrs[] = { // only what azgaar_props_shadow.vert reads
+    {.location = 0, .binding = 0, .format = VK_FORMAT_R32G32B32_SFLOAT, .offset = 0},
+    {.location = 2, .binding = 1, .format = VK_FORMAT_R32G32B32_SFLOAT, .offset = 0},
+    {.location = 3, .binding = 1, .format = VK_FORMAT_R32_SFLOAT, .offset = 12},
+    {.location = 4, .binding = 1, .format = VK_FORMAT_R32_SFLOAT, .offset = 16},
+    {.location = 6, .binding = 1, .format = VK_FORMAT_R32_SFLOAT, .offset = 32},
+};
+
 static void recreatePipelines(void) {
     if (pipe.pipe) vulkanDestroyPipe(&pipe);
     if (prepassPipe.pipe) vulkanDestroyPipe(&prepassPipe);
@@ -206,8 +230,8 @@ static void recreatePipelines(void) {
         .noCull               = 1,
         .depthTestOnly        = 1,
         .depthCompareOp       = VK_COMPARE_OP_GREATER_OR_EQUAL,
-        .vertexAttributes     = vertexAttrs,
-        .vertexAttributeCount = 11,
+        .vertexAttributes     = depthPrepassAttrs,
+        .vertexAttributeCount = 10,
         .vertexBindings       = vertexBindings,
         .vertexBindingCount   = 2);
 
@@ -231,8 +255,8 @@ static void recreatePipelines(void) {
         .depthBiasConstantFactor = 0.0f,
         .depthBiasSlopeFactor    = 0.8f,
         .depthBiasClamp          = 0.0f,
-        .vertexAttributes        = vertexAttrs,
-        .vertexAttributeCount    = 11,
+        .vertexAttributes        = shadowAttrs,
+        .vertexAttributeCount    = 5,
         .vertexBindings          = vertexBindings,
         .vertexBindingCount      = 2);
     pipeRecreated = true;
