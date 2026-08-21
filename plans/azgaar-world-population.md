@@ -945,8 +945,7 @@ Per `AGENTS.md`:
 ./scripts/run.sh play log 5000 && cat build/c-game/data/game.log
 ```
 
-Useful existing levers: `ENGINE_CAM_TELEPORT=x,y,z,afterMs` (fly to a
-biome/settlement/river for targeted screenshots), Ctrl+W wireframe,
+Useful existing levers: Ctrl+W wireframe,
 Ctrl+H height ramp. Crashes: `ENGINE_DEBUG=1` + `gdb`.
 
 Debug env vars to add (existing naming pattern):

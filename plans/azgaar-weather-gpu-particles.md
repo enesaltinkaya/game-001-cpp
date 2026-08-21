@@ -375,7 +375,7 @@ Per `AGENTS.md`:
 
 ```bash
 ./scripts/build.sh                                        # compiles C + shaders
-./scripts/run.sh play screenshot /tmp/azgaar_weather.png  # + ENGINE_CAM_TELEPORT to a biome
+./scripts/run.sh play screenshot /tmp/azgaar_weather.png
 ./scripts/run.sh play log 5000 && cat build/c-game/data/game.log
 ```
 

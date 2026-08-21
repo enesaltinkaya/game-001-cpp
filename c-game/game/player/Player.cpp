@@ -275,47 +275,6 @@ static float cameraSensitivity = 0.15f;
 static float pitchMin          = -20.0f * GLM_PIf / 180.0f;
 static float pitchMax          = 60.0f * GLM_PIf / 180.0f;
 
-// TEMP DEBUG: ENGINE_CAM_ORBIT="yawDeg,pitchDeg" forces the orbit camera with
-// the given angles after the player spawns (used together with
-// ENGINE_CAM_TELEPORT for targeted landmark screenshots; view direction is
-// (sin yaw, ., cos yaw), so yaw 180 looks toward -Z).
-static void tempCameraOrbitOverride(void) {
-    static char* env = nullptr;
-    static bool done = false;
-    if (done) return;
-    if (!env) env = getenv("ENGINE_CAM_ORBIT");
-    if (!env || !*env) {
-        done = true;
-        return;
-    }
-    if (!playerReady) return; // wait for the player entity + cameras to spawn
-    done = true;
-
-    float yawDeg, pitchDeg;
-    if (sscanf(env, "%f,%f", &yawDeg, &pitchDeg) != 2) return;
-    float yaw   = yawDeg * GLM_PIf / 180.0f;
-    float pitch = pitchDeg * GLM_PIf / 180.0f;
-    pitch       = glm_clamp(pitch, pitchMin, pitchMax);
-
-    gCameraMode = CAM_MODE_ORBIT;
-    Player* p   = getComponent(playerScene, Player, playerEntityId);
-    if (p) {
-        p->cameraYaw   = yaw;
-        p->cameraPitch = pitch;
-        p->moveYaw     = yaw;
-        p->facingYaw   = yaw;
-    }
-    engine::Entity* camEntity = engine::cameraGetEntity();
-    engine::Camera* camera    = camEntity ? getComponent(engine::ecs.defaultScene, engine::Camera, camEntity->id) : nullptr;
-    if (camera) {
-        camera->yaw   = yaw;
-        camera->pitch = pitch;
-    }
-    thirdPersonCameraSetTarget(playerScene, playerEntityId);
-    thirdPersonCameraSetAngles(yaw, pitch);
-    utils::info("TEMP camera forced to orbit (yaw %.0f deg, pitch %.0f deg)", yawDeg, pitchDeg);
-}
-
 // ── Player capsule dimensions (meters) ──────────────────────────────────────
 static const float playerCapsuleHalfHeight = 0.45f;  // half of cylindrical part
 static const float playerCapsuleRadius     = 0.25f;  // capsule radius
@@ -534,7 +493,6 @@ void PlayerSystem::preUpdate() {
         // preUpdate needs to read it when it is active.
         return;
     }
-    tempCameraOrbitOverride();
 
     // ── One-shot key events (OR-accumulate) — both camera modes ──────
     if (engine::input.pressed == KEY_1) playerInput.ability1 = true;
