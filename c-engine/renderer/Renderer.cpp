@@ -37,7 +37,7 @@ static RendererAASettings aaSettings     = {
     .taaGhost    = 1.0f,
     .taaDepth    = 0.06f,
 };
-static TonemapMode tonemapMode = TONEMAP_AGX_PUNCHY;
+static TonemapMode tonemapMode = TONEMAP_ACES;
 static float renderScale       = 1.0f;
 
 RenderSystem renderSystem;
@@ -64,7 +64,7 @@ void RenderSystem::added() {
     });
 
     vulkanInit();
-    rendererSetTonemapMode(TONEMAP_AGX_PUNCHY);
+    rendererSetTonemapMode(TONEMAP_ACES);
     createDefaultMaterial();
     textureManagerInit();
 

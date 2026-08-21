@@ -11,7 +11,7 @@
 
 namespace engine {
 static const char* STUDIOLIGHTS_DIR = "images/hdr";
-static const char* ENVIRONMENT_PATH = "images/hdr/interior.exr";
+static const char* ENVIRONMENT_PATH = "images/hdr/skin.exr";
 
 // IBL file list for cycling
 static std::vector<utils::String> iblFiles;

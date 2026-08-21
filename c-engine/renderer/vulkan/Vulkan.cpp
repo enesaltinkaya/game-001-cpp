@@ -105,7 +105,7 @@ static void onGameLoadedForScreenshot(void* _) {
          * multi-shot shimmer captures a longer delay lets the TAA
          * accumulator fully converge and the camera settle before the
          * capture window (ENGINE_SCREENSHOT_DELAY_MS). */
-        int delayMs = 5000;
+        int delayMs = 3000;
         const char* delayEnv = getenv("ENGINE_SCREENSHOT_DELAY_MS");
         if (delayEnv && *delayEnv) delayMs = atoi(delayEnv);
         if (delayMs < 0) delayMs = 0;
