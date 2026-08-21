@@ -34,10 +34,14 @@ void MainMenuGui::added() {
 
 void MainMenuGui::removed() {
     utils::warn("remove main menu gui");
-    rmlUnloadDocument(document);
-    document = nullptr;
-    rmlUnloadModel(model);
-    model = nullptr;
+    if (document) {
+        rmlUnloadDocument(document);
+        document = nullptr;
+    }
+    if (model) {
+        rmlUnloadModel(model);
+        model = nullptr;
+    }
 }
 
 int settingsOpen(void* _) {

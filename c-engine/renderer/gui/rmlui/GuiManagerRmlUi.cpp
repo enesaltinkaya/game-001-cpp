@@ -153,6 +153,10 @@ void GuiManagerRmlUi::removed() {
         utils::warn("remove gui (guimanager removed): %s", gui->name);
         gui->removed();
     }
+    // Drop the list so pending future-task removals (e.g.
+    // guiManagerRemoveGuiNextFrame queued right before exit) can't
+    // remove the same GUI a second time after RML is destroyed below.
+    rmluiGuis.clear();
     for (i32 i = 0, si = static_cast<i32>(input.events.size()); i < si; i++) {
         rmlSendInputEvent(&input.events[i]);
     }
