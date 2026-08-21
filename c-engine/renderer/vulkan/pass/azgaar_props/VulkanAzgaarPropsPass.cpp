@@ -643,12 +643,13 @@ static void drawGlobalSet(VulkanCommand* cmd, PropGpuGlobal* g, const vec4* plan
                           VulkanPipe* pipe, bool forShadow, u32 cascadeIndex) {
     utils::threadLock(&uploadLock);
     bool draw = g->inUse && g->instanceCount > 0;
+    vec3 gmin = {g->aabbMin[0], g->aabbMin[1], g->aabbMin[2]};
+    vec3 gmax = {g->aabbMax[0], g->aabbMax[1], g->aabbMax[2]};
     utils::threadUnlock(&uploadLock);
     if (!draw) return;
 
-    vec3 gmin = {g->aabbMin[0], g->aabbMin[1], g->aabbMin[2]};
-    vec3 gmax = {g->aabbMax[0], g->aabbMax[1], g->aabbMax[2]};
-    if (aabbOutsideFrustum(gmin, gmax, (vec4*)planes)) return;
+    bool culled = aabbOutsideFrustum(gmin, gmax, (vec4*)planes);
+    if (culled) return;
 
     if (!*loggedOnce) {
         *loggedOnce = true;

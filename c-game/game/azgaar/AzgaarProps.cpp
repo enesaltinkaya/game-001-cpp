@@ -3114,9 +3114,14 @@ void azgaarPropsDestroy(void) {
     }
     utils::threadUnlock(&g_stateLock);
 
-    azgaarPropsClearGlobal(false);
-    azgaarPropsClearGlobal(true);
-
+    // The whole-map global sets (settlement buildings / landmarks) are NOT
+    // cleared here: they are registered by AzgaarSettlements/AzgaarLandmarks
+    // during world load — BEFORE this function first runs (azgaarPropsInit is
+    // called from the streaming system' added, i.e. at gameplay start).  Their
+    // lifetime is owned by those modules: loadingAzgaarReleaseWorld calls
+    // azgaarSettlementsClear/azgaarLandmarksClear, which push the GPU clears.
+    // (Clearing them here wiped the load-time uploads right after gameplay
+    // started, so no houses or landmarks ever rendered.)
     g_roadHash = RoadHash{};
 
     engine::vulkanAzgaarPropsClearAll();
