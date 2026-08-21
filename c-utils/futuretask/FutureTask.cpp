@@ -14,10 +14,13 @@ struct TaskEntry {
 
 static std::unordered_map<int, TaskEntry> tasks;
 static int taskCounter;
-static std::vector<int> removeList = {};
+// Single lock shared by ALL map accessors.  Worker threads call
+// futureTaskAdd() while the main thread calls futureTaskRun()/Remove(), so
+// every access below must go through this one mutex.
+static utils::Thread tasksLock = {.cond = {}, .mutex = PTHREAD_MUTEX_INITIALIZER, .thread = {}};
 
 int futureTaskAdd(double millis, FnPtr fn, void* userData) {
-    THREAD_LOCK;
+    utils::threadLock(&tasksLock);
     TaskEntry task = {};
     task.fn        = fn;
     task.date      = nanos() + millis * MILLION;
@@ -26,12 +29,12 @@ int futureTaskAdd(double millis, FnPtr fn, void* userData) {
     int taskKey = taskCounter;
     taskCounter++;
     tasks[taskKey] = task;
-    THREAD_UNLOCK;
+    utils::threadUnlock(&tasksLock);
     return taskKey;
 }
 
 int futureTaskAddNoParam(double millis, FnVoid fn) {
-    THREAD_LOCK;
+    utils::threadLock(&tasksLock);
     TaskEntry task = {};
     task.fnVoid    = fn;
     task.date      = nanos() + millis * MILLION;
@@ -40,30 +43,40 @@ int futureTaskAddNoParam(double millis, FnVoid fn) {
     int taskKey = taskCounter;
     taskCounter++;
     tasks[taskKey] = task;
-    THREAD_UNLOCK;
+    utils::threadUnlock(&tasksLock);
     return taskKey;
 }
 
 void futureTaskRemove(int taskKey) {
+    utils::threadLock(&tasksLock);
     tasks.erase(taskKey);
+    utils::threadUnlock(&tasksLock);
 }
 
 void futureTaskRun(void) {
+    // Snapshot the due tasks under the lock, run their callbacks WITHOUT the
+    // lock (callbacks may re-enter futureTaskAdd), then remove the keys.
+    std::vector<TaskEntry> due;
+    std::vector<int>       dueKeys;
+    utils::threadLock(&tasksLock);
     for (auto& [key, task] : tasks) {
         if (nanos() > task.date) {
-            if (task.fn) {
-                task.fn(task.userData);
-            } else {
-                task.fnVoid();
-            }
-            removeList.push_back(key);
+            due.push_back(task);
+            dueKeys.push_back(key);
         }
     }
-
-    for (i32 i = 0, si = static_cast<i32>(removeList.size()); i < si; i++) {
-        tasks.erase(removeList[i]);
+    for (int key : dueKeys) {
+        tasks.erase(key);
     }
-    removeList.clear();
+    utils::threadUnlock(&tasksLock);
+
+    for (auto& task : due) {
+        if (task.fn) {
+            task.fn(task.userData);
+        } else {
+            task.fnVoid();
+        }
+    }
 }
 
 void futureTaskFinish(void) {
@@ -72,20 +85,28 @@ void futureTaskFinish(void) {
     // the window system's SDL_Quit closes the X11 display the AMD driver needs
     // for vkDestroySwapchainKHR. Hash-map order is not insertion order, so pick
     // the smallest (earliest-scheduled) key each iteration.
-    while (static_cast<i32>(tasks.size()) > 0) {
-        int minKey = -1;
-        for (const auto& entry : tasks) {
-            if (minKey == -1 || entry.first < minKey) minKey = entry.first;
+    while (true) {
+        TaskEntry task = {};
+        bool      found = false;
+        utils::threadLock(&tasksLock);
+        if (!tasks.empty()) {
+            int minKey = -1;
+            for (const auto& entry : tasks) {
+                if (minKey == -1 || entry.first < minKey) minKey = entry.first;
+            }
+            auto it = tasks.find(minKey);
+            task    = it->second;
+            tasks.erase(it);
+            found   = true;
         }
-        auto it = tasks.find(minKey);
-        TaskEntry task = it != tasks.end() ? it->second : TaskEntry{};
+        utils::threadUnlock(&tasksLock);
+
+        if (!found) break;
         if (task.fn) {
             task.fn(task.userData);
         } else {
             task.fnVoid();
         }
-        (void)tasks.erase(minKey);
     }
-
 }
 }  // namespace utils

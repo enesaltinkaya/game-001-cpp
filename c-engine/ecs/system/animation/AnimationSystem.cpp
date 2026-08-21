@@ -15,6 +15,13 @@
 namespace engine {
 AnimationLibrary animationLibrary = {};
 
+// Guards the STRUCTURE of animationLibrary.clips.  Clips are created on
+// thread-pool workers (sceneLoadOffThread -> parseAnimation) while the main
+// thread reads the list every frame, so all structural access must take this
+// lock.  Individual AnimationClip objects stay heap-stable after creation,
+// so callers may use a returned pointer without holding the lock.
+static utils::Thread animationLibraryLock = {.cond = {}, .mutex = PTHREAD_MUTEX_INITIALIZER, .thread = {}};
+
 // Bone name -> Entity* cache per animator, keyed by the animator's owning
 // entity. Lives outside the Animator component because SparseSet stores
 // components via memcpy, which would corrupt a std::unordered_map member.
@@ -747,10 +754,13 @@ void AnimationSystem::removed() {
  */
 
 AnimationClip* animationGetOrCreate(const char* name) {
+    utils::threadLock(&animationLibraryLock);
     // Check if already exists
     for (size_t i = 0; i < animationLibrary.clips.size(); i++) {
         if (utils::strequals(animationLibrary.clips[i]->name.data, name)) {
-            return animationLibrary.clips[i];
+            AnimationClip* existing = animationLibrary.clips[i];
+            utils::threadUnlock(&animationLibraryLock);
+            return existing;
         }
     }
 
@@ -760,24 +770,33 @@ AnimationClip* animationGetOrCreate(const char* name) {
     clip->duration = 0.0f;
 
     animationLibrary.clips.push_back(clip);
+    utils::threadUnlock(&animationLibraryLock);
 
     return clip;
 }
 
 AnimationClip* animationGet(const char* name) {
+    utils::threadLock(&animationLibraryLock);
     for (size_t i = 0; i < animationLibrary.clips.size(); i++) {
         if (utils::strequals(animationLibrary.clips[i]->name.data, name)) {
-            return animationLibrary.clips[i];
+            AnimationClip* found = animationLibrary.clips[i];
+            utils::threadUnlock(&animationLibraryLock);
+            return found;
         }
     }
+    utils::threadUnlock(&animationLibraryLock);
     return nullptr;
 }
 
 AnimationClip* animationGetFirst(void) {
+    utils::threadLock(&animationLibraryLock);
     if (static_cast<i32>(animationLibrary.clips.size()) == 0) {
+        utils::threadUnlock(&animationLibraryLock);
         return nullptr;
     }
-    return animationLibrary.clips[0];
+    AnimationClip* first = animationLibrary.clips[0];
+    utils::threadUnlock(&animationLibraryLock);
+    return first;
 }
 
 void animationPlay(Entity* entity, const char* clipName, float speed, bool loop) {

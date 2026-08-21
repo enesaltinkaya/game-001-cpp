@@ -63,8 +63,17 @@ static const char* get_reset_color(void) {
 }
 
 static void get_current_time(char* buffer, size_t len) {
-    time_t now   = time(nullptr);
-    struct tm* t = localtime(&now);
+    time_t now      = time(nullptr);
+    struct tm t_storage;
+    struct tm* t    = nullptr;
+#ifdef _WIN32
+    localtime_s(&t_storage, &now);
+#else
+    // localtime() returns a pointer to a static buffer and is NOT
+    // thread-safe; the logger is called from worker threads too.
+    localtime_r(&now, &t_storage);
+#endif
+    t = &t_storage;
     strftime(buffer, len, "%Y-%m-%d %H:%M:%S", t);
 }
 

@@ -246,6 +246,14 @@ void sceneLoadOffThread(void* pRequest) {
     scene->loadCallback         = req->callback;
     scene->loadCallbackUserData = req->userData;
     delete req;
+
+    // The per-thread parse caches are keyed by raw cgltf node/mesh pointers.
+    // After a previous load on this pool thread, the freed cgltf buffer can be
+    // re-allocated to a NEW scene at the same address, which would make stale
+    // entries hit and return entity IDs from the dead scene.  Reset them.
+    meshCache.clear();
+    nodeCache.clear();
+
     utils::info("sceneParser: loading scene %s", path);
     utils::String fileData = utils::dataManagerRead(path);
     u32 glbSize;
