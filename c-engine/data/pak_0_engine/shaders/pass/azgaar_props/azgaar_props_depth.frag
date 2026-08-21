@@ -70,8 +70,9 @@ void main() {
      * (noCull), so back faces must store the OUTWARD normal.  Structures
      * whose visible surfaces are back faces (inward mesh normals) would
      * otherwise write an inverted normal to the view-normal G-buffer, and
-     * GTAO — which only sees depth + normals — occludes their tops as if
-     * the surface faced away from the sky (dark top / lit bottom glitch).
+     * contact shadow / occlusion — which only see depth + normals — occlude
+     * their tops as if the surface faced away from the sky (dark top /
+     * lit bottom glitch).
      */
     if (!gl_FrontFacing) n = -n;
     outViewNormalXY = n.xy;

@@ -5,7 +5,6 @@
 #include "renderer/Renderer.h"
 #include "renderer/gui/rmlui/GuiManagerRmlUi.h"
 #include "renderer/vulkan/pass/bloom/VulkanBloomPass.h"
-#include "renderer/vulkan/pass/gtao/VulkanGtaoPass.h"
 #include "renderer/vulkan/pass/shadow/VulkanShadowPass.h"
 #include "renderer/vulkan/pass/ssr/VulkanSsrPass.h"
 #include "renderer/vulkan/pass/contact_shadow/VulkanContactShadowPass.h"
@@ -56,7 +55,6 @@ static char* upscalerLabel;
 static char* aaPolicyLabel;
 static char* upscalePolicyLabel;
 static char* shadowsLabel;
-static char* gtaoLabel;
 static char* ssrLabel;
 static char* bloomLabel;
 static char* contactShadowLabel;
@@ -67,7 +65,6 @@ static char upscalerLabelText[64];
 static char aaPolicyLabelText[192];
 static char upscalePolicyLabelText[192];
 static char shadowsLabelText[16];
-static char gtaoLabelText[16];
 static char ssrLabelText[16];
 static char bloomLabelText[16];
 static char contactShadowLabelText[16];
@@ -80,7 +77,6 @@ static int aaCasStrengthChange(void* _);
 static int renderScaleChange(void* _);
 static int graphicsClose(void* _);
 static int toggleShadows(void* _);
-static int toggleGtao(void* _);
 static int toggleSsr(void* _);
 static int toggleBloom(void* _);
 static int toggleContactShadow(void* _);
@@ -94,7 +90,6 @@ void SettingsGraphicsGui::added() {
     engine::luaRegisterFunction("renderScaleChange", renderScaleChange);
     engine::luaRegisterFunction("graphicsClose", graphicsClose);
     engine::luaRegisterFunction("toggleShadows", toggleShadows);
-    engine::luaRegisterFunction("toggleGtao", toggleGtao);
     engine::luaRegisterFunction("toggleSsr", toggleSsr);
     engine::luaRegisterFunction("toggleBloom", toggleBloom);
     engine::luaRegisterFunction("toggleContactShadow", toggleContactShadow);
@@ -120,7 +115,6 @@ void SettingsGraphicsGui::added() {
     rmlBindFloat(model, "casStrengthPercent", &casStrengthPercent);
     rmlBindFloat(model, "renderScalePercent", &renderScalePercent);
     rmlBind(model, "shadowsLabel", &shadowsLabel);
-    rmlBind(model, "gtaoLabel", &gtaoLabel);
     rmlBind(model, "ssrLabel", &ssrLabel);
     rmlBind(model, "bloomLabel", &bloomLabel);
     rmlBind(model, "contactShadowLabel", &contactShadowLabel);
@@ -171,8 +165,6 @@ static void syncAAUi(void) {
 
     snprintf(shadowsLabelText, sizeof(shadowsLabelText), "%s", engine::vulkanShadowPassIsDisabled() ? "Off" : "On");
     shadowsLabel = shadowsLabelText;
-    snprintf(gtaoLabelText, sizeof(gtaoLabelText), "%s", engine::vulkanGtaoPassIsDisabled() ? "Off" : "On");
-    gtaoLabel = gtaoLabelText;
     snprintf(ssrLabelText, sizeof(ssrLabelText), "%s", engine::vulkanSsrPassIsDisabled() ? "Off" : "On");
     ssrLabel = ssrLabelText;
     snprintf(bloomLabelText, sizeof(bloomLabelText), "%s", engine::vulkanBloomPassIsDisabled() ? "Off" : "On");
@@ -345,8 +337,6 @@ static void syncEffectLabels(void) {
     shadowsLabel = shadowsLabelText;
     snprintf(taaLabelText, sizeof(taaLabelText), "%s", engine::rendererIsTAAEnabled() ? "On" : "Off");
     taaLabel = taaLabelText;
-    snprintf(gtaoLabelText, sizeof(gtaoLabelText), "%s", engine::vulkanGtaoPassIsDisabled() ? "Off" : "On");
-    gtaoLabel = gtaoLabelText;
     snprintf(ssrLabelText, sizeof(ssrLabelText), "%s", engine::vulkanSsrPassIsDisabled() ? "Off" : "On");
     ssrLabel = ssrLabelText;
     snprintf(bloomLabelText, sizeof(bloomLabelText), "%s", engine::vulkanBloomPassIsDisabled() ? "Off" : "On");
@@ -359,7 +349,6 @@ static void syncEffectLabels(void) {
 
 static void persistEffectSettings(void) {
     utils::settingsSetBool("shadowsDisabled", engine::vulkanShadowPassIsDisabled());
-    utils::settingsSetBool("gtaoDisabled", engine::vulkanGtaoPassIsDisabled());
     utils::settingsSetBool("ssrDisabled", engine::vulkanSsrPassIsDisabled());
     utils::settingsSetBool("bloomDisabled", engine::vulkanBloomPassIsDisabled());
     utils::settingsSetBool("contactShadowDisabled", engine::vulkanContactShadowPassIsDisabled());
@@ -383,14 +372,6 @@ static void persistEffectSettings(void) {
 
 int toggleShadows(void* _) {
     engine::vulkanShadowPassSetDisabled(!engine::vulkanShadowPassIsDisabled());
-    syncEffectLabels();
-    rmlUpdateDirtyAll(model);
-    persistEffectSettings();
-    return 0;
-}
-
-int toggleGtao(void* _) {
-    engine::vulkanGtaoPassSetDisabled(!engine::vulkanGtaoPassIsDisabled());
     syncEffectLabels();
     rmlUpdateDirtyAll(model);
     persistEffectSettings();

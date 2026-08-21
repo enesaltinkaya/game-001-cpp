@@ -159,7 +159,7 @@ void vulkanAzgaarPropsSetEnabled(bool enabled);
 // Depth/velocity pre-pass hook (called by VulkanDepthPass).  Renders the
 // animated props into the velocity + view-normal attachments so FSR gets
 // valid per-pixel motion vectors, and writes their DEPTH into the main depth
-// buffer so pre-colour consumers (GTAO, contact shadow, HiZ) see prop
+// buffer so pre-colour consumers (contact shadow, HiZ) see prop
 // geometry.  No-op when props are not active.
 void vulkanAzgaarPropsDrawPrepass(void);
 

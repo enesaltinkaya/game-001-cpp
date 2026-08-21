@@ -245,32 +245,15 @@ void main() {
     }
 
     float occluderAlphaForEntity = cameraOccluderAlpha(inEntity);
-    float occluderAoWeight       = 1.0;
-    if (occluderAlphaForEntity < CAMERA_OCCLUDER_ACTIVE_ALPHA) {
-        occluderAoWeight = smoothstep(CAMERA_OCCLUDER_OPAQUE_UNDERLAY_ALPHA,
-                                      CAMERA_OCCLUDER_ACTIVE_ALPHA,
-                                      occluderAlphaForEntity);
-    }
 
-    float screenAo = 1.0;
-    if (sceneBuffer.shadow.aoImageIndex != 0u) {
-        vec2 screenUV = gl_FragCoord.xy / sceneBuffer.cameras[0].viewport;
-        screenAo      = texture(sampler2D(textures[nonuniformEXT(sceneBuffer.shadow.aoImageIndex)],
-                                          samplers[SAMPLER_CLAMP_LINEAR]),
-                                screenUV)
-                            .r;
-    }
-    screenAo = mix(1.0, screenAo, occluderAoWeight);
-
-    float ao       = materialAo * screenAo;
-    float directAo = mix(1.0, screenAo, 0.55);
+    float ao = materialAo;
     vec3 shadowCascade    = shadowFull.rgb;
     vec3 shadowDarkFactor = mix(vec3(1.0), vec3(1.0 - SHADOW_DARKNESS), vec3(1.0 - shadowCascade));
     shadowDarkFactor      = mix(shadowDarkFactor, vec3(1.0), smoothstep(0.3, 0.0, NdotL));
     vec3 shadowFill = vec3(1.0 - SHADOW_DARKNESS) * (1.0 - shadowCascade) * 0.03;
 
     vec3 color =
-        (ambientDiffuse + ambientSpecular) * ao * shadowDarkFactor + shadowFill + Lo * directAo;
+        (ambientDiffuse + ambientSpecular) * ao * shadowDarkFactor + shadowFill + Lo;
 
     // Clearcoat
     if ((material.featureMask & (1u << MAT_HAS_CLEARCOAT)) != 0u) {

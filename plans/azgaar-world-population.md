@@ -61,7 +61,7 @@ window; evicted content regenerates bit-identically; nothing is persisted).
   (`AzgaarRoadDecals.c`, 34 m / 12 m wide, `DECAL_FLAG_GROUND_ONLY` +
   `DECAL_FLAG_ROAD` union layer).
 - Pass order in `c-engine/renderer/vulkan/Vulkan.c`:
-  culling → depth → occlusion → hiz → shadow → gtao → contact_shadow →
+  culling → depth → occlusion → hiz → shadow → contact_shadow →
   light_culling → **heightmap_terrain** → debug_navmesh → scene → skybox →
   **azgaar_water** → oit → ssr → volumetric → decal → composite → …
 - Terrain textures are registered once via

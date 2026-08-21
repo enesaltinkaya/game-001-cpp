@@ -630,8 +630,8 @@ void r_vulkanBeginRender(VulkanBeginRenderInfo beginRenderInfo) {
     // SHADER_READ_ONLY, so consumers binding it as an attachment cannot assume
     // the prior state (validation VUID 09588 fired every frame at
     // oit_accumulate). vulkanTransition is a no-op when the tracked layout
-    // already matches, so this costs nothing for callers (gtao,
-    // contact_shadow, light_culling) that transition it themselves.
+    // already matches, so this costs nothing for callers (contact_shadow,
+    // light_culling) that transition it themselves.
     if (beginRenderInfo.depth) {
         vulkanTransition(beginRenderInfo.cmd,
                          beginRenderInfo.depth,

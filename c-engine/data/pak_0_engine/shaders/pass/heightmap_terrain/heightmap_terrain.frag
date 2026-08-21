@@ -495,19 +495,9 @@ void main() {
         }
     }
 
-    // Screen-space AO (GT/SAO).
-    float screenAo = 1.0;
-    if (sceneBuffer.shadow.aoImageIndex != 0u) {
-        vec2 screenUV = gl_FragCoord.xy / sceneBuffer.cameras[0].viewport;
-        screenAo      = texture(sampler2D(textures[nonuniformEXT(sceneBuffer.shadow.aoImageIndex)],
-                                          samplers[SAMPLER_CLAMP_LINEAR]),
-                                screenUV)
-                            .r;
-    }
-
     // Attenuate ambient in shadow so shadowed terrain isn't lit only by sky.
     float shadowAmbientFade = mix(1.0 - SHADOW_DARKNESS, 1.0, mix(1.0, cascadeShadow, NdotL));
-    vec3 color = (ambientDiffuse + ambientSpecular) * screenAo * shadowAmbientFade + Lo;
+    vec3 color = (ambientDiffuse + ambientSpecular) * shadowAmbientFade + Lo;
 
     // Cheap sky-fill bounce on faces turned away from the sun.
     {

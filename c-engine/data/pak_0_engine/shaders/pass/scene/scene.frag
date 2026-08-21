@@ -234,24 +234,14 @@ void main() {
                 .r;
     }
 
-    float screenAo = 1.0;
-    if (sceneBuffer.shadow.aoImageIndex != 0u) {
-        vec2 screenUV = gl_FragCoord.xy / sceneBuffer.cameras[0].viewport;
-        screenAo      = texture(sampler2D(textures[nonuniformEXT(sceneBuffer.shadow.aoImageIndex)],
-                                          samplers[SAMPLER_CLAMP_LINEAR]),
-                                screenUV)
-                            .r;
-    }
-
-    float ao       = materialAo * screenAo;
-    float directAo = mix(1.0, screenAo, 0.55);
+    float ao = materialAo;
     // Constant ambient fill in shadow prevents dark-textured objects from
     // going too dark — baseColor is already baked into ambientDiffuse, so
     // dark texels would otherwise receive almost no fill.
     vec3 shadowFill = vec3(1.0 - SHADOW_DARKNESS) * (1.0 - shadowCascade) * 0.03;
 
     vec3 color =
-        (ambientDiffuse + ambientSpecular) * ao * shadowDarkFactor + shadowFill + Lo * directAo;
+        (ambientDiffuse + ambientSpecular) * ao * shadowDarkFactor + shadowFill + Lo;
 
     // Forward+ point/spot lights
     vec3 T_aniso = vec3(0.0);

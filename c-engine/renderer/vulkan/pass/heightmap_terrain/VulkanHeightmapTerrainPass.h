@@ -16,7 +16,7 @@
  * count (ring 0: 128, ring 1: 64, ring 2: 32).
  *
  * One depth/velocity pre-pass pipe renders the same lattice into the
- * depth/velocity/view-normal attachments so downstream passes (GTAO, contact
+ * depth/velocity/view-normal attachments so downstream passes (contact
  * shadows, HiZ) and FSR see the same surface as the scene pass.
  * This is the Azgaar world's terrain backend (the experimental full-mesh pass
  * was removed in the heightmap cutover).

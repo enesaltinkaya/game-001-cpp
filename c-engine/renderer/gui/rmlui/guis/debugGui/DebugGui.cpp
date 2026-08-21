@@ -8,7 +8,6 @@
 #include "renderer/vulkan/pass/shadow/VulkanShadowPass.h"
 #include "renderer/vulkan/pass/contact_shadow/VulkanContactShadowPass.h"
 // #include "renderer/vulkan/pass/skybox/VulkanSkyboxPass.h"
-#include "renderer/vulkan/pass/gtao/VulkanGtaoPass.h"
 #include "renderer/vulkan/pass/volumetric/VulkanVolumetricPass.h"
 // #include "renderer/vulkan/pass/grid/VulkanGridPass.h"
 #include "renderer/vulkan/resources/VulkanIbl.h"
@@ -31,7 +30,6 @@ static char bloomEnabled;
 static char iblEnabled;
 static char skyboxEnabled;
 static char gridEnabled;
-static char gtaoEnabled;
 static char pomEnabled;
 static char contactShadowEnabled;
 static char volumetricFogEnabled;
@@ -67,7 +65,6 @@ static void syncFromPasses(void) {
     iblEnabled        = !vulkanIblIsDisabled();
     // skyboxEnabled     = !vulkanSkyboxPassIsDisabled();
     // gridEnabled       = !vulkanGridPassIsDisabled();
-    gtaoEnabled       = !vulkanGtaoPassIsDisabled();
     pomEnabled        = vulkanResourceGetTerrainPomEnabled() != 0;
     contactShadowEnabled = !vulkanContactShadowPassIsDisabled();
     volumetricFogEnabled = !vulkanVolumetricPassIsDisabled();
@@ -199,14 +196,6 @@ static int toggleGrid(void* _) {
     return 0;
 }
 
-static int toggleGTAO(void* _) {
-    vulkanGtaoPassSetDisabled(gtaoEnabled);
-    syncFromPasses();
-    rmlUpdateDirtyAll(model);
-    return 0;
-}
-
-
 static int toggleVolumetricFog(void* _) {
     vulkanVolumetricPassSetDisabled(volumetricFogEnabled);
     syncFromPasses();
@@ -276,7 +265,6 @@ void DebugGui::added() {
     luaRegisterFunction("debugToggleIBL", toggleIBL);
     luaRegisterFunction("debugToggleSkybox", toggleSkybox);
     luaRegisterFunction("debugToggleGrid", toggleGrid);
-    luaRegisterFunction("debugToggleGTAO", toggleGTAO);
     luaRegisterFunction("debugTogglePOM", togglePOM);
     luaRegisterFunction("debugToggleContactShadow", toggleContactShadow);
     luaRegisterFunction("debugToggleVolumetricFog", toggleVolumetricFog);
@@ -301,7 +289,6 @@ void DebugGui::added() {
     rmlBind(model, "iblEnabled", &iblEnabled);
     rmlBind(model, "skyboxEnabled", &skyboxEnabled);
     rmlBind(model, "gridEnabled", &gridEnabled);
-    rmlBind(model, "gtaoEnabled", &gtaoEnabled);
     rmlBind(model, "pomEnabled", &pomEnabled);
     rmlBind(model, "contactShadowEnabled", &contactShadowEnabled);
     rmlBind(model, "volumetricFogEnabled", &volumetricFogEnabled);

@@ -229,15 +229,15 @@ static void recreatePipelines(void) {
     // view-space normal XY into the same attachments the depth pass owns,
     // so FSR gets valid per-pixel motion vectors for animated props.
     //
-    // It must ALSO write depth (not depth-test-only): GTAO, contact shadow
-    // and HiZ all run BEFORE this pass' colour draws and consume the main
+    // It must ALSO write depth (not depth-test-only): contact shadow and
+    // HiZ all run BEFORE this pass' colour draws and consume the main
     // depth buffer.  Without prop depth in that buffer they reconstruct a
     // surface that ignores the props (a building's pixels read as the grass
     // behind it, while viewNormal carries the building's normal) and emit
-    // phantom occlusion blobs shaped like the props themselves; the geometry
-    // shaders then multiply those blobs into their shading, so with GTAO
-    // enabled the props look see-through (e.g. a character silhouette shows
-    // up on a building wall behind the character).  Safe to write here: the
+    // phantom occlusion blobs shaped like the props themselves; the
+    // geometry shaders then multiply those blobs into their shading and the
+    // props look see-through (e.g. a character silhouette shows up on a
+    // building wall behind the character).  Safe to write here: the
     // pre-pass rasterizes with the exact same jittered projection, wind
     // sway and LOD switch as the colour pass, so the colour pass' depth
     // test (GREATER_OR_EQUAL) passes on equal values.

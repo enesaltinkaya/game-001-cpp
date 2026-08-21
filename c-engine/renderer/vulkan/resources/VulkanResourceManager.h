@@ -65,7 +65,6 @@ void vulkanResourceDestroy(void);
 void vulkanResourceUploadCamera(Camera* camera);
 void vulkanResourceUploadDirectionalLight(DirectionalLightUbo* directionalLight);
 void vulkanResourceUploadShadow(ShadowUbo* shadow);
-void vulkanResourceSetAoImageIndex(u32 index);
 void vulkanResourceSetContactShadowImageIndex(u32 index);
 void vulkanResourceUploadLight(GpuLight* light, u32 index);
 void vulkanResourceUploadLights(const GpuLight* lights, u32 count);

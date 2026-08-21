@@ -178,7 +178,7 @@ Determinism: `seed = hash(mapName)`, noise is a pure function of world
 - Vertex stream is **tile-local** (0…tileSize) + push-constant origin —
   keeps float32 precision clean at 80 km extents.
 - Shading: port `azgaar_terrain.frag` (biome tint over grass texture,
-  IBL, shadows, GTAO inputs) into the new pass; tint comes from `tintTex`
+  IBL, shadow inputs) into the new pass; tint comes from `tintTex`
   (replaces the tangent-channel hack).
 - Wireframe + debug-height-ramp toggles preserved, wired to the debug GUI
   exactly like the experimental pass.
@@ -315,7 +315,7 @@ validated before the next starts.
 debugMode}`, local lattice coords → world xz, `y = texture(heightTex)`,
     normal from ±1-texel neighbors, UV from world xz;
   - `.frag`: port of `azgaar_terrain.frag` shading (biome tint from
-    `tintTex`, ground texture, IBL, shadow/GTAO), micro-band procedural
+    `tintTex`, ground texture, IBL, shadow), micro-band procedural
     normal perturbation, debug height ramp mode.
 - `VulkanHeightmapTerrainPass` (registered in `Vulkan.c` next to the
   other terrain passes): one descriptor set per tile (heightTex, tintTex,

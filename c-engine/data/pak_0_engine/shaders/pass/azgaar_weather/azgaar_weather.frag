@@ -44,7 +44,7 @@ layout(push_constant) uniform Push {
 #define WEATHER_TYPE_DUST    2u
 #define WEATHER_TYPE_LEAVES  3u
 
-// Linearize the scene depth buffer (water-pass / gtao recipe).  Returns
+// Linearize the scene depth buffer (water-pass recipe).  Returns
 // the positive view-space distance the depth value encodes.
 float linearizeDepth(float d) {
     return (pc.nearZ * pc.farZ) / max(pc.nearZ + (pc.farZ - pc.nearZ) * d, 1e-7);

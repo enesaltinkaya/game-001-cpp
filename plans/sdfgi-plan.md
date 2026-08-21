@@ -280,7 +280,7 @@ SDFGI is a cascaded voxel-based GI system with these core stages:
 
 2. **Integration with composite pass:**
    - Add SDFGI output as input to `VulkanCompositePass`.
-   - Blend with existing lighting (direct + GTAO + SSR).
+   - Blend with existing lighting (direct + SSR).
    - Fallback path when SDFGI is disabled.
 
 3. **Cascade blending:**
@@ -376,7 +376,7 @@ SDFGI is a cascaded voxel-based GI system with these core stages:
 
 3. **Temporal stability:** SH accumulation needs careful handling to avoid flickering. Godot uses a 10-bit fixed-point ring buffer — we should do the same.
 
-4. **Integration with existing lighting:** Must blend with GTAO, SSR, and direct lighting without double-counting. The composite pass needs clear separation of GI vs direct contributions.
+4. **Integration with existing lighting:** Must blend with SSR and direct lighting without double-counting. The composite pass needs clear separation of GI vs direct contributions.
 
 5. **Camera-relative rendering:** Our engine uses camera-relative rendering (`worldOrigin` offset). SDFGI world-space data must account for this — the SDFGI cascades should be positioned relative to the camera origin, and the `worldOrigin` offset applied during screen-space sampling.
 

@@ -97,10 +97,10 @@ void main() {
     outVelocity = velocity;
 
     // For alpha-cutout geometry (grass, foliage), override the normal
-    // to world-up in view space.  GTAO only sees depth + normals, so
-    // vertical grass planes look like solid walls and get heavy
-    // darkening.  Writing an upward normal makes GTAO treat foliage as
-    // ground-like, eliminating the dark-plane artifact.
+    // to world-up in view space.  Contact shadow / occlusion only see depth +
+    // normals, so vertical grass planes look like solid walls and get heavy
+    // darkening.  Writing an upward normal treats foliage as ground-like,
+    // eliminating the dark-plane artifact.
     if ((material.featureMask & (1u << MAT_ALPHA_MASK)) != 0u) {
         vec3 upView = normalize((sceneBuffer.cameras[0].view * vec4(0.0, 1.0, 0.0, 0.0)).xyz);
         outViewNormalXY = upView.xy;

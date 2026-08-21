@@ -64,7 +64,7 @@ The surface must:
   `terrain (TerrainData)`, `fog (FogData)`. **No water uniforms yet.** `time`
   is the free animation clock.
 - Bindless `textures[]` + `samplers[]` exist; depth/scene color are readable in
-  compute/frag passes (GTAO reads depth, SSR reads scene color) — so a water
+  compute/frag passes (SSR reads scene color, contact shadow reads depth) — so a water
   frag can sample both.
 
 **Pass order — `c-engine/renderer/vulkan/Vulkan.c` (~L112)**
@@ -153,7 +153,7 @@ will reflect, and the depth buffer already holds terrain + seabed) and
 ... azgaar_terrain → scene → skybox → [azgaar_water] → oit → ssr → ...
 ```
 
-Water does **not** write depth, so SSR/GTAO/velocity ignore it automatically.
+Water does **not** write depth, so SSR/velocity ignore it automatically.
 
 ```
 vulkanAddPass(...)  // Vulkan.c, one new line after vulkanSkyboxPass
@@ -197,7 +197,7 @@ passes already do partial-attachment rendering — follow their pattern.
 | `c-engine/renderer/vulkan/Vulkan.c`                                             | `addPass(&vulkanAzgaarWaterPass);` after skybox; include header.                                                                               |
 | `c-engine/data/pak_0_engine/shaders/includes/globalset.shader`                  | Add `WaterData` struct + `WaterData water;` member to `SceneBuffer`.                                                                           |
 | `c-engine/renderer/vulkan/resources/VulkanResourceManager.{h,c}`                | `WaterData` CPU mirror (match std430); `vulkanResourceSetWaterParams(...)`.                                                                    |
-| `c-engine/renderer/vulkan/resources/VulkanFrameResources.{h,c}`                 | Expose `vulkanFrameResourcesGetSceneColor()` / `GetDepth()` if not already public (SSR/GTAO already read these — confirm and reuse).           |
+| `c-engine/renderer/vulkan/resources/VulkanFrameResources.{h,c}`                 | Expose `vulkanFrameResourcesGetSceneColor()` / `GetDepth()` if not already public (SSR already reads these — confirm and reuse).           |
 | `c-engine/CMakeLists.txt`                                                       | Add the new `.c` pass + the new `AzgaarWater.c`.                                                                                               |
 | `c-game/CMakeLists.txt`                                                         | Add `AzgaarWater.c`.                                                                                                                           |
 | `scripts/shaders.sh` (or build script)                                          | Compile the two new GLSL → SPV (debug + release, as the other passes do).                                                                      |

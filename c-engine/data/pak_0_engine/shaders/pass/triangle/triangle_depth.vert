@@ -121,7 +121,7 @@ void main() {
     outUV         = unpackUnorm2x16(attrBuf.data[baseIndex + 3]);
     outMaterialId = inst.materialId;
 
-    // View-space normal for GTAO
+    // View-space normal for the view-normal attachment
     vec3 viewNormal = normalize((sceneBuffer.cameras[0].view * vec4(worldNormal, 0.0)).xyz);
     outViewNormal = viewNormal;
 }

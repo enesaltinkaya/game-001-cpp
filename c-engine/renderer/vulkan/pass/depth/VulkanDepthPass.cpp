@@ -259,7 +259,7 @@ void VulkanDepthPass::update() {
     // ── Heightmap / water depth ────────────────────────────────────────
     // Render the streaming heightmap surface (Azgaar world) and the animated
     // water grid into the same depth / velocity / view-normal attachments so
-    // that downstream passes (GTAO, contact shadows, HiZ, shadows) and FSR see
+    // that downstream passes (contact shadows, HiZ, shadows) and FSR see
     // their depth.  No color clears — we append to the existing attachments
     // that already contain scene-object data.
 Entity* camEntity = cameraGetEntity();
@@ -304,8 +304,8 @@ Entity* camEntity = cameraGetEntity();
 
     // Azgaar props need motion vectors for FSR; the prepass renders the
     // animated (wind-swayed) props into the velocity / view-normal
-    // attachments and writes their depth so pre-colour consumers (GTAO,
-    // contact shadow, HiZ) see prop geometry.  No-op when props are not
+    // attachments and writes their depth so pre-colour consumers (contact
+    // shadow, HiZ) see prop geometry.  No-op when props are not
     // active.
     vulkanAzgaarPropsDrawPrepass();
 

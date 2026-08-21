@@ -11,7 +11,7 @@
 // lifts them, and the shader emits the clip-space positions for current
 // and previous camera (motion vectors for FSR) plus the view-space normal.
 // Rendering these tiles into the depth pre-pass keeps downstream passes
-// (GTAO, contact shadows, HiZ, occlusion) and FSR velocity consistent with
+// (contact shadows, HiZ, occlusion) and FSR velocity consistent with
 // the surface the scene pass draws.
 
 layout(push_constant, std430) uniform HeightmapPC {
@@ -65,7 +65,7 @@ void main() {
     // Border-aware finite differences (one-sided stencil on the border
     // texels): the ±1-texel outward fetch would leave [0,1] and wrap
     // (REPEAT sampler) to the opposite tile edge — a garbage steep normal
-    // that polluted GTAO/contact shadows along every seam. See
+    // that polluted contact shadows along every seam. See
     // heightmap_terrain.vert.
     float cellTexel = size / (texDim - 1.0);
     float spanX     = 2.0 * cellTexel;

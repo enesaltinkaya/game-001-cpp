@@ -38,7 +38,7 @@ layout(push_constant) uniform WaterPushConstants {
     float projM11;
 } pc;
 
-// ── Scene depth sampling (mirrors gtao.comp) ──────────────────────────
+// ── Scene depth sampling ───────────────────────────────────────────────
 // The water pass no longer binds the depth buffer as a render attachment,
 // so it is sampled here to recover the terrain height below the water.
 float linearizeDepth(float d) {

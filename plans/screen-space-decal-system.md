@@ -28,7 +28,7 @@ Screen-space decals project against the depth/normal buffers, so they can work o
 Current Vulkan pass order in `c-engine/renderer/vulkan/Vulkan.c` includes:
 
 ```txt
-culling/depth/hiz/shadow/gtao/contact/light_culling
+culling/depth/hiz/shadow/contact/light_culling
 terrain
 azgaar_terrain
 scene

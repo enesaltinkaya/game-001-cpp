@@ -48,7 +48,7 @@ void main() {
         // alpha edges temporally instead of binary shimmer.
         float cutoff = material.rmas.z;
         float alpha  = baseColor.a;
-        // frameIndex=0: stable discard pattern avoids GTAO shimmer.
+        // frameIndex=0: stable discard pattern avoids temporal shimmer.
         // clip() enables alpha-to-coverage for smooth sub-pixel edges.
         if (stochasticAlphaDiscard(alpha, cutoff, gl_FragCoord.xy, 0u)) {
             discard;

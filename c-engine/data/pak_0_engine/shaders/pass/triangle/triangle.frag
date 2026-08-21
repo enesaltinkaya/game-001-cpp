@@ -367,16 +367,9 @@ void main() {
                          .r;
     }
 
-    // Combine material AO with screen-space AO when available.
-    float screenAo = 1.0;
-    if (sceneBuffer.shadow.aoImageIndex != 0u) {
-        vec2 screenUV = gl_FragCoord.xy / sceneBuffer.cameras[0].viewport;
-        screenAo = texture(
-            sampler2D(textures[nonuniformEXT(sceneBuffer.shadow.aoImageIndex)],
-                      samplers[SAMPLER_CLAMP_LINEAR]),
-            screenUV).r;
-    }
-    float ao = materialAo * screenAo;
+    // Material AO also weights direct light slightly so contact darkening
+    // stays visible in strongly sun-lit scenes.
+    float ao       = materialAo;
     float directAo = mix(1.0, ao, 0.55);
 
     // Apply AO to ambient and a small amount of direct lighting so

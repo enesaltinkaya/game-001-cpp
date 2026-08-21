@@ -24,7 +24,6 @@
 #include "renderer/vulkan/pass/heightmap_terrain/VulkanHeightmapTerrainPass.h"
 #include "renderer/vulkan/pass/scene/VulkanScenePass.h"
 #include "renderer/vulkan/pass/decal/VulkanDecalPass.h"
-#include "renderer/vulkan/pass/gtao/VulkanGtaoPass.h"
 #include "renderer/vulkan/pass/contact_shadow/VulkanContactShadowPass.h"
 #include "renderer/vulkan/pass/ssr/VulkanSsrPass.h"
 #include "renderer/vulkan/pass/volumetric/VulkanVolumetricPass.h"
@@ -190,7 +189,6 @@ void vulkanInit(void) {
     addPass(&vulkanOcclusionPass);
     addPass(&vulkanHiZPass);
     addPass(&vulkanShadowPass);
-    addPass(&vulkanGtaoPass);
     addPass(&vulkanContactShadowPass);
     addPass(&vulkanLightCullingPass);
     addPass(&vulkanHeightmapTerrainPass);

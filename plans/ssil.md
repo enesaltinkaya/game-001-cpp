@@ -1,5 +1,9 @@
 # Plan: Extend GTAO → GTAO+SSIL (Screen-Space Indirect Lighting)
 
+> **STALE:** the GTAO pass was removed from the engine, so this plan has no
+> base to extend. Revisit only together with a new AO source (e.g. SDFGI,
+> see `sdfgi-plan.md`).
+
 ## Goal
 
 Add color bleed to the existing GTAO pass so nearby surfaces bounce colored

@@ -124,21 +124,11 @@ void main() {
         albedo = mix(inVertColor, inColor, tintable);
     }
 
-    // Screen-space AO (GT/SAO).
-    float screenAo = 1.0;
-    if (sceneBuffer.shadow.aoImageIndex != 0u) {
-        vec2 screenUV = gl_FragCoord.xy / sceneBuffer.cameras[0].viewport;
-        screenAo      = texture(sampler2D(textures[nonuniformEXT(sceneBuffer.shadow.aoImageIndex)],
-                                           samplers[SAMPLER_CLAMP_LINEAR]),
-                                 screenUV)
-                             .r;
-    }
-
     // Attenuate ambient in shadow so shadowed vegetation isn't lit only by
     // sky (same grazing-angle guard as the terrain pass).
     float shadowAmbientFade = mix(1.0 - SHADOW_DARKNESS, 1.0, mix(1.0, cascadeShadow, NdotL));
 
-    vec3 color = albedo * (ambient * screenAo * shadowAmbientFade + sunColor * NdotL * shadow);
+    vec3 color = albedo * (ambient * shadowAmbientFade + sunColor * NdotL * shadow);
 
     if (any(isnan(color)) || any(isinf(color))) color = vec3(0.0);
     outColor    = vec4(color, 1.0); // opaque: the LOD hard switch is resolved in the vertex shader
