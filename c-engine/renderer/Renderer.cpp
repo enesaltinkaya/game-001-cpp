@@ -32,7 +32,7 @@ Renderer renderer;
 static AAMode aaMode                     = AA_OFF;
 static RendererUpscalerMode upscalerMode = RENDERER_UPSCALER_OFF;
 static RendererAASettings aaSettings     = {
-    .casStrength = 0.5f,
+    .casStrength = 1.0f,
     .taaWeight   = 0.9f,
     .taaGhost    = 1.0f,
     .taaDepth    = 0.06f,

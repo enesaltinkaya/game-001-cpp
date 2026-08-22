@@ -34,9 +34,11 @@ void settingsInit(void) {
     templates.push_back((Template{"showFps", "boolean", 1.}));
     templates.push_back((Template{"vsync", "boolean", 0.}));
     templates.push_back((Template{"aaMode", "double", 0.}));
-    templates.push_back((Template{"aaCasStrength", "double", 50.}));
+    templates.push_back((Template{"aaCasStrength", "double", 100.}));
 
-    templates.push_back((Template{"upscalerMode", "double", 2.}));
+    /* TAA is on by default; it forces the FSR upscaler off, so the
+     * upscaler default must be Off to match the effective startup state. */
+    templates.push_back((Template{"upscalerMode", "double", 0.}));
     templates.push_back((Template{"renderScale", "double", 1.}));
     templates.push_back((Template{"fullScreen", "boolean", 0.}));
     templates.push_back((Template{"busyLoopLinux", "boolean", 1.}));
@@ -46,7 +48,7 @@ void settingsInit(void) {
     templates.push_back((Template{"bloomDisabled", "boolean", 0.}));
     templates.push_back((Template{"contactShadowDisabled", "boolean", 0.}));
     templates.push_back((Template{"fogMode", "double", 1.}));
-    templates.push_back((Template{"taaEnabled", "boolean", 0.}));
+    templates.push_back((Template{"taaEnabled", "boolean", 1.}));
     templates.push_back((Template{"taaWeight", "double", 0.9}));
     templates.push_back((Template{"taaGhost", "double", 1.0}));
     templates.push_back((Template{"taaDepth", "double", 0.06}));
