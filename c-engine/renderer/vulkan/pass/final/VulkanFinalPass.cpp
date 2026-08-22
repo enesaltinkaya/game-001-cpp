@@ -8,6 +8,7 @@
 #include "renderer/vulkan/resources/VulkanFrameResources.h"
 #include "renderer/vulkan/swapchain/VulkanSwapchain.h"
 #include "renderer/vulkan/pass/fsr/VulkanFsrPass.h"
+#include "renderer/vulkan/pass/lens/VulkanLensPass.h"
 #include "renderer/vulkan/pass/taa/VulkanTaaPass.h"
 #include "renderer/vulkan/pass/bloom/VulkanBloomPass.h"
 
@@ -58,10 +59,17 @@ void VulkanFinalPass::update() {
 
     if (!colorImage || !swapImage) return;
 
-    vulkanBeginProfile(cmd, &pipeline.profile, 0);
+    /* Lens active: render into the lens input (also an SRGB attachment —
+     * same pipeline); the lens pass then blits its output into the swapchain
+     * before UI. Lens inactive: render straight into the swapchain. */
+    char        lensActive = vulkanLensPassIsActive();
+    VulkanPipe* pipe       = &pipeline;
+    VulkanImage* target    = lensActive ? vulkanLensPassGetInput() : swapImage;
+
+    vulkanBeginProfile(cmd, &pipe->profile, 0);
     vulkanTransition(cmd, colorImage, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
 
-    vulkanBeginRender(.cmd = cmd, .pipe = &pipeline, .color1 = swapImage);
+    vulkanBeginRender(.cmd = cmd, .pipe = pipe, .color1 = target);
 
     vulkanViewport(cmd,
                    0,
@@ -70,7 +78,7 @@ void VulkanFinalPass::update() {
                    -((i32)swapImage->extent.height));
     vulkanScissor(cmd, 0, 0, swapImage->extent.width, swapImage->extent.height);
 
-    vulkanBindPipe(cmd, &pipeline);
+    vulkanBindPipe(cmd, pipe);
 
     FinalPushConstants pc = {
         .colorTextureIndex = (u32)colorImage->sampledPoolIndex,
@@ -83,12 +91,15 @@ void VulkanFinalPass::update() {
          * sharpen twice (stacked kernels cause ringing). */
         .rcasStrength      = rendererIsUpscalerEnabled() ? 0.0f : rendererGetCasStrength(),
     };
-    vulkanPush(cmd, &pipeline, sizeof(pc), &pc);
+    vulkanPush(cmd, pipe, sizeof(pc), &pc);
     vulkanDraw(cmd, 3, 1);
 
     vulkanEndRender(cmd);
-    vulkanEndProfile(cmd, &pipeline.profile, 0);
-    elapsedGPU = pipeline.profile.elapsed;
+    vulkanEndProfile(cmd, &pipe->profile, 0);
+    if (lensActive) {
+        vulkanLensPassMarkRendered();
+    }
+    elapsedGPU = pipe->profile.elapsed;
 
 }
 

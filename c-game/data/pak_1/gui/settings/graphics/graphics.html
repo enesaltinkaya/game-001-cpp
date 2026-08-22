@@ -126,6 +126,50 @@
                     </div>
                 </button>
 
+                <button class="option" id="toggleLens" onclick="toggleLens()">
+                    <div class="label">Lens Effects</div>
+                    <div class="widget">
+                        <div class="slider">
+                            <p class="leftarrow">&#xe806;</p>
+                            <p>{{lensLabel}}</p>
+                            <p class="rightarrow">&#xe808;</p>
+                        </div>
+                    </div>
+                </button>
+
+                <button class="option" data-class-disabled="lensParamsDisabled">
+                    <div class="label">Lens — Film Grain ({{format(lensGrainPercent,0)}}%)</div>
+                    <div class="widget">
+                        <div class="slider">
+                            <p class="leftarrow">&#xe806;</p>
+                            <p class="rightarrow">&#xe808;</p>
+                            <input type="range" min="0" max="100" step="1" data-value="lensGrainPercent" style="tab-index:none;" onchange="lensParamChange()" />
+                        </div>
+                    </div>
+                </button>
+
+                <button class="option" data-class-disabled="lensParamsDisabled">
+                    <div class="label">Lens — Chromatic Aberration ({{format(lensChromAbPercent,0)}}%)</div>
+                    <div class="widget">
+                        <div class="slider">
+                            <p class="leftarrow">&#xe806;</p>
+                            <p class="rightarrow">&#xe808;</p>
+                            <input type="range" min="0" max="100" step="1" data-value="lensChromAbPercent" style="tab-index:none;" onchange="lensParamChange()" />
+                        </div>
+                    </div>
+                </button>
+
+                <button class="option" data-class-disabled="lensParamsDisabled">
+                    <div class="label">Lens — Vignette ({{format(lensVignettePercent,0)}}%)</div>
+                    <div class="widget">
+                        <div class="slider">
+                            <p class="leftarrow">&#xe806;</p>
+                            <p class="rightarrow">&#xe808;</p>
+                            <input type="range" min="0" max="100" step="1" data-value="lensVignettePercent" style="tab-index:none;" onchange="lensParamChange()" />
+                        </div>
+                    </div>
+                </button>
+
                 <button class="option" id="toggleFog" onclick="toggleFog()">
                     <div class="label">Fog</div>
                     <div class="widget">

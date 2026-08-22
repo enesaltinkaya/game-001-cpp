@@ -6,6 +6,7 @@
 #include "renderer/gui/rmlui/GuiManagerRmlUi.h"
 #include "renderer/vulkan/pass/ao/VulkanAOPass.h"
 #include "renderer/vulkan/pass/bloom/VulkanBloomPass.h"
+#include "renderer/vulkan/pass/lens/VulkanLensPass.h"
 #include "renderer/vulkan/pass/shadow/VulkanShadowPass.h"
 #include "renderer/vulkan/pass/ssr/VulkanSsrPass.h"
 #include "renderer/vulkan/pass/contact_shadow/VulkanContactShadowPass.h"
@@ -19,6 +20,7 @@
 namespace game {
 static void syncAAUi(void);
 static void persistAASettings(void* _);
+static void persistLensSettings(void* _);
 static void queueAAPersist(void);
 static void applyUpscalerModeLater(void* _);
 static void flushPendingTasks(void);
@@ -36,8 +38,13 @@ static engine::RendererUpscalerMode upscalerMode;
 static char renderScaleDisabled;
 static float casStrengthPercent;
 static float renderScalePercent;
+static char lensParamsDisabled;
+static float lensGrainPercent;
+static float lensChromAbPercent;
+static float lensVignettePercent;
 static int upscalerTaskKey    = -1;
 static int aaTaskKey          = -1;
+static int lensTaskKey        = -1;
 static int renderScaleTaskKey = -1;
 
 static const char* upscalerNames[] = {
@@ -59,6 +66,7 @@ static char* shadowsLabel;
 static char* ssrLabel;
 static char* aoLabel;
 static char* bloomLabel;
+static char* lensLabel;
 static char* contactShadowLabel;
 static char* fogLabel;
 static char* taaLabel;
@@ -70,6 +78,7 @@ static char shadowsLabelText[16];
 static char ssrLabelText[16];
 static char aoLabelText[16];
 static char bloomLabelText[16];
+static char lensLabelText[16];
 static char contactShadowLabelText[16];
 static char fogLabelText[16];
 static char taaLabelText[16];
@@ -78,6 +87,8 @@ static int upscalerPrev(void* _);
 static int upscalerNext(void* _);
 static int aaCasStrengthChange(void* _);
 static int renderScaleChange(void* _);
+static int toggleLens(void* _);
+static int lensParamChange(void* _);
 static int graphicsClose(void* _);
 static int toggleShadows(void* _);
 static int toggleSsr(void* _);
@@ -97,6 +108,8 @@ void SettingsGraphicsGui::added() {
     engine::luaRegisterFunction("toggleSsr", toggleSsr);
     engine::luaRegisterFunction("toggleAo", toggleAo);
     engine::luaRegisterFunction("toggleBloom", toggleBloom);
+    engine::luaRegisterFunction("toggleLens", toggleLens);
+    engine::luaRegisterFunction("lensParamChange", lensParamChange);
     engine::luaRegisterFunction("toggleContactShadow", toggleContactShadow);
     engine::luaRegisterFunction("toggleFog", toggleFog);
     engine::luaRegisterFunction("toggleTaa", toggleTaa);
@@ -107,6 +120,10 @@ void SettingsGraphicsGui::added() {
     upscalerMode = engine::rendererGetUpscalerMode();
     fogMode      = (int)utils::settingsGetDouble("fogMode");
     if (fogMode < 0 || fogMode > 1) fogMode = 1;
+    lensGrainPercent    = engine::vulkanLensPassGetGrain() * 100.0f;
+    lensChromAbPercent  = engine::vulkanLensPassGetChromAb() * 100.0f;
+    lensVignettePercent = engine::vulkanLensPassGetVignette() * 100.0f;
+    lensParamsDisabled  = engine::vulkanLensPassIsDisabled();
     syncAAUi();
 
     renderScalePercent = engine::rendererGetRenderScale() * 100.0f;
@@ -119,10 +136,15 @@ void SettingsGraphicsGui::added() {
     rmlBind(model, "upscalePolicyLabel", &upscalePolicyLabel);
     rmlBindFloat(model, "casStrengthPercent", &casStrengthPercent);
     rmlBindFloat(model, "renderScalePercent", &renderScalePercent);
+    rmlBindBool(model, "lensParamsDisabled", &lensParamsDisabled);
+    rmlBindFloat(model, "lensGrainPercent", &lensGrainPercent);
+    rmlBindFloat(model, "lensChromAbPercent", &lensChromAbPercent);
+    rmlBindFloat(model, "lensVignettePercent", &lensVignettePercent);
     rmlBind(model, "shadowsLabel", &shadowsLabel);
     rmlBind(model, "ssrLabel", &ssrLabel);
     rmlBind(model, "aoLabel", &aoLabel);
     rmlBind(model, "bloomLabel", &bloomLabel);
+    rmlBind(model, "lensLabel", &lensLabel);
     rmlBind(model, "contactShadowLabel", &contactShadowLabel);
     rmlBind(model, "fogLabel", &fogLabel);
     rmlBind(model, "taaLabel", &taaLabel);
@@ -332,6 +354,10 @@ static void flushPendingTasks(void) {
         utils::futureTaskRemove(aaTaskKey);
         persistAASettings(nullptr);
     }
+    if (lensTaskKey != -1) {
+        utils::futureTaskRemove(lensTaskKey);
+        persistLensSettings(nullptr);
+    }
 }
 
 int graphicsClose(void* _) {
@@ -345,6 +371,8 @@ static void syncEffectLabels(void) {
     shadowsLabel = shadowsLabelText;
     snprintf(taaLabelText, sizeof(taaLabelText), "%s", engine::rendererIsTAAEnabled() ? "On" : "Off");
     taaLabel = taaLabelText;
+    snprintf(lensLabelText, sizeof(lensLabelText), "%s", engine::vulkanLensPassIsDisabled() ? "Off" : "On");
+    lensLabel = lensLabelText;
     snprintf(ssrLabelText, sizeof(ssrLabelText), "%s", engine::vulkanSsrPassIsDisabled() ? "Off" : "On");
     ssrLabel = ssrLabelText;
     snprintf(aoLabelText, sizeof(aoLabelText), "%s", engine::vulkanAOPassIsDisabled() ? "Off" : "On");
@@ -410,6 +438,44 @@ int toggleBloom(void* _) {
     syncEffectLabels();
     rmlUpdateDirtyAll(model);
     persistEffectSettings();
+    return 0;
+}
+
+static void persistLensSettings(void* _) {
+    lensTaskKey = -1;
+
+    /* Read the bound slider values here (debounced), not in the change
+     * handler — RMLUI writes the fresh value back only while processing
+     * the 'change' event (same caveat as the CAS slider). */
+    engine::vulkanLensPassSetGrain(lensGrainPercent / 100.0f);
+    engine::vulkanLensPassSetChromAb(lensChromAbPercent / 100.0f);
+    engine::vulkanLensPassSetVignette(lensVignettePercent / 100.0f);
+
+    utils::settingsSetDouble("lensGrain", static_cast<double>(lensGrainPercent));
+    utils::settingsSetDouble("lensChromAb", static_cast<double>(lensChromAbPercent));
+    utils::settingsSetDouble("lensVignette", static_cast<double>(lensVignettePercent));
+    utils::settingsWrite();
+
+    if (model) {
+        rmlUpdateDirtyAll(model);
+    }
+}
+
+int toggleLens(void* _) {
+    engine::vulkanLensPassSetDisabled(!engine::vulkanLensPassIsDisabled());
+    utils::settingsSetBool("lensEnabled", !engine::vulkanLensPassIsDisabled());
+    utils::settingsWrite();
+    lensParamsDisabled = engine::vulkanLensPassIsDisabled();
+    syncEffectLabels();
+    rmlUpdateDirtyAll(model);
+    return 0;
+}
+
+int lensParamChange(void* _) {
+    if (lensTaskKey != -1) {
+        utils::futureTaskRemove(lensTaskKey);
+    }
+    lensTaskKey = utils::futureTaskAdd(500, persistLensSettings, nullptr);
     return 0;
 }
 

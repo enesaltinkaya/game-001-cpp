@@ -226,6 +226,7 @@ void main() {
 
     ldr = blueNoiseDither(ldr, gl_FragCoord.xy);
 
-    /* Swapchain is an sRGB attachment, so keep the shader output linear. */
+    /* sRGB attachment (swapchain or lens input): keep output linear —
+     * the attachment store encodes. */
     outColor = vec4(ldr, 1.0);
 }

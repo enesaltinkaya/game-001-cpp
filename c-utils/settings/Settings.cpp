@@ -52,6 +52,10 @@ void settingsInit(void) {
     templates.push_back((Template{"taaWeight", "double", 0.9}));
     templates.push_back((Template{"taaGhost", "double", 1.0}));
     templates.push_back((Template{"taaDepth", "double", 0.06}));
+    templates.push_back((Template{"lensEnabled", "boolean", 0.}));
+    templates.push_back((Template{"lensGrain", "double", 0.15}));
+    templates.push_back((Template{"lensChromAb", "double", 0.10}));
+    templates.push_back((Template{"lensVignette", "double", 0.25}));
 
     settingsPath = stringNew("%s%s%s%s", platform.cwd, "data", platform.seperator, "settings.json");
     debug("settings: path %s", settingsPath->data);
