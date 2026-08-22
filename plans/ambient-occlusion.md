@@ -283,6 +283,25 @@ Deviations from the plan above, found during implementation/validation:
   (banding there is expected, the accumulated R16F output is unaffected).
 - **Off-screen break**: steps whose UV leaves the screen terminate the ray
   (clamped UVs would false-hit border geometry).
+- **Disk axis flipped to the sun (2026-08-22, GTAO review).** The disk had
+  been fanning toward the camera (+Z view, "the lit hemisphere"), which is
+  TAO, not GTAO: every pixel whose march toward the viewer crosses a
+  canopy (background ground/sky past the silhouette) false-hit the canopy
+  and darkened along the canopy's outline — a hard-edged silhouette ring
+  disconnected from geometric contact (the reported halo). The disk now
+  fans toward the dominant light (`sunView = invView * -directionalLight.
+  direction`, the `toSun` convention every other shader uses); the ray
+  weight is re-based on the axis (`1 + dot(axis, dirView)`). When the sun
+  is in front of the camera the disk would fan off-screen behind the
+  viewer (steps break at the screen edge → no signal), so the axis blends
+  toward the view direction `mix(sunView, V, smoothstep(0, -0.5,
+  dot(sunView, V)))` — full blend at 45° past the screen center. That
+  fallback darkening is light-legitimate (the sun really is occluded by
+  the canopy for those background points), not a silhouette artifact.
+  Foliage depth/normal consistency was verified not to be a factor:
+  leaf cards are discard-gated in the opaque `azgaar_props` pass (depth
+  + view normals written only for surviving pixels), so depth, normals
+  and the visual cutout silhouette all agree.
 - **Extra debug-dump token `aoFrame`** (raw per-frame R8) next to `ao`
   (accumulated) — essential for ray-pass debugging (caught the two
   self-hit bugs above).
