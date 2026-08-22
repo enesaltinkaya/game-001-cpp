@@ -123,7 +123,15 @@ permutations) runs inside the existing FSR3 upscaler dispatch.
   pushes `rcasStrength = 0` while the upscaler is active (mutual
   exclusion — stacked kernels ring); the scalar imitation kernel stays
   deleted. Slider is enabled on all paths.
-- Settings GUI: slider relabeled "Sharpening — RCAS" (always enabled).
+- Settings GUI: slider relabeled "Sharpening — RCAS" (always enabled),
+  range extended 0–150% (player's choice; engine clamps `casStrength` to
+  1.5). Above 100% (AMD reference max) applies only to the final-pass
+  kernel — the FSR dispatch clamps its `sharpness` to [0,1] per SDK
+  validation. To keep >1.0 multipliers safe, `rcas.shader` re-clamps the
+  lobe to `-RCAS_LIMIT` *after* the strength multiply (documented
+  deviation: upstream only uses multipliers ≤ 1.0, where the resolve
+  denominator can't flip; without the re-clamp, 150% crushed 52% of
+  pixels to 0/255 — verified fixed: 0.375% baseline-level).
 - Validated: FSR Native AA 40%/100% Laplacian variance 854/1754 (off=359);
   TAA path + RCAS100 visibly counters TAA blur (vision-checked, no
   ringing); FSR regression clean (single sharpening stage, 0 errors).

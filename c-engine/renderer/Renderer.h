@@ -88,7 +88,7 @@ AAMode rendererGetAAMode(void);
 bool rendererIsTAAEnabled(void);
 
 struct RendererAASettings {
-    float casStrength;
+    float casStrength;    // RCAS strength 0–1.5 (0 = off, 1.0 = AMD reference max)
     float taaWeight;      // temporal blend factor (0.5–0.95, default 0.9)
     float taaGhost;       // color ghost rejection threshold (0.3–1.0, default 1.0)
     float taaDepth;       // temporal depth rejection threshold (0.01–0.5, default 0.06)

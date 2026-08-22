@@ -68,6 +68,15 @@ vec3 rcasFilter(vec3 b, vec3 d, vec3 e, vec3 f, vec3 h, float rcasSharpness) {
     float lobe =
         max(-RCAS_LIMIT, min(max(max(lobeR, lobeG), lobeB), 0.0)) * rcasSharpness;
 
+    /* Engine extension (deviation from upstream): rcasSharpness may exceed
+     * 1.0 (strength slider goes to 1.5). AMD only ever uses multipliers in
+     * [0.25, 1.0], where the resolve denominator 1 + 4*lobe is guaranteed
+     * >= 0.25. Above 1.0 an unclamped lobe could reach -0.375 and flip the
+     * denominator negative (inverted / NaN pixels). Re-clamp to RCAS_LIMIT
+     * after the multiply: >1.0 amplifies the adaptive lobe but never past
+     * the kernel's hard safety bound. */
+    lobe = max(-RCAS_LIMIT, lobe);
+
     // Apply noise removal.
     lobe *= nz;
 

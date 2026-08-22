@@ -542,7 +542,10 @@ void VulkanFsrPass::update() {
      * engine applies no sharpening at all. */
     float casStrength         = rendererGetCasStrength();
     dispatch.enableSharpening = casStrength > 0.0f;
-    dispatch.sharpness        = casStrength;
+    /* The SDK validates sharpness in [0,1] (1.0 = RCAS max). Strengths above
+     * 1.0 are a final-pass-only extension and are clamped here to keep the
+     * upscaler's own RCAS within AMD's reference range. */
+    dispatch.sharpness        = casStrength > 1.0f ? 1.0f : casStrength;
     dispatch.frameTimeDelta      = (float)(utils::timer.frameTime / MILLION); /* ns → ms */
     dispatch.preExposure         = 1.0f;
     dispatch.reset               = contextJustCreated || (camera->frameIndex <= 2);

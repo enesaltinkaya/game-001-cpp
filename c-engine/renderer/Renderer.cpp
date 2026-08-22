@@ -26,7 +26,6 @@ namespace engine {
 static AAMode sanitizeAAMode(AAMode mode);
 static RendererAASettings sanitizeAASettings(RendererAASettings settings);
 static RendererUpscalerMode sanitizeUpscalerMode(RendererUpscalerMode mode);
-static float clamp01(float value);
 static float sanitizeRenderScale(float scale);
 
 Renderer renderer;
@@ -153,7 +152,9 @@ RendererAASettings rendererGetAASettings(void) {
 }
 
 void rendererSetCasStrength(float strength) {
-    aaSettings.casStrength = clamp01(strength);
+    /* Above 1.0 (AMD reference max) amplifies the final-pass kernel's lobe
+     * beyond the standard curve — player's choice, bounded by RCAS_LIMIT. */
+    aaSettings.casStrength = strength < 0.0f ? 0.0f : (strength > 1.5f ? 1.5f : strength);
 }
 
 float rendererGetCasStrength(void) {
@@ -346,7 +347,8 @@ static AAMode sanitizeAAMode(AAMode mode) {
 }
 
 static RendererAASettings sanitizeAASettings(RendererAASettings settings) {
-    settings.casStrength = clamp01(settings.casStrength);
+    settings.casStrength = settings.casStrength < 0.0f ? 0.0f
+                        : (settings.casStrength > 1.5f ? 1.5f : settings.casStrength);
     settings.taaWeight   = settings.taaWeight < 0.5f ? 0.5f : (settings.taaWeight > 0.95f ? 0.95f : settings.taaWeight);
     settings.taaGhost    = settings.taaGhost < 0.3f ? 0.3f : (settings.taaGhost > 1.0f ? 1.0f : settings.taaGhost);
     settings.taaDepth    = settings.taaDepth < 0.01f ? 0.01f : (settings.taaDepth > 0.5f ? 0.5f : settings.taaDepth);
@@ -358,12 +360,6 @@ static RendererUpscalerMode sanitizeUpscalerMode(RendererUpscalerMode mode) {
         return RENDERER_UPSCALER_OFF;
     }
     return mode;
-}
-
-static float clamp01(float value) {
-    if (value < 0.0f) return 0.0f;
-    if (value > 1.0f) return 1.0f;
-    return value;
 }
 
 static float sanitizeRenderScale(float scale) {
