@@ -15,10 +15,12 @@ struct VulkanCommand;
  * downsample + dilate + ring blur + composite chain (all inside the FFX
  * context). Output: full-res R16G16B16A16_SFLOAT image.
  *
- * Focus model is manual (settings GUI): focus distance, f-number, focal
- * length, blur quality (ring count). CoC is derived from the thin-lens
- * model via ffxDofCalculateCoc{Scale,Bias} against the camera's
- * projection matrix. */
+ * Focus model is automatic: the game pushes the active camera's distance to
+ * the player each frame (vulkanDofPassSetFocusDistance), so the focus plane
+ * tracks the subject and follows wheel zoom. Aperture (f-number) and focal
+ * length are fixed engine constants. CoC is derived from the thin-lens model
+ * via ffxDofCalculateCoc{Scale,Bias} against the camera's projection matrix.
+ * The only user-facing knob is blur quality (ring count). */
 class VulkanDofPass : public System {
 public:
     VulkanDofPass();
@@ -39,18 +41,15 @@ struct VulkanImage* vulkanDofPassGetOutput(void);
 void vulkanDofPassSetDisabled(char disabled);
 char vulkanDofPassIsDisabled(void);
 
-/* Manual focus model. focusMeters: distance to the focus plane.
- * fNumber: lens f-number (aperture radius = focalLength / fNumber).
- * focalLengthMm: lens focal length in millimetres. quality: number of
- * blur rings (1..8, higher = smoother bokeh, more cost). Changing
- * quality recreates the FFX context lazily on the next dispatch. */
-void vulkanDofPassSetFocus(float focusMeters);
-void vulkanDofPassSetFNumber(float fNumber);
-void vulkanDofPassSetFocalLength(float focalLengthMm);
+/* Focus distance (meters from the active camera to the focus subject). The
+ * game pushes this each frame while a player is loaded (it equals the
+ * camera's orbit/top-down distance, so wheel zoom moves the focus plane).
+ * Falls back to a default when no value has been pushed (e.g. main menu).
+ * quality: number of blur rings (1..8, higher = smoother bokeh, more cost).
+ * Changing quality recreates the FFX context lazily on the next dispatch. */
+void vulkanDofPassSetFocusDistance(float meters);
+float vulkanDofPassGetFocusDistance(void);
 void vulkanDofPassSetQuality(int rings);
-float vulkanDofPassGetFocus(void);
-float vulkanDofPassGetFNumber(void);
-float vulkanDofPassGetFocalLength(void);
 int vulkanDofPassGetQuality(void);
 
 /* Max-blend a CoC-derived reactivity mask into the FSR reactive mask

@@ -6,6 +6,7 @@
 #include "ecs/system/transform/TransformComponent.h"
 #include "ecs/system/transform/TransformSystem.h"
 #include "ecs/system/window/WindowSystem.h"
+#include "renderer/vulkan/pass/dof/VulkanDofPass.h"
 #include "renderer/vulkan/pass/shadow/VulkanShadowPass.h"
 #include "renderer/vulkan/resources/VulkanResourceManager.h"
 #include "timer/Timer.h"
@@ -316,6 +317,7 @@ void topDownCameraUpdate(void) {
     engine::transformQuatToPitchYaw(tdCam.camTransform->rot, &tdCam.camera->pitch, &tdCam.camera->yaw);
 
     engine::vulkanShadowPassSetFocusDistance(tdCam.distance);
+    engine::vulkanDofPassSetFocusDistance(tdCam.distance);
     tdCam.camera->zfar = 4096.0f;
 }
 

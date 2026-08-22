@@ -45,9 +45,6 @@ static float lensGrainPercent;
 static float lensChromAbPercent;
 static float lensVignettePercent;
 static char dofParamsDisabled;
-static float dofFocus;
-static float dofFNumber;
-static float dofFocalLength;
 static float dofQuality;
 static int upscalerTaskKey    = -1;
 static int aaTaskKey          = -1;
@@ -138,9 +135,6 @@ void SettingsGraphicsGui::added() {
     lensChromAbPercent  = engine::vulkanLensPassGetChromAb() * 100.0f;
     lensVignettePercent = engine::vulkanLensPassGetVignette() * 100.0f;
     lensParamsDisabled  = engine::vulkanLensPassIsDisabled();
-    dofFocus            = engine::vulkanDofPassGetFocus();
-    dofFNumber          = engine::vulkanDofPassGetFNumber();
-    dofFocalLength      = engine::vulkanDofPassGetFocalLength();
     dofQuality          = (float)engine::vulkanDofPassGetQuality();
     dofParamsDisabled   = engine::vulkanDofPassIsDisabled();
     syncAAUi();
@@ -160,9 +154,6 @@ void SettingsGraphicsGui::added() {
     rmlBindFloat(model, "lensChromAbPercent", &lensChromAbPercent);
     rmlBindFloat(model, "lensVignettePercent", &lensVignettePercent);
     rmlBindBool(model, "dofParamsDisabled", &dofParamsDisabled);
-    rmlBindFloat(model, "dofFocus", &dofFocus);
-    rmlBindFloat(model, "dofFNumber", &dofFNumber);
-    rmlBindFloat(model, "dofFocalLength", &dofFocalLength);
     rmlBindFloat(model, "dofQuality", &dofQuality);
     rmlBind(model, "shadowsLabel", &shadowsLabel);
     rmlBind(model, "ssrLabel", &ssrLabel);
@@ -517,17 +508,12 @@ int lensParamChange(void* _) {
 static void persistDofSettings(void* _) {
     dofTaskKey = -1;
 
-    /* Read the bound slider values here (debounced), not in the change
+    /* Read the bound slider value here (debounced), not in the change
      * handler — RMLUI writes the fresh value back only while processing
-     * the 'change' event (same caveat as the lens sliders). */
-    engine::vulkanDofPassSetFocus(dofFocus);
-    engine::vulkanDofPassSetFNumber(dofFNumber);
-    engine::vulkanDofPassSetFocalLength(dofFocalLength);
+     * the 'change' event (same caveat as the lens sliders). Focus distance
+     * is game-driven (camera-to-player), so only quality is user-facing. */
     engine::vulkanDofPassSetQuality((int)dofQuality);
 
-    utils::settingsSetDouble("dofFocus", static_cast<double>(dofFocus));
-    utils::settingsSetDouble("dofFNumber", static_cast<double>(dofFNumber));
-    utils::settingsSetDouble("dofFocalLength", static_cast<double>(dofFocalLength));
     utils::settingsSetDouble("dofQuality", static_cast<double>(dofQuality));
     utils::settingsWrite();
 

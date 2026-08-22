@@ -5,6 +5,7 @@
 #include "ecs/system/camera/CameraSystem.h"
 #include "ecs/system/transform/TransformComponent.h"
 #include "ecs/system/transform/TransformSystem.h"
+#include "renderer/vulkan/pass/dof/VulkanDofPass.h"
 #include "renderer/vulkan/pass/shadow/VulkanShadowPass.h"
 #include "renderer/vulkan/resources/VulkanResourceManager.h"
 #include "timer/Timer.h"
@@ -273,6 +274,11 @@ void thirdPersonCameraUpdate(void) {
     tpCam.camTransform->pos[3] = 1.0f;
 
     engine::vulkanShadowPassSetFocusDistance(fullOrbitDist);
+
+    /* DoF focuses on the player: use the actual (obstacle-clamped) camera-to-
+     * player distance so the focus plane tracks the subject and follows wheel
+     * zoom. */
+    engine::vulkanDofPassSetFocusDistance(glm_vec3_distance(playerPos, desiredCamPos));
 
     // Camera looks at the player's look-at point, tilted up by sky-look offset.
     vec3 lookTarget;

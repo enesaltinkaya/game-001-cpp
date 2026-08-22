@@ -39,6 +39,10 @@ static const float DOF_SENSOR_WIDTH_M = 0.036f;
  * clamps to 0.5 * factor * height half-res pixels. 0.1 caps the bokeh
  * radius at ~1/10 of the screen height (full-res) at 1080p. */
 static const float DOF_COC_LIMIT_FACTOR = 0.1f;
+/* Fixed lens constants (not user-facing): a 50 mm lens at f/2.8 gives a
+ * natural, moderate bokeh at the camera distances the game uses. */
+static const float DOF_F_NUMBER        = 2.8f;
+static const float DOF_FOCAL_LENGTH_MM = 50.0f;
 
 static void swapchainCreated(void* _);
 static void createOutput(void);
@@ -71,9 +75,7 @@ static VulkanPipe cocMaskPipe;
 static char cocMaskPipeReady;
 
 static char dofDisabled;
-static float focusMeters   = 10.0f;
-static float fNumber       = 2.8f;
-static float focalLengthMm = 50.0f;
+static float focusDistance = 10.0f;  /* pushed by the game each frame */
 static int   qualityRings  = 4;
 
 /* Last frame's CoC constants — consumed by the reactive-mask dispatch,
@@ -91,30 +93,16 @@ void VulkanDofPass::added() {
     utils::signalSubscribe("swapchainCreated", swapchainCreated);
 
     dofDisabled = utils::settingsGetBool("dofEnabled") ? 0 : 1;
-    focusMeters = (float)utils::settingsGetDouble("dofFocus");
-    fNumber     = (float)utils::settingsGetDouble("dofFNumber");
-    focalLengthMm = (float)utils::settingsGetDouble("dofFocalLength");
     qualityRings  = (int)utils::settingsGetDouble("dofQuality");
-    if (focusMeters <= 0.0f) focusMeters = 10.0f;
-    if (fNumber < 0.1f) fNumber = 2.8f;
-    if (focalLengthMm <= 0.0f) focalLengthMm = 50.0f;
     if (qualityRings < 1) qualityRings = 1;
     if (qualityRings > 8) qualityRings = 8;
 
     /* Env overrides for headless screenshot validation (same pattern as
-     * the TAA tuning vars) — no settings-file edits needed. */
+     * the TAA tuning vars) — no settings-file edits needed. Focus distance
+     * is game-driven (vulkanDofPassSetFocusDistance), so it has no override. */
     const char* env;
     if ((env = getenv("ENGINE_DOF_ENABLED")) && *env) {
         dofDisabled = atoi(env) ? 0 : 1;
-    }
-    if ((env = getenv("ENGINE_DOF_FOCUS")) && *env) {
-        focusMeters = (float)atof(env);
-    }
-    if ((env = getenv("ENGINE_DOF_FNUMBER")) && *env) {
-        fNumber = (float)atof(env);
-    }
-    if ((env = getenv("ENGINE_DOF_FOCAL")) && *env) {
-        focalLengthMm = (float)atof(env);
     }
     if ((env = getenv("ENGINE_DOF_QUALITY")) && *env) {
         qualityRings = atoi(env);
@@ -236,6 +224,15 @@ static char ensureContext(u32 width, u32 height) {
         backendReady = 1;
     }
 
+    if (contextReady) {
+        /* The previous frame's command buffer may still be in flight and
+         * referencing the context's pipelines (the DoF dispatch is recorded
+         * into the main per-frame cmd buffer). Destroying the pipelines
+         * while that cmd buffer is executing trips VUID-vkDestroyPipeline-
+         * pipeline-00765. Quality changes are rare and user-initiated, so a
+         * full wait is acceptable (same pattern as swapchain recreate). */
+        vulkanWaitIdle("dof context recreate");
+    }
     destroyContext();
 
     FfxDofContextDescription desc = {};
@@ -310,9 +307,10 @@ void VulkanDofPass::update() {
     float proj34 = (*proj)[3][2];
     float proj43 = (*proj)[2][3];
 
-    float focalLengthM = focalLengthMm * 0.001f;
-    float apertureM    = focalLengthM / fNumber;
-    float focusSigned  = -focusMeters;
+    float focalLengthM = DOF_FOCAL_LENGTH_MM * 0.001f;
+    float apertureM    = focalLengthM / DOF_F_NUMBER;
+    float focusM       = focusDistance > 0.1f ? focusDistance : 0.1f;
+    float focusSigned  = -focusM;
     float conversion   = ((float)window.renderWidth * 0.5f) / DOF_SENSOR_WIDTH_M;
 
     lastCocScale = ffxDofCalculateCocScale(apertureM, focusSigned, focalLengthM, conversion,
@@ -395,16 +393,12 @@ char vulkanDofPassIsDisabled(void) {
     return dofDisabled;
 }
 
-void vulkanDofPassSetFocus(float focusMeters_) {
-    focusMeters = focusMeters_ > 0.0f ? focusMeters_ : 0.1f;
+void vulkanDofPassSetFocusDistance(float meters) {
+    focusDistance = meters > 0.0f ? meters : 0.0f;
 }
 
-void vulkanDofPassSetFNumber(float fNumber_) {
-    fNumber = fNumber_ > 0.0f ? fNumber_ : 0.1f;
-}
-
-void vulkanDofPassSetFocalLength(float focalLengthMm_) {
-    focalLengthMm = focalLengthMm_ > 0.0f ? focalLengthMm_ : 1.0f;
+float vulkanDofPassGetFocusDistance(void) {
+    return focusDistance;
 }
 
 void vulkanDofPassSetQuality(int rings) {
@@ -413,18 +407,6 @@ void vulkanDofPassSetQuality(int rings) {
     if (rings != qualityRings) {
         qualityRings = rings;
     }
-}
-
-float vulkanDofPassGetFocus(void) {
-    return focusMeters;
-}
-
-float vulkanDofPassGetFNumber(void) {
-    return fNumber;
-}
-
-float vulkanDofPassGetFocalLength(void) {
-    return focalLengthMm;
 }
 
 int vulkanDofPassGetQuality(void) {
