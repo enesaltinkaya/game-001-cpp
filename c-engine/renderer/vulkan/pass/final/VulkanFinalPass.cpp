@@ -25,9 +25,8 @@ struct FinalPushConstants {
     u32 colorTextureIndex = 0;
     u32 bloomTextureIndex = 0;
     float bloomStrength   = 0.0f;
-    float casStrength     = 0.0f;
     float contrast        = 0.0f;
-    u32 pad[3]           = {};
+    u32 pad[4]           = {};
 };
 
 void VulkanFinalPass::added() {
@@ -76,7 +75,6 @@ void VulkanFinalPass::update() {
         .colorTextureIndex = (u32)colorImage->sampledPoolIndex,
         .bloomTextureIndex = (u32)vulkanBloomPassGetBloomSampledIndex(),
         .bloomStrength     = vulkanBloomPassGetStrength(),
-        .casStrength       = rendererGetCasStrength(),
         .contrast          = CONTRAST,
     };
     vulkanPush(cmd, &pipeline, sizeof(pc), &pc);

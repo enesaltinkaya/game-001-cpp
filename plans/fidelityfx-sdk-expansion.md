@@ -18,7 +18,8 @@ implementation starts.
   (CACAO contact shadows + FSR output intact). Known behavior: re-running
   the build reorders entries in generated `*_permutations.h` wrappers —
   benign, documented in `docs/fsr3.1.md` "Re-run note".)
-- [ ] Phase 1 — CAS (Contrast Adaptive Sharpening)
+- [x] Phase 1 — CAS (done 2026-08-22, **no new SDK component needed** —
+  RCAS rides the existing FSR3 upscaler context; see phase notes)
 - [ ] Phase 2 — SPD (Single Pass Downsampler)
 - [ ] Phase 3 — Lens (grain, vignette, chromatic aberration)
 - [ ] Phase 4 — DOF (depth of field / bokeh)
@@ -100,6 +101,31 @@ Every later phase reuses this. Done once, here.
 output unchanged.
 
 ## Phase 1 — CAS
+
+*Done 2026-08-22 — design deviation, much cheaper than sketched below.*
+
+Outcome: AMD's RCAS kernel (the real CAS sharpener; compiled into the
+FSR3 upscaler component since Phase 0 — the `APPLY_SHARPENING={0,1}`
+permutations) runs inside the existing FSR3 upscaler dispatch.
+**No `FfxCasContext`, no CAS entry in `ENABLED_COMPONENTS`, no new pass.**
+
+- `VulkanFsrPass`: `dispatch.sharpness = rendererGetCasStrength()` (the
+  `aaCasStrength` setting — slider + debug keys unchanged),
+  `enableSharpening = strength > 0`. Removed the unused `fsrSharpness`
+  static + `vulkanFsrPass{Set,Get}Sharpness` API and the old mutual-
+  exclusion guard against the final pass's scalar CAS.
+- `final.frag` / `VulkanFinalPass`: hand-rolled scalar CAS kernel deleted
+  (~70 lines); `casStrength` push constant removed; contrast/bloom/
+  tonemap untouched.
+- Settings GUI: slider relabeled "Sharpening — RCAS" and greyed out
+  (`casDisabled`) when the upscaler is off — sharpening now requires the
+  upscaler (Native AA keeps full resolution). Known consequence: the
+  previous FSR-off + TAA config loses sharpening (was: scalar CAS at 100%).
+- Validated: FSR-off run clean; FSR Native AA runs at 40% / 100% with
+  center-crop Laplacian variance 359 (off) → 854 (40%) → 1754 (100%),
+  no ringing artifacts at max (vision-checked). Recommend ~40%.
+
+*Original sketch (superseded, kept for context):*
 
 _Effort: small. Replaces a hand-rolled approximation._
 

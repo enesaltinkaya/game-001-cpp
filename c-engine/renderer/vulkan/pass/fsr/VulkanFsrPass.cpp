@@ -67,7 +67,6 @@ static char skyVelocityPipeReady;
 static VulkanPipe reflVelocityPipe;
 static char reflVelocityPipeReady;
 static char reactiveMaskEnabled = 1;
-static float fsrSharpness       = 1.0f;
 
 typedef struct ReactivePushConstants {
     u32 opaqueColorIndex;
@@ -536,11 +535,14 @@ void VulkanFsrPass::update() {
     dispatch.renderSize.height   = color->extent.height;
     dispatch.upscaleSize.width   = outputImage.extent.width;
     dispatch.upscaleSize.height  = outputImage.extent.height;
-    /* FSR's built-in reactive CAS and the final pass's CAS must not both run:
-     * when the final pass is doing CAS, skip FSR's internal sharpening to
-     * avoid double-sharpening (stacked unsharp masks cause ringing). */
-    dispatch.enableSharpening = fsrSharpness > 0.0f && rendererGetCasStrength() <= 0.0f;
-    dispatch.sharpness        = fsrSharpness;
+    /* RCAS (AMD's CAS kernel) runs inside the upscaler dispatch: the same
+     * FSR3 context sharpens the upscaled image — no separate CAS context
+     * and no engine-side sharpening pass. The settings-GUI strength slider
+     * (aaCasStrength) feeds this directly. When the upscaler is off the
+     * engine applies no sharpening at all. */
+    float casStrength         = rendererGetCasStrength();
+    dispatch.enableSharpening = casStrength > 0.0f;
+    dispatch.sharpness        = casStrength;
     dispatch.frameTimeDelta      = (float)(utils::timer.frameTime / MILLION); /* ns → ms */
     dispatch.preExposure         = 1.0f;
     dispatch.reset               = contextJustCreated || (camera->frameIndex <= 2);
@@ -646,19 +648,5 @@ void vulkanFsrPassSetReactiveMask(char enabled) {
 
 char vulkanFsrPassGetReactiveMask(void) {
     return reactiveMaskEnabled;
-}
-
-void vulkanFsrPassSetSharpness(float sharpness) {
-    if (sharpness < 0.0f) {
-        sharpness = 0.0f;
-    }
-    if (sharpness > 1.0f) {
-        sharpness = 1.0f;
-    }
-    fsrSharpness = sharpness;
-}
-
-float vulkanFsrPassGetSharpness(void) {
-    return fsrSharpness;
 }
 }  // namespace engine

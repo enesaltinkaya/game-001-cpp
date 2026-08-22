@@ -11,23 +11,17 @@ layout(push_constant) uniform PushConstants {
     uint colorTextureIndex;
     uint bloomTextureIndex;
     float bloomStrength;
-    float casStrength;  // 0 = off, ~0.5 typical, 1.0 = max sharpening
-    float contrast;     // 1.0 = neutral, >1.0 = more contrast
-    uint pad[3];
+    float contrast;
+    uint pad[4];
 };
 
 #include "../../includes/utils.shader"
 #include "../../includes/globalset.shader"
 
-/* -----------------------------------------------------------------------
-   AMD FidelityFX CAS (Contrast Adaptive Sharpening) — simplified scalar
-
-   Important: apply CAS in the display-referred domain, after bloom and
-   tonemapping, not on unclamped HDR radiance. The standard CAS shaping term
-   assumes values in/near [0, 1]. In HDR (>1.0) the (1 - mx) branch collapses
-   toward zero/negative, which effectively disables sharpening over much of the
-   image and makes the strength slider look broken.
-   ----------------------------------------------------------------------- */
+/* Sharpening note: CAS/RCAS is NOT applied here. AMD's RCAS kernel runs
+ * inside the FSR3 upscaler dispatch (VulkanFsrPass) on the upscaled image,
+ * driven by the same aaCasStrength setting. This pass only composes bloom,
+ * tonemaps (AgX LUT / ACES / ...) and applies the contrast curve. */
 
 vec3 sampleSceneHdr(vec2 uv) {
     vec3 hdr = texture(sampler2D(textures[nonuniformEXT(colorTextureIndex)],
@@ -170,46 +164,6 @@ vec3 tonemapAndContrast(vec3 hdr) {
     return ldr;
 }
 
-vec3 sampleDisplayLdr(vec2 uv) {
-    return tonemapAndContrast(sampleSceneHdr(uv));
-}
-
-vec3 casFilter(vec2 uv, vec2 texelSize, float sharpness) {
-    // Fetch 3×3 neighbourhood in display-referred LDR space.
-    vec3 a = sampleDisplayLdr(uv + texelSize * vec2(-1.0, -1.0));
-    vec3 b = sampleDisplayLdr(uv + texelSize * vec2(0.0, -1.0));
-    vec3 c = sampleDisplayLdr(uv + texelSize * vec2(1.0, -1.0));
-    vec3 d = sampleDisplayLdr(uv + texelSize * vec2(-1.0, 0.0));
-    vec3 e = sampleDisplayLdr(uv);
-    vec3 f = sampleDisplayLdr(uv + texelSize * vec2(1.0, 0.0));
-    vec3 g = sampleDisplayLdr(uv + texelSize * vec2(-1.0, 1.0));
-    vec3 h = sampleDisplayLdr(uv + texelSize * vec2(0.0, 1.0));
-    vec3 i = sampleDisplayLdr(uv + texelSize * vec2(1.0, 1.0));
-
-    vec3 mnCross = min(min(min(b, d), min(f, h)), e);
-    vec3 mxCross = max(max(max(b, d), max(f, h)), e);
-    vec3 mnRing  = min(min(a, c), min(g, i));
-    vec3 mxRing  = max(max(a, c), max(g, i));
-
-    vec3 mn = min(mnCross, mnRing);
-    vec3 mx = max(mxCross, mxRing);
-
-    // CAS weight: w = sqrt(min(mn/mx, (1-mx)/(1-mn))) mapped through sharpness
-    vec3 amp =
-        clamp(min(mn / max(mx, vec3(1e-5)), (1.0 - mx) / max(1.0 - mn, vec3(1e-5))), 0.0, 1.0);
-    amp = sqrt(amp);
-
-    // 0.0 => off, 1.0 => strongest sharpening
-    // Peak is capped near AMD's RCAS_LIMIT (0.25 - 1/16 = 0.1875): beyond
-    // that the denominator (1 + 4w) shrinks toward zero and the filter
-    // overshoots into ringing. The previous 0.125 cap kept even the max
-    // slider position too weak to counteract TAA's temporal softness.
-    float peak = -mix(0.0, 0.22, sharpness);
-    vec3 w     = amp * peak;
-
-    return (w * (b + d + f + h) + e) / (1.0 + 4.0 * w);
-}
-
 /* -----------------------------------------------------------------------
    Blue-noise dither — ±0.5/255 rotated per frame to prevent 8-bit banding
    ----------------------------------------------------------------------- */
@@ -239,28 +193,7 @@ vec3 blueNoiseDither(vec3 color, vec2 fragCoord) {
 void main() {
     vec2 uv = vec2(inUV.x, 1.0 - inUV.y);
 
-    /* Use the actual source texture dimensions here.
-     *
-     * sceneBuffer.cameras[0].viewport stores the internal render resolution,
-     * which is smaller than the display resolution when FSR is active.
-     * Using that lower resolution here makes the final CAS pass step across
-     * the already-upscaled image with texel offsets that are too large,
-     * softening the result and making FSR modes look like visibly low-res
-     * rendering. */
-    ivec2 colorSize = textureSize(
-        sampler2D(textures[nonuniformEXT(colorTextureIndex)], samplers[SAMPLER_CLAMP_LINEAR]),
-        0);
-    vec2 texelSize = 1.0 / vec2(max(colorSize, ivec2(1)));
-
-    /* CAS belongs near the end of the pipeline: after TAA/upscaling,
-     * after bloom composition, after tonemap/contrast, but before dithering
-     * and UI. */
-    vec3 ldr;
-    if (casStrength > 0.0) {
-        ldr = casFilter(uv, texelSize, casStrength);
-    } else {
-        ldr = sampleDisplayLdr(uv);
-    }
+    vec3 ldr = tonemapAndContrast(sampleSceneHdr(uv));
 
     ldr = blueNoiseDither(ldr, gl_FragCoord.xy);
 
