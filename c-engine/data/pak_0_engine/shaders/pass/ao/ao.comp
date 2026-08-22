@@ -35,7 +35,8 @@ layout(push_constant) uniform PushConstants {
 #define RAY_COUNT     32   // disk rays per pixel
 #define MAX_STEPS     16   // doubling march iterations (HiZ early-out)
 #define DISK_RADIUS   (1.0 / sqrt(float(RAY_COUNT)))  // cone half-angle ~10°
-#define HORIZON_SCALE 1.0  // master AO strength
+#define HORIZON_SCALE 0.4  // master AO strength (was 1.0 → 0.6 → 0.4 — reads as too strong at 0.6)
+#define AO_FLOOR      0.5  // no pixel darkens by more than 50% (kills saturated black spots)
 #define MAX_DIST_SCALE 0.15 // maxDist = clamp(scale * distToCam, MIN, MAX)
 #define MAX_DIST_MIN  1.0  // march range clamp, metres
 #define MAX_DIST_MAX  20.0
@@ -258,7 +259,8 @@ void main() {
         occl += w * horizonAngle * fade;
     }
 
-    float ao = clamp(1.0 - (occl / float(RAY_COUNT)) * HORIZON_SCALE, 0.0, 1.0);
+    float ao = clamp(1.0 - (occl / float(RAY_COUNT)) * HORIZON_SCALE,
+                     AO_FLOOR, 1.0);
     imageStore(storageImages[nonuniformEXT(pc.outputIndex)], coord,
                vec4(ao));
 }

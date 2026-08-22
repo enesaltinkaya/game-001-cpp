@@ -266,6 +266,21 @@ Deviations from the plan above, found during implementation/validation:
   not single-channel R16F — the S-space depth needs a second channel.
 - **`maxDist = clamp(0.15 * distToCam, 1.0, 20.0)`** — the plan's 0.05
   scale (0.7 m at 14 m) was too short for village-scale ground contact.
+- **`HORIZON_SCALE` tuned 1.0 → 0.6** — the full-strength master read as
+  too dark on the parked village scene (near-black ground contact under
+  trees/houses, heavy mottling under canopies). 0.6 keeps the contact cues
+  legible at ~60% strength; the composite multiply stays full (no softening
+  there, so the raw `ao` dump stays a true signal).
+- **`HORIZON_SCALE` 0.6 → 0.4 + `AO_FLOOR` 0.5 (2026-08-22)** — 0.6 still
+  read as too strong (heavily mottled meadow, black pits at grass-tuft
+  bases). Two changes: (a) master strength 0.4, and (b) a per-frame floor
+  `ao = clamp(1 - occl * HORIZON_SCALE, 0.5, 1.0)`, because the signal
+  clamps to 0 before the scale kicks in — scale-down alone still left ~6%
+  of geometry pixels near-black (saturated). The floor caps any surface at
+  50% darkening, turning the black pits into soft contact shadows without
+  flattening the rest of the signal. Trade-off: the raw `ao` dump is now
+  a floored (not "true") signal; the R8 per-frame range is [128, 255]
+  (banding there is expected, the accumulated R16F output is unaffected).
 - **Off-screen break**: steps whose UV leaves the screen terminate the ray
   (clamped UVs would false-hit border geometry).
 - **Extra debug-dump token `aoFrame`** (raw per-frame R8) next to `ao`
