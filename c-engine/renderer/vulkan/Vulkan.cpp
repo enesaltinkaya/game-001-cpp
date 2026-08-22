@@ -148,6 +148,8 @@ static void vulkanDebugDumpFrameImages(const char* shotPath) {
             img = vulkanFrameResourcesGetVelocity();
         } else if (!strcmp(tok, "depth")) {
             img = vulkanFrameResourcesGetDepth();
+        } else if (!strcmp(tok, "normals")) {
+            img = vulkanFrameResourcesGetNormals();
         } else if (!strcmp(tok, "color")) {
             VulkanImage* c = vulkanFrameResourcesGetCompositeColor();
             img           = c ? c : vulkanFrameResourcesGetSceneColor();

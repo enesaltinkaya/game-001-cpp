@@ -155,7 +155,8 @@ static void recreate(void) {
     frameResources.normals =
         vulkanCreateImage(.name   = "Normals",
                           .format = VK_FORMAT_R16G16_SFLOAT,
-                          .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                          .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
+                                  VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
                           .width = window.renderWidth,
                           .height = window.renderHeight);
 
