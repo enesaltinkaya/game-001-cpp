@@ -161,23 +161,55 @@ Useful controller methods beyond the above: `GetBuffers()` /
 `GetBufferData()`, `GetShader()` + `DisassembleShader()`, `FetchCounters()` /
 `EnumerateCounters()`, `GetDebugMessages()`.
 
-### API gotchas (this v1.46-dev module)
+## scripts/rdc.py (capture inspector)
+
+A CLI around the replay API for the everyday workflow — extract pass output
+images without opening the GUI:
+
+```bash
+scripts/rdc.py list                          # passes (debug-label groups) + their output targets
+scripts/rdc.py dump heightmap_terrain --out 2   # save that pass's result as PNG -> /tmp/rdc-dump/
+scripts/rdc.py dump oit_accumulate --frames 3   # same pass on 3 consecutive frames (flicker debugging)
+scripts/rdc.py dump --last                    # output of the frame's last draw call
+scripts/rdc.py dump --all                     # every pass's color output
+scripts/rdc.py dump 241                       # raw event id
+scripts/rdc.py clean --keep 1 --dry-run       # .rdc files are ~1 GB each
+```
+
+It defaults to the newest `.rdc` in `/tmp/RenderDoc`. Passes are the vk
+debug-label **PushMarker groups** the engine emits (`scene_depth_prepass`,
+`heightmap_terrain`, `azgaar_props`, …); a pass's *result* is read at its
+last draw (the `vkCmdBeginRendering` event is post-clear/pre-draw, and
+dispatch/EndPass events report no color outputs — compute-only groups like
+`oit_composite` are marked `(compute)` in `list`).
+
+## API gotchas (this v1.46-dev module)
 
 - **Recurse the action tree.** `GetRootActions()` returns only top-level
   entries; draw/dispatch actions live in `children` under
-  `BeginPass`/`CommandBufferBoundary` nodes.
+  `BeginPass`/`CommandBufferBoundary`/`PushMarker` nodes.
+- **Result objects, not bools.** `CaptureFile.OpenFile()` and
+  `OpenCapture()` return `ResultDetails` — check `r.OK()` / `r.Message()`.
+  `SetFrameEvent()` returns void (None) in this build.
 - **Names:** `ActionDescription.GetName()` takes an `SDFile` out-param in this
   version — just use `.customName` (the Vulkan debug label, e.g.
   `vkCmdDrawIndexedIndirectCount(<0>)`).
 - **`SetFrameEvent(eid, force)`** then **`GetPipelineState()`** (no args) —
   the state call is relative to the _current_ event.
-- **`GetTextures()` takes no arguments** (returns every texture in the
-  capture); per-resource info comes from pipeline-state outputs/descriptors.
+- **`GetTextures()` is on the controller** (no args; returns every texture in
+  the capture). Fields are lowercase (`arraysize`, `mips`, `cubemap`); the
+  format name comes from `t.format.Name()`. `ResourceId` exposes no field
+  accessors — key on `str(rid)` (`ResourceId::157`).
 - **`SaveTexture(saveStruct, path)`** — two args; `slice`/`sample` need
   `TextureSliceMapping`/`TextureSampleMapping` objects, not ints.
-- **Present actions' outputs are swapchain images** — reading their texture
-  data fails ("Invalid ID"); dump the _last draw's_ output target instead.
-- Shutdown order matters: `controller` → `capture file` → `ShutdownReplay()`.
+- **Pass outputs:** render targets are only reported in _draw_ pipeline
+  state — not at `vkCmdBeginRendering` (post-clear), dispatch, or EndPass
+  events. Compute passes expose their write targets through no reliable API
+  here (`GetReadWriteResources` came back empty).
+- **Float outputs** (R16F G-buffer, HDR) are converted 0–1 → 0–255 on save,
+  so HDR images look dark; that's expected, not a bug.
+- Shutdown order matters: `controller` → `capture file` → `ShutdownReplay()`
+  (skipping it aborts with a double-free).
 
 ## Environment variables
 
