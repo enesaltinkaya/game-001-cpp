@@ -149,5 +149,5 @@ void main() {
     outNormal   = OctEncode(N);
     // Vegetation is matte: high roughness, no metal.  alphaMask = 1 because
     // leaf/flower textures are alpha-masked (FSR reactive mask uses this).
-    outMaterial = vec4(0.9, 0.0, 1.0, 1.0);
+    outMaterial = vec4(0.9, 0.0, 1.0, 0.0);  // .a = ground flag: props (grass/trees) are not ground, so GROUND_ONLY decals don't paint onto canopies
 }

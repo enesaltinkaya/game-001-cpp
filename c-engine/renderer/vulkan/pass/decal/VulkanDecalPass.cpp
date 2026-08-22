@@ -28,6 +28,7 @@ typedef struct DecalPushConstants {
     u32 normalsIndex;
     u32 width;
     u32 height;
+    u32 materialIndex;  // 0xffffffff = no ground mask
 } DecalPushConstants;
 
 typedef struct RoadCompositePushConstants {
@@ -156,6 +157,7 @@ void VulkanDecalPass::update() {
     VulkanImage* sceneColor = vulkanFrameResourcesGetSceneColor();
     VulkanImage* depth = vulkanFrameResourcesGetDepth();
     VulkanImage* normals = vulkanFrameResourcesGetNormals();
+    VulkanImage* material = vulkanFrameResourcesGetMaterial();
     if (!cmd || !sceneColor || !depth || !normals) { elapsedCPU = utils::nanos() - elapsedCPU; return; }
 
     Entity* camEntity = cameraGetEntity();
@@ -183,6 +185,7 @@ void VulkanDecalPass::update() {
 
     vulkanTransition(cmd, depth, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
     vulkanTransition(cmd, normals, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
+    if (material) vulkanTransition(cmd, material, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
 
     DecalPushConstants pc = {
         .decalsAddress = decalBuffer[fi].address,
@@ -191,6 +194,7 @@ void VulkanDecalPass::update() {
         .normalsIndex = (u32)normals->sampledPoolIndex,
         .width = sceneColor->extent.width,
         .height = sceneColor->extent.height,
+        .materialIndex = material ? (u32)material->sampledPoolIndex : 0xffffffffu,
     };
 
     // --- Roads: render into the union layer, then composite onto sceneColor ---

@@ -30,6 +30,7 @@ layout(push_constant) uniform PushConstants {
     uint normalsIndex;
     uint width;
     uint height;
+    uint materialIndex;   // 0xffffffff = no ground mask
 } pc;
 
 layout(location = 0) flat in uint inDecalIndex;
@@ -103,6 +104,15 @@ void main() {
         vec2 enc = texelFetch(sampler2D(textures[nonuniformEXT(pc.normalsIndex)], samplers[SAMPLER_NEAREST]), coord, 0).rg;
         vec3 worldN = OctDecode(enc);
         if (worldN.y < d.params0.y) discard;
+    }
+
+    // Ground mask (material buffer .a, cleared to 0 every frame and set by the
+    // terrain pass): GROUND_ONLY decals must not paint non-ground surfaces
+    // that happen to face up (the top of a character's skirt, boot tops,
+    // canopies) inside the tall projector volume.
+    if ((flags & DECAL_FLAG_GROUND_ONLY) != 0u && pc.materialIndex != 0xffffffffu) {
+        float ground = texelFetch(sampler2D(textures[nonuniformEXT(pc.materialIndex)], samplers[SAMPLER_NEAREST]), coord, 0).a;
+        if (ground < 0.5) discard;
     }
 
     vec2 duv = local.xz * 0.5 + 0.5;

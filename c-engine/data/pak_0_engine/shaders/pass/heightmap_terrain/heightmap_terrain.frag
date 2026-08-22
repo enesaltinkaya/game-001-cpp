@@ -24,7 +24,7 @@ layout(location = 1) in vec3 inWorldPos;
 
 layout(location = 0) out vec4 outColor;     // scene color (HDR, R16G16B16A16)
 layout(location = 1) out vec2 outNormal;    // oct-encoded world normal (R16G16)
-layout(location = 2) out vec4 outMaterial;  // r=roughness g=metallic b=ao a=1 (R8G8B8A8)
+layout(location = 2) out vec4 outMaterial;  // r=roughness g=metallic b=ao a=ground flag for decal pass (R8G8B8A8)
 
 // Push constants: identical layout to the vertex shader's HeightmapPC block
 // (Vulkan requires compatible push constant declarations across stages; a
