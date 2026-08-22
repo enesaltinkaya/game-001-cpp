@@ -139,8 +139,13 @@ void main() {
     // (nearly-vertical rays from a ground pixel pass through the
     // occluder's body at a distance, darkening a blob that is disconnected
     // from the contact point), so it was removed.
+    // Fan the disk toward the sun.  The sun direction is world-space, so
+    // transform it with `view` (world→view, same as N_view/viewPos above) —
+    // NOT `invView` (view→world), which yields a bogus axis for any rotated
+    // camera and fans the disk the wrong way (darkening the LIT side, i.e. a
+    // silhouette ring disconnected from the contact point / shadowmap).
     vec3 sunView = normalize(
-        (sceneBuffer.cameras[0].invView * vec4(
+        (sceneBuffer.cameras[0].view * vec4(
             -sceneBuffer.directionalLight.direction.xyz, 0.0)).xyz);
     vec3 axis   = sunView;
     // Orthonormal disk basis around `axis` (Y reference unless degenerate).
