@@ -84,9 +84,11 @@ void VulkanLensPass::added() {
     utils::signalSubscribe("swapchainCreated", swapchainCreated);
 
     lensDisabled = utils::settingsGetBool("lensEnabled") ? 0 : 1;
-    grainAmount  = (float)utils::settingsGetDouble("lensGrain");
-    chromAb      = (float)utils::settingsGetDouble("lensChromAb");
-    vignette     = (float)utils::settingsGetDouble("lensVignette");
+    /* Persisted as percent (0..100, matching the GUI slider + aaCasStrength
+     * convention); convert to the 0..1 fraction the pass dispatch uses. */
+    grainAmount  = (float)utils::settingsGetDouble("lensGrain") / 100.0f;
+    chromAb      = (float)utils::settingsGetDouble("lensChromAb") / 100.0f;
+    vignette     = (float)utils::settingsGetDouble("lensVignette") / 100.0f;
     auto clamp01 = [](float v) { return v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v); };
     grainAmount  = clamp01(grainAmount);
     chromAb      = clamp01(chromAb);

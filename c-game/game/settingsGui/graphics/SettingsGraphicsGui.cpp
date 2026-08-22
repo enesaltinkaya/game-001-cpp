@@ -201,6 +201,8 @@ static void syncAAUi(void) {
     bloomLabel = bloomLabelText;
     snprintf(contactShadowLabelText, sizeof(contactShadowLabelText), "%s", engine::vulkanContactShadowPassIsDisabled() ? "Off" : "On");
     contactShadowLabel = contactShadowLabelText;
+    snprintf(lensLabelText, sizeof(lensLabelText), "%s", engine::vulkanLensPassIsDisabled() ? "Off" : "On");
+    lensLabel = lensLabelText;
     snprintf(fogLabelText, sizeof(fogLabelText), "%s", fogModeNames[fogMode]);
     fogLabel = fogLabelText;
 }
