@@ -144,6 +144,22 @@ includable from C11 code (committed in git):
   qualifier. That mismatch triggered Vulkan validation warnings during the
   `luma_instability` pass (`rw_luma_history`) and is undefined behavior.
 
+### `sdk/include/FidelityFX/gpu/cacao/ffx_cacao_callbacks_glsl.h`
+
+- Fixed the storage-image format qualifiers to match the resource formats the
+  SDK allocates in `ffx_cacao.cpp` (and the DX12 backend): the callbacks
+  declared `g_RwDeinterleavedDepth`/`g_RwDepthMips` `r32f`,
+  `g_RwDeinterleavedNormals` `rgba32f`, `g_RwSsaoBufferPing(Pong)` `rg32f`,
+  and `g_RwImportanceMap(Pong)` `r32f`, but the host creates them as
+  `R16_FLOAT`, `R8G8B8A8_SNORM`, `R8G8_UNORM`, and `R8_UNORM` respectively.
+  Vulkan validation flagged the `OpTypeImage` vs `VkImageView` format mismatch
+  on every CACAO dispatch (undefined behavior). Qualifiers changed to
+  `r16f`/`rgba8_snorm`/`rg8`/`r8` — restoring the lean formats (DX12 parity)
+  instead of fattening the host allocations. The glslang bundled in
+  `FidelityFX_SC.exe` accepts these with `#version 450` (emits
+  `StorageImageExtendedFormats`). All 124 CACAO permutation headers were
+  regenerated and both static libs rebuilt.
+
 ## Compatibility Header
 
 `ffx_compat.h` (force-included during C++ library compilation via `-include`) provides:
