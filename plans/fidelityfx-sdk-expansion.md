@@ -9,18 +9,20 @@ implementation starts.
 ## Status
 
 - [x] Phase 0 — Build infrastructure generalization (done 2026-08-22:
-  `fsr3.1/build.sh` restructured into a `comp_<name>_` registry +
-  `ENABLED_COMPONENTS` list; blob accessors & `-DFFX_<NAME>` defines wired
-  automatically; `validate_component` fail-fast guard; single-archive name
-  kept (`libffx_fsr3upscaler_vk.a`); no SDK patches were needed this phase;
-  validated by symbol-identical archives on both platforms (nm diff vs
-  pre-refactor = identical), full game build + `play log 5000` + screenshot
-  (CACAO contact shadows + FSR output intact). Known behavior: re-running
-  the build reorders entries in generated `*_permutations.h` wrappers —
-  benign, documented in `docs/fsr3.1.md` "Re-run note".)
+      `fsr3.1/build.sh` restructured into a `comp_<name>_` registry +
+      `ENABLED_COMPONENTS` list; blob accessors & `-DFFX_<NAME>` defines wired
+      automatically; `validate_component` fail-fast guard; single-archive name
+      kept (`libffx_fsr3upscaler_vk.a`); no SDK patches were needed this phase;
+      validated by symbol-identical archives on both platforms (nm diff vs
+      pre-refactor = identical), full game build + `play log 5000` + screenshot
+      (CACAO contact shadows + FSR output intact). Known behavior: re-running
+      the build reorders entries in generated `*_permutations.h` wrappers —
+      benign, documented in `docs/fsr3.1.md` "Re-run note".)
 - [x] Phase 1 — CAS (done 2026-08-22, **no new SDK component needed** —
-  RCAS rides the existing FSR3 upscaler context; see phase notes)
-- [ ] Phase 2 — SPD (Single Pass Downsampler)
+      RCAS rides the existing FSR3 upscaler context; see phase notes)
+- [x] Phase 2 — SPD (done 2026-08-22 — scope corrected during research,
+  see phase notes: only the runtime-HDR-pyramid use is viable; first real
+  consumer is SSSR in Phase 5)
 - [ ] Phase 3 — Lens (grain, vignette, chromatic aberration)
 - [ ] Phase 4 — DOF (depth of field / bokeh)
 - [ ] Phase 5 — SSSR (stochastic SSR, replaces custom SSR; needs Denoiser)
@@ -102,7 +104,7 @@ output unchanged.
 
 ## Phase 1 — CAS
 
-*Done 2026-08-22 — design deviation, much cheaper than sketched below.*
+_Done 2026-08-22 — design deviation, much cheaper than sketched below._
 
 Outcome: AMD's RCAS kernel (the real CAS sharpener; compiled into the
 FSR3 upscaler component since Phase 0 — the `APPLY_SHARPENING={0,1}`
@@ -128,7 +130,7 @@ permutations) runs inside the existing FSR3 upscaler dispatch.
   1.5). Above 100% (AMD reference max) applies only to the final-pass
   kernel — the FSR dispatch clamps its `sharpness` to [0,1] per SDK
   validation. To keep >1.0 multipliers safe, `rcas.shader` re-clamps the
-  lobe to `-RCAS_LIMIT` *after* the strength multiply (documented
+  lobe to `-RCAS_LIMIT` _after_ the strength multiply (documented
   deviation: upstream only uses multipliers ≤ 1.0, where the resolve
   denominator can't flip; without the re-clamp, 150% crushed 52% of
   pixels to 0/255 — verified fixed: 0.375% baseline-level).
@@ -139,7 +141,7 @@ permutations) runs inside the existing FSR3 upscaler dispatch.
   stage suppresses sharpening on noise-like regions by design), so 100%
   here ≈ perceptually milder than the old scalar 100%.
 
-*Original sketch (superseded, kept for context):*
+_Original sketch (superseded, kept for context):_
 
 _Effort: small. Replaces a hand-rolled approximation._
 
@@ -160,6 +162,51 @@ _Effort: small. Replaces a hand-rolled approximation._
 thin geometry; check with FSR on and off (native 1.0x too).
 
 ## Phase 2 — SPD
+
+*Done 2026-08-22 — with material scope corrections from investigating the
+actual component.*
+
+**Corrections to the original sketch (kept below):**
+
+- **IBL prefilter is NOT SPD territory** — `VulkanIbl::renderPrefilter`
+  renders each mip as an independent GGX convolution of the environment
+  (per-face roughness push constants), not a downsample chain. SPD's fixed
+  MEAN/MIN/MAX filters cannot express it.
+- **Load-time texture genMips is NOT SPD territory (on VK)** — the shipped
+  shader's storage-image format qualifier is baked at SPIR-V compile time
+  (`rgba32f` upstream); 8/16-bit UNORM/SRGB textures are format-class
+  incompatible and per-format permutations would explode the blob system.
+  The blit chain stays for texture loading.
+- **What SPD is here: a runtime HDR mip-chain utility** for
+  R16G16B16A16_SFLOAT images (fork patches the qualifier to `rgba16f`,
+  matching every HDR render target). **First real consumer: SSSR (Phase 5)**
+  — AMD's SSSR sample feeds SPD-generated color mips as the reflection
+  input. Wiring a consumer earlier would be dead code.
+
+**What landed:**
+
+- Archive: `spd` added to `ENABLED_COMPONENTS` via a registry block (1
+  shader, 3 perm axes × 4 variants). Two fork patches + one engine-side
+  workaround, all documented in `docs/fsr3.1.md`: callbacks qualifier
+  `rgba32f→rgba16f`; `FFX_SPD_CONTEXT_SIZE` Linux bump (the predicted
+  `wchar_t` round — static assert caught 9300 < 17550 needed); backend
+  global descriptor pool `poolSizeCount` 5→6 (upstream bug — dropped the
+  STORAGE_BUFFER pool size; SPD's atomic counter is the first consumer).
+- Engine: `renderer/vulkan/resources/VulkanSpd.{h,cpp}` — lazy MEAN/LOAD/LDS
+  context, `vulkanSpdGenerateMips(cmd, img)` (validates format/mips/usage,
+  GENERAL transition, `FFX_RESOURCE_USAGE_ARRAYVIEW` on the wrapped resource
+  so the backend creates 2D_ARRAY views — the shader's `image2DArray` UAVs
+  reject plain 2D views), teardown in `vulkanDestroyDelayed`.
+- Validation: `ENGINE_SPD_SELFTEST=1` — 256×256 1×1-checker (0.25/0.75, exact
+  f16) → SPD → readback mips 1..8, all must equal 0.5. **PASS**, zero
+  validation errors, normal-path regression clean (SPD fully dormant when
+  unused — context is lazy). The self-test also caught two test-side bugs
+  along the way (2×2-block checker averaged to 0.25 at mip1; `onHeap`
+  misuse in cleanup) — it stays in the tree as the regression gate for
+  future SDK/fork updates, since nothing compile-time covers the format
+  patch.
+
+*Original sketch (superseded, kept for context):*
 
 _Effort: small. Utility component — no visible feature, unlocks perf/quality._
 

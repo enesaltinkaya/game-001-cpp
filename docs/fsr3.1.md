@@ -2,10 +2,10 @@
 
 Custom build of the AMD FidelityFX FSR 3.1 SDK for use from a **C++ game engine**
 via Vulkan. Currently enabled via `ENABLED_COMPONENTS` in `build.sh`:
-the **FSR3 Upscaler** and **CACAO** (ambient occlusion) components (no frame
-generation, no DX12 backend). The SDK tree ships 21 components; enabling more
-is a registry edit (see "Build Script" below and the game repo's
-`plans/fidelityfx-sdk-expansion.md`).
+the **FSR3 Upscaler**, **CACAO** (ambient occlusion) and **SPD** (Single Pass
+Downsampler) components (no frame generation, no DX12 backend). The SDK tree
+ships 21 components; enabling more is a registry edit (see "Build Script"
+below and the game repo's `plans/fidelityfx-sdk-expansion.md`).
 
 ## What's Built
 
@@ -162,6 +162,34 @@ includable from C11 code (committed in git):
   `FidelityFX_SC.exe` accepts these with `#version 450` (emits
   `StorageImageExtendedFormats`). All 124 CACAO permutation headers were
   regenerated and both static libs rebuilt.
+
+### `sdk/include/FidelityFX/gpu/spd/ffx_spd_callbacks_glsl.h` (SPD round)
+
+- Output UAV format qualifiers `rgba32f` → `rgba16f`
+  (`rw_input_downsample_src_mips[]` + `rw_input_downsample_src_mid_mip`):
+  the engine's HDR render targets are R16G16B16A16_SFLOAT, and the storage
+  image format qualifier is baked into the precompiled SPIR-V — only
+  R16G16B16A16_SFLOAT images can be downsampled (format-incompatible views
+  are illegal, not just wasteful). Consequence: SPD here is a *runtime HDR
+  mip-chain* utility; load-time texture mips (8/16-bit UNORM/SRGB) keep the
+  blit path. Engine dispatchers must set `FFX_RESOURCE_USAGE_ARRAYVIEW` on
+  the wrapped resource: the shader's UAVs are `image2DArray`, so non-array
+  images need `VK_IMAGE_VIEW_TYPE_2D_ARRAY` views (legal on single-layer
+  images; handled by the backend when the flag is set).
+
+### `sdk/include/FidelityFX/host/ffx_spd.h`
+
+- `FFX_SPD_CONTEXT_SIZE` 9300 → 18000 uint32s on non-Windows (Linux
+  `wchar_t` inflation, same pattern as the CACAO bump; the SDK's
+  `FFX_STATIC_ASSERT` in `ffxSpdContextCreate` catches regressions).
+
+### `sdk/src/backends/vk/ffx_vk.cpp` (SPD round)
+
+- Global descriptor pool `poolSizeCount` 5 → 6: upstream declares 6 pool
+  sizes (including `VK_DESCRIPTOR_TYPE_STORAGE_BUFFER`) but passes 5, so
+  any effect binding a storage buffer (SPD's atomic counter is the first)
+  allocates from an unsized type — validation warning, OOM on strict
+  drivers.
 
 ## Compatibility Header
 

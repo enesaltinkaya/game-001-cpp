@@ -8,6 +8,7 @@
 #include "futuretask/FutureTask.h"
 #include "logger/Logger.h"
 #include "renderer/Renderer.h"
+#include "renderer/vulkan/resources/VulkanSpd.h"
 #include "renderer/vulkan/command/VulkanCommand.h"
 #include "renderer/vulkan/pipeline/VulkanProfile.h"
 #include "renderer/vulkan/utils/VulkanBlur.h"
@@ -183,6 +184,7 @@ void vulkanInit(void) {
     vulkanSwapchainInit();
     vulkanFrameResourcesInit();
     vulkanIblInit();
+    vulkanSpdRunSelfTest();
     {
         const char* env = getenv("ENGINE_IBL_DISABLED");
         if (env && atoi(env)) vulkanIblSetDisabled(1);
@@ -246,6 +248,7 @@ static void vulkanDestroyDelayed(void* _) {
     }
 
     vulkanIblDestroy();
+    vulkanSpdDestroy();
     vulkanFrameResourcesDestroy();
     vulkanResourceDestroy();
     vulkanBlurCleanup();
