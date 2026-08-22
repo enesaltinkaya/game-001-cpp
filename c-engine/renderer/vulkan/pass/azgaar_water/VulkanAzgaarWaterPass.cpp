@@ -27,6 +27,8 @@ typedef struct WaterPushConstants {
     float farZ;
     float projM00;
     float projM11;
+    float projM20;  // jittered-VP translation terms (TAA sub-pixel offset)
+    float projM21;
 } WaterPushConstants;
 
 static VulkanPipe pipe;
@@ -285,6 +287,8 @@ void VulkanAzgaarWaterPass::update() {
         .farZ       = cam->zfar,
         .projM00    = cam->cameraUbo.projection[0][0],
         .projM11    = cam->cameraUbo.projection[1][1],
+        .projM20    = cam->cameraUbo.projection[2][0],
+        .projM21    = cam->cameraUbo.projection[2][1],
     };
     vulkanPush(cmd, &pipe, sizeof(pc), &pc);
 

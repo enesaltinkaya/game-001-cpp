@@ -37,6 +37,8 @@ layout(push_constant) uniform WaterPushConstants {
     float farZ;
     float projM00;
     float projM11;
+    float projM20;  // jittered-VP x translation term (TAA), 0 when jitter off
+    float projM21;  // jittered-VP y translation term (TAA)
 } pc;
 
 // ── Scene depth sampling ───────────────────────────────────────────────
@@ -53,8 +55,14 @@ vec3 terrainPosAtPixel() {
     vec2 uv  = (vec2(gl_FragCoord.xy) + 0.5) / vec2(pc.width, pc.height);
     vec2 ndc = vec2(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
     float linZ  = linearizeDepth(d);
-    vec3 viewPos = vec3(ndc.x * linZ / pc.projM00,
-                        ndc.y * linZ / pc.projM11,
+    // The scene depth was rasterized with the per-frame jittered projection
+    // (TAA), whose translation terms (projM20/21) shift clip.xy by ±a
+    // sub-pixel each frame.  The unjittered reconstruction
+    // (viewPos.x = ndc.x * linZ / projM00) ignores them, so the recovered
+    // terrain height would walk back and forth with the jitter — visible as
+    // a shaky waterline/foam band at the beach.  Add the terms back.
+    vec3 viewPos = vec3((ndc.x + pc.projM20) * linZ / pc.projM00,
+                        (ndc.y + pc.projM21) * linZ / pc.projM11,
                         -linZ);
     return (sceneBuffer.cameras[0].invView * vec4(viewPos, 1.0)).xyz;
 }
