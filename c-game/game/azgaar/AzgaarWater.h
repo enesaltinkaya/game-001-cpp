@@ -24,4 +24,12 @@ void azgaarWaterDestroy(void);
 // multiples of CELL_SIZE so the camera-snap keeps the wave field stable.
 #define AZGAAR_WATER_GRID_SIZE  8192.0f
 #define AZGAAR_WATER_GRID_DIVS  512
+
+// Rendered surface sits this far *below* the data sea level.  The first FMG
+// land cells (h=20..21) are only 0..0.2 m above sea level, so a plane at
+// exactly sea level — plus the fragment shader's ~0.5 m shoreline fade band —
+// washes the dry beach in a translucent film.  Dipping the surface below the
+// data sea level lets the waterline settle offshore, where the seabed actually
+// dips under the plane, and the foam band forms at that new shoreline.
+#define AZGAAR_WATER_SURFACE_OFFSET (-0.5f)
 }  // namespace game

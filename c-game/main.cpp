@@ -6,5 +6,4 @@ int main(void) {
     utils::utilsInit();
     engine::engineSetGameSystem(&game::gameSystem);
     engine::engineStart();
-    utils::utilsDestroy();
-}
+    utils::utilsDestroy();}

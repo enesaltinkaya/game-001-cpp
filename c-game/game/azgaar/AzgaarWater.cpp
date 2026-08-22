@@ -88,7 +88,7 @@ static void buildGridMesh(engine::SceneVertex* vertices, u32* indices,
 void azgaarWaterInit(const AzgaarWorld* world) {
     if (!world) return;
 
-    float seaLevel = azgaarSeaLevelMeters(world);
+    float seaLevel = azgaarSeaLevelMeters(world) + AZGAAR_WATER_SURFACE_OFFSET;
 
     // Ripple direction from the map's authored wind (settings winds[0],
     // degrees; workstream F).  FMG leaves it 0 on unauthored maps — keep the
