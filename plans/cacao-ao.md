@@ -4,6 +4,48 @@ Integrate AMD CACAO 1.4 (ambient occlusion) from the FSR 3.1 SDK source
 (`cpp-thirdparty/fsr3.1`) into the engine, as a selectable alternative to the
 existing XeGTAO-based AO pass.
 
+## Status
+
+- [x] Phase 1 — third-party build (done; issues found & fixed along the way:
+  - Vulkan SDK paths moved `/home/enes/tools/` → `/home/enes/Sdks/`
+  - wine prefix drive mappings make SC resolve absolute `-output` paths
+    against the current drive → use relative `-output` (see docs/fsr3.1.md)
+  - `FFX_CACAO_CONTEXT_SIZE` too small on Linux (wchar_t) → patched to
+    600000 uint32s non-Windows in `ffx_cacao.h` (commit in the fork)
+  - build.sh: parallel shader pool (`MAX_SHADER_JOBS`), per-object archive
+    verification so failed compiles can't produce incomplete `.a` files)
+- [x] Phase 2 — engine pass (done, with two design deviations from the
+  original sketch, both simplifications):
+  - **No separate `VulkanCacaoPass`** — CACAO lives inside `VulkanAOPass`
+    as a second implementation (static FFX state + `cacaoUpdate()`), so
+    there's one System, one registration, one output interface, and the
+    composite pass is untouched. `wrapImageResource`/`makeImageCreateInfo`
+    are local statics (same pattern as the FSR pass) instead of a shared
+    header.
+  - **`generateNormals = true`** — the engine's normal buffer is
+    *oct-encoded* (`.rg`, decoded via `OctDecode` in the shaders), which
+    CACAO's affine `normalUnpackMul/Add` cannot decode. CACAO reconstructs
+    normals from depth instead; the normal image is still passed (the
+    resource is registered but unused in that mode).
+  - Depth convention: CACAO derives its linearization from the proj matrix
+    (`-proj[11]`, `proj[10]`); the D32 buffer holds standard [0,1] depth
+    (`glm_perspective` + `CGLM_FORCE_DEPTH_ZERO_TO_ONE`), so the camera's
+    projection matrix is passed as-is.
+  - TSS offsets driven from `camera->frameIndex % 3` (AMD's TAA
+    recommendation).
+  - Verified: `ENGINE_AO_IMPL=cacao` screenshot shows correct contact
+    shadows with no artifacts; raw AO buffer dump is clean; disabled path
+    skips the dispatch entirely (context not even created).
+- [x] Phase 3 — game side + validation (reduced scope after the decision to
+  drop XeGTAO entirely — see below)
+- [x] **XeGTAO removed** (2026-08-22): CACAO is now the only AO
+  implementation. Removed: `ao.comp` / `ao_temporal.comp` (+ spv), the
+  ray/temporal pipes and ping-pong accumulators in `VulkanAOPass`, the
+  per-frame R8 AO buffer from `VulkanFrameResources` (+ `aoFrame` debug
+  dump), the `AoImpl` selector API and `ENGINE_AO_IMPL` env var. The
+  settings GUI's AO On/Off toggle (`aoDisabled`) now controls CACAO
+  directly. HiZ pass kept (SSR + culling still use it).
+
 ## Background
 
 - CACAO ships in the FSR 3.1 SDK but our `build.sh` only compiles the
@@ -101,6 +143,10 @@ accessor when that define is set; `ffx_vk.cpp` is generic and untouched.
 
 ## Phase 2 — Engine pass (`c-engine`)
 
+> **Implemented differently (simpler):** CACAO is a second implementation
+> *inside* `VulkanAOPass` rather than a separate `VulkanCacaoPass` System.
+> See the Status section for rationale. What follows is the original sketch.
+
 ### 2.1 New pass: `renderer/vulkan/pass/cacao/VulkanCacaoPass.{h,cpp}`
 
 Follow the `VulkanAOPass` / `VulkanFsrPass` System pattern:
@@ -172,11 +218,9 @@ becomes an "AO algorithm" option, orthogonal to the upscaler choice
 
 ## Open questions
 
-1. Replace or coexist: plan assumes **coexist as a setting** (XeGTAO stays
-   default). If CACAO is meant to fully replace XeGTAO, drop the selector
-   and delete the XeGTAO pipelines in Phase 2.2.
+1. ~~Replace or coexist~~ — **resolved: replaced.** XeGTAO was removed;
+   CACAO is the sole AO implementation (2026-08-22).
 2. `useDownsampledSsao`: start with `true` (recommended, cheaper); the
    bilateral 5×5 upscale pass reconstructs full-res AO.
-3. Normal source: start with the existing normal buffer (unpack 1/0);
-   `generateNormals = true` is the fallback if the normal buffer proves
-   unsuitable (e.g. missing for some surfaces).
+3. Normal source: `generateNormals = true` (the engine's normal buffer is
+   oct-encoded, incompatible with CACAO's affine unpack).

@@ -5,6 +5,9 @@
 namespace engine {
 struct VulkanImage;
 
+/* Ambient occlusion via AMD FidelityFX CACAO (depth-based; normals are
+ * reconstructed from depth — the engine's normal buffer is oct-encoded and
+ * incompatible with CACAO's affine unpack). */
 class VulkanAOPass : public System {
 public:
     VulkanAOPass();
@@ -19,8 +22,8 @@ extern VulkanAOPass vulkanAOPass;
 
 void  vulkanAOPassSetDisabled(char disabled);
 char  vulkanAOPassIsDisabled(void);
-/// Current-frame AO temporal accumulator (R16G16_SFLOAT: .r = occlusion,
-/// .g = S-space inverse view depth, 0 = no data).  Sampled by the composite
-/// pass; NULL before the first swapchain exists.
+/// Current-frame CACAO output (R16G16B16A16_SFLOAT, .r = occlusion,
+/// 1 = unoccluded).  Sampled by the composite pass; NULL before the
+/// first swapchain exists or while disabled.
 struct VulkanImage* vulkanAOPassGetOutput(void);
 }  // namespace engine

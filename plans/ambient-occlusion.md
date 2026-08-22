@@ -1,5 +1,10 @@
 # Ambient Occlusion (Screen-Space GTAO, XeGTAO) — Implementation Plan
 
+> **SUPERSEDED (2026-08-22):** the XeGTAO implementation (ray + temporal
+> passes, `ao.comp` / `ao_temporal.comp`) was removed in favor of AMD
+> CACAO, which is now the engine's only AO implementation. See
+> `plans/cacao-ao.md`. This document is kept as a historical record.
+
 ## Goal
 
 Add a screen-space ambient occlusion pass that darkens crevices, corners, and

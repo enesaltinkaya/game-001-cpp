@@ -113,7 +113,7 @@ void main() {
         // ── 7. Base composite (direct lighting + reflections) ────────────
         composite = sceneCol * (1.0 - reflBlend) + reflBlend * ssrColor;
 
-        // ── 7b. Ambient occlusion (XeGTAO temporal accumulator) ────────
+        // ── 7b. Ambient occlusion (CACAO) ───────────────────────────────
         // Applied before fog (step 8) so fogged geometry fades to the fog
         // colour instead of staying dark.  0 = fully occluded, 1 = open.
         if (pc.aoIndex != 0xFFFFFFFFu) {

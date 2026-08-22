@@ -1,8 +1,8 @@
-# FSR 3.1 — Static Library Build (Vulkan, Upscaler Only)
+# FSR 3.1 — Static Library Build (Vulkan, Upscaler + CACAO)
 
 Custom build of AMD FidelityFX FSR 3.1 SDK for use from a **C++ game engine**
-via Vulkan. Only the **FSR3 Upscaler** component is compiled (no frame
-generation, no DX12 backend).
+via Vulkan. The **FSR3 Upscaler** and **CACAO** (ambient occlusion)
+components are compiled (no frame generation, no DX12 backend).
 
 ## What's Built
 
@@ -18,22 +18,41 @@ generation, no DX12 backend).
 | File                                                                  | Purpose                                                                   |
 | --------------------------------------------------------------------- | ------------------------------------------------------------------------- |
 | `src/components/fsr3upscaler/ffx_fsr3upscaler.cpp`                    | FSR3 upscaler core logic                                                  |
+| `src/components/cacao/ffx_cacao.cpp`                                  | CACAO AO core logic (`ffxCacaoContextCreate/Dispatch/Destroy`, `ffxCacaoUpdateSettings`) |
 | `src/shared/ffx_assert.cpp`                                           | Assert/debug utilities                                                    |
 | `src/shared/ffx_message.cpp`                                          | Message/logging utilities                                                 |
 | `src/shared/ffx_object_management.cpp`                                | Internal object management                                                |
 | `src/backends/vk/ffx_vk.cpp`                                          | Vulkan backend implementation                                             |
-| `src/backends/shared/ffx_shader_blobs.cpp`                            | Shader blob dispatch (routes by `FFX_FSR3UPSCALER` define)                |
-| `src/backends/shared/blob_accessors/ffx_fsr3upscaler_shaderblobs.cpp` | Precompiled SPIR-V shader permutations                                    |
+| `src/backends/shared/ffx_shader_blobs.cpp`                            | Shader blob dispatch (routes by `FFX_FSR3UPSCALER` / `FFX_CACAO` defines) |
+| `src/backends/shared/blob_accessors/ffx_fsr3upscaler_shaderblobs.cpp` | Precompiled SPIR-V shader permutations (FSR3)                             |
+| `src/backends/shared/blob_accessors/ffx_cacao_shaderblobs.cpp`        | Precompiled SPIR-V shader permutations (CACAO)                            |
 | `../../ffx_stubs.cpp`                                                 | Stubs for unbuilt components (breadcrumbs, frame interpolation swapchain) |
 
 All SDK paths relative to `git/sdk/`. `ffx_stubs.cpp` lives next to `build.sh`.
 
 ### Compiled Shaders (GLSL → SPIR-V)
 
-10 shaders × 4 variants (wave32, wave64, 16bit, wave64+16bit) = 40 permutation headers.
+FSR3 upscaler: 10 shaders × 4 variants (wave32, wave64, 16bit, wave64+16bit)
+= 40 permutation headers.
+
+CACAO: 31 shaders × 4 variants = 124 permutation headers (all variants are
+required — `ffx_cacao_shaderblobs.cpp` includes them unconditionally, even
+though the engine uses the 32-bit permutations). CACAO permutation args come
+from `gpu/cacao/CMakeCompileCACAOShaders.txt` (only
+`-DFFX_CACAO_OPTION_APPLY_SMART={0,1}`).
+
 Output: `git/sdk/src/backends/vk/shader_output/`.
 
-Shaders compiled via `wine git/sdk/tools/binary_store/FidelityFX_SC.exe`:
+Shaders compiled via `wine git/sdk/tools/binary_store/FidelityFX_SC.exe`,
+through a bounded parallel pool (wine takes ~2s to tear down per run;
+override with `MAX_SHADER_JOBS=N`).
+
+**Wine gotcha:** `-output` must be a *relative* path (the script runs from
+`git/sdk`). The wine prefix's drive mappings (`x: -> /home/enes`) make the
+SC tool resolve absolute POSIX paths against the current drive, silently
+writing to `/home/enes/home/enes/...` instead.
+
+FSR3 upscaler shaders:
 
 - `ffx_fsr3upscaler_accumulate_pass`
 - `ffx_fsr3upscaler_autogen_reactive_pass`
@@ -46,13 +65,24 @@ Shaders compiled via `wine git/sdk/tools/binary_store/FidelityFX_SC.exe`:
 - `ffx_fsr3upscaler_shading_change_pass`
 - `ffx_fsr3upscaler_shading_change_pyramid_pass`
 
+CACAO shaders (31): `ffx_cacao_apply_pass`, `ffx_cacao_apply_non_smart_pass`,
+`ffx_cacao_apply_non_smart_half_pass`, `ffx_cacao_clear_load_counter_pass`,
+`ffx_cacao_edge_sensitive_blur_{1..8}_pass`,
+`ffx_cacao_generate_importance_map{,_a,_b}_pass`,
+`ffx_cacao_generate_q{0,1,2,3}_pass`, `ffx_cacao_generate_q3_base_pass`,
+`ffx_cacao_prepare_downsampled_depths{,_and_mips,_half}_pass`,
+`ffx_cacao_prepare_native_depths{,_and_mips,_half}_pass`,
+`ffx_cacao_prepare_downsampled_normals{,_from_input_normals}_pass`,
+`ffx_cacao_prepare_native_normals{,_from_input_normals}_pass`,
+`ffx_cacao_upscale_bilateral_5x5_pass`.
+
 ## What's NOT Built
 
 - **DX12 backend** (`src/backends/dx12/`) — not needed
 - **ffx-api layer** (`ffx-api/`) — has hard-coded Windows/DX12 dependencies; we use the SDK-level API directly
 - **Frame generation / interpolation** (`src/components/frameinterpolation/`, `src/components/opticalflow/`)
-- **All other FidelityFX effects** (blur, CAS, CACAO, denoiser, DOF, brixelizer, FSR1, FSR2, lens, LPM, SPD, SSSR, VRS, etc.)
-- **All other shader blob accessors** — only `ffx_fsr3upscaler_shaderblobs.cpp` is compiled
+- **All other FidelityFX effects** (blur, CAS, denoiser, DOF, brixelizer, FSR1, FSR2, lens, LPM, SPD, SSSR, VRS, etc.)
+- **All other shader blob accessors** — only `ffx_fsr3upscaler_shaderblobs.cpp` and `ffx_cacao_shaderblobs.cpp` are compiled
 
 ## SDK Header Patches
 
@@ -95,6 +125,16 @@ includable from C11 code (committed in git):
   (aligned SSE store) for the `nextDynamicResourceView` loop, which faults on
   misalignment. MSVC generates scalar stores for the same code, so this bug is
   latent on Windows — the UB exists but doesn't crash.
+
+### `sdk/include/FidelityFX/host/ffx_cacao.h`
+
+- `FFX_CACAO_CONTEXT_SIZE` is 301054 uint32s (≈1.2 MB) on Windows but the
+  Linux `FfxCacaoContext_Private` is 2,302,456 bytes (33 `FfxPipelineState`
+  members, each with `wchar_t name[64]` at 4 bytes). Bumped to 600000
+  uint32s on non-Windows, guarded by `#if defined(_WIN32)` — same pattern as
+  the `FFX_SDK_DEFAULT_CONTEXT_SIZE` patch above. The SDK's own
+  `FFX_STATIC_ASSERT` in `ffxCacaoContextCreate` catches any regression at
+  compile time.
 
 ### `sdk/include/FidelityFX/gpu/fsr3upscaler/ffx_fsr3upscaler_callbacks_glsl.h`
 

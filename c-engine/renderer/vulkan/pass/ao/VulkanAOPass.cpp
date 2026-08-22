@@ -1,74 +1,58 @@
 #include "VulkanAOPass.h"
+#include "ecs/Ecs.h"
+#include "ecs/system/camera/CameraComponent.h"
+#include "ecs/system/camera/CameraSystem.h"
 #include "ecs/system/window/WindowSystem.h"
 #include "events/Events.h"
 #include "renderer/vulkan/Vulkan.h"
 #include "renderer/vulkan/command/VulkanCommand.h"
-#include "renderer/vulkan/pass/hiz/VulkanHiZPass.h"
-#include "renderer/vulkan/pipeline/VulkanPipe.h"
+#include "renderer/vulkan/pipeline/VulkanProfile.h"
 #include "renderer/vulkan/resources/VulkanFrameResources.h"
 #include "renderer/vulkan/resources/VulkanImage.h"
 #include "renderer/vulkan/resources/VulkanResourceManager.h"
 #include <stdlib.h>
+#include <string.h>
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmissing-field-initializers"
+#include <FidelityFX/host/ffx_cacao.h>
+#include <FidelityFX/host/backends/vk/ffx_vk.h>
+#pragma GCC diagnostic pop
 
 namespace engine {
 
-/* Mirrors VulkanHiZPass::MAX_HIZ_MIPS — the per-mip push-constant table is
- * sized to the full chain so the shader never has to index past it. */
-#define MAX_HIZ_MIPS 16
-
 static void swapchainCreated(void* _);
-static void createAccumulators(void);
-static void destroyAccumulators(void);
-static float aoEnvHistoryWeight(void);
-static void clearAccumulator(VulkanCommand* cmd, VulkanImage* img);
+static void cacaoDestroyContext(void);
+static void cacaoDestroyOutput(void);
+static char  cacaoEnsureContext(u32 width, u32 height);
+static void  cacaoUpdate(VulkanCommand* cmd, VulkanImage* depth, VulkanImage* normals, Camera* camera);
+static VkImageCreateInfo makeImageCreateInfo(VulkanImage* image);
+static FfxResource wrapImageResource(VulkanImage* image,
+                                     FfxResourceUsage usage,
+                                     FfxResourceStates state,
+                                     const wchar_t* name);
 
 static double elapsedCPU;
 static double elapsedGPU;
 static char aoDisabled;
 
-static VulkanPipe rayPipe;      // ao.comp — per-frame XeGTAO ray pass
-static VulkanPipe temporalPipe; // ao_temporal.comp — G-TAO temporal accumulation
-
-/* Ping-pong temporal accumulators (R16G16_SFLOAT: .r = occlusion,
- * .g = S-space inverse view depth, 0 = no data).  Same static-image +
- * swapchainCreated recreation pattern as TAA's taaA/taaB. */
-static VulkanImage aoA;
-static VulkanImage aoB;
-static u32 aoWidth;
-static u32 aoHeight;
-static int aoFrame = 0;
-static VulkanImage* aoCurrentOutput = NULL;
+/* CACAO (FidelityFX) state.  Own FfxInterface + scratch buffer (same
+ * pattern as the FSR pass); the CACAO context's internal GPU resources
+ * are freed on swapchain recreation / pass removal. */
+static void* cacaoScratchBuffer;
+static size_t cacaoScratchBufferSize;
+static FfxInterface cacaoBackendInterface;
+static char cacaoBackendReady;
+static FfxCacaoContext cacaoContext;
+static char cacaoContextReady;
+static VulkanImage cacaoOutput;
+static u32 cacaoWidth;
+static u32 cacaoHeight;
+static VulkanProfile cacaoProfile;
+static char cacaoProfileReady;
 
 VulkanAOPass vulkanAOPass;
 
 VulkanAOPass::VulkanAOPass() : System("ao") {}
-
-/* Must match the GLSL push-constant block in ao.comp.  The per-mip HiZ
- * sampled pool indices are pushed because the bindless pool assigns each
- * mip its own image view (see VulkanHiZPass::createMipViews). */
-typedef struct AoRayPushConstants {
-    u32 depthIndex;
-    u32 normalsIndex;
-    u32 outputIndex;
-    u32 width;
-    u32 height;
-    u32 hizMipCount;
-    u32 _pad;
-    u32 hizMipIndex[MAX_HIZ_MIPS];
-} AoRayPushConstants;
-
-/* Must match the GLSL push-constant block in ao_temporal.comp. */
-typedef struct AoTemporalPushConstants {
-    u32 aoIndex;
-    u32 prevIndex;
-    u32 outIndex;
-    u32 velocityIndex;
-    u32 depthIndex;
-    u32 width;
-    u32 height;
-    float historyWeight;
-    float depthThreshold;
-} AoTemporalPushConstants;
 
 void VulkanAOPass::added() {
     const char* env = getenv("ENGINE_AO_DISABLED");
@@ -76,91 +60,199 @@ void VulkanAOPass::added() {
 
     utils::signalSubscribe("swapchainCreated", swapchainCreated);
 
-    rayPipe = vulkanCreatePipe(
-        .name = "ao",
-        .comp = "shaders/pass/ao/spv/ao.comp.spv");
-    temporalPipe = vulkanCreatePipe(
-        .name = "ao_temporal",
-        .comp = "shaders/pass/ao/spv/ao_temporal.comp.spv");
+    cacaoProfile      = vulkanCreateProfile("cacao_ao");
+    cacaoProfileReady = 1;
 }
 
 void VulkanAOPass::preUpdate() {
     if (vulkan.skipFrame) {
         return;
     }
-    vulkanResetProfile(vulkan.currentCmd, &rayPipe.profile, 0);
-    vulkanResetProfile(vulkan.currentCmd, &temporalPipe.profile, 0);
+    if (cacaoProfileReady) {
+        vulkanResetProfile(vulkan.currentCmd, &cacaoProfile, 0);
+    }
 }
 
 static void swapchainCreated(void* _) {
     (void)_;
-    destroyAccumulators();
-    createAccumulators();
-    aoFrame = 0;
+    cacaoDestroyContext();
+    cacaoDestroyOutput();
 }
 
-static void createAccumulators(void) {
-    if (window.renderWidth <= 0 || window.renderHeight <= 0) {
+static void cacaoDestroyContext(void) {
+    if (cacaoContextReady) {
+        ffxCacaoContextDestroy(&cacaoContext);
+        cacaoContext      = FfxCacaoContext{};
+        cacaoContextReady = 0;
+    }
+}
+
+static void cacaoDestroyOutput(void) {
+    if (cacaoOutput.img) {
+        vulkanDestroyImage(&cacaoOutput, NULL);
+        cacaoOutput = VulkanImage{};
+    }
+    cacaoWidth  = 0;
+    cacaoHeight = 0;
+}
+
+static char cacaoEnsureContext(u32 width, u32 height) {
+    if (!cacaoBackendReady) {
+        cacaoScratchBufferSize = ffxGetScratchMemorySizeVK(vulkan.physicalDevice, 1);
+        cacaoScratchBuffer     = calloc(1, cacaoScratchBufferSize);
+        if (!cacaoScratchBuffer) {
+            utils::error("vulkanAOPass: failed to allocate %zu bytes of CACAO backend scratch memory",
+                         cacaoScratchBufferSize);
+            return 0;
+        }
+
+        VkDeviceContext deviceContext = {
+            .vkDevice         = vulkan.device,
+            .vkPhysicalDevice = vulkan.physicalDevice,
+            .vkDeviceProcAddr = vkGetDeviceProcAddr,
+        };
+
+        FfxDevice device = ffxGetDeviceVK(&deviceContext);
+        FfxErrorCode backendResult =
+            ffxGetInterfaceVK(&cacaoBackendInterface, device, cacaoScratchBuffer, cacaoScratchBufferSize, 1);
+        if (backendResult != FFX_OK) {
+            utils::error("vulkanAOPass: ffxGetInterfaceVK failed: %d", backendResult);
+            free(cacaoScratchBuffer);
+            cacaoScratchBuffer     = NULL;
+            cacaoScratchBufferSize = 0;
+            return 0;
+        }
+
+        cacaoBackendReady = 1;
+    }
+
+    if (cacaoContextReady && cacaoOutput.img && cacaoWidth == width && cacaoHeight == height) {
+        return 1;
+    }
+
+    cacaoDestroyContext();
+    cacaoDestroyOutput();
+
+    /* CACAO writes rgba16f: .r = final AO (1 = unoccluded). */
+    cacaoOutput = vulkanCreateImage(.name   = "CacaoOutput",
+                                    .format = VK_FORMAT_R16G16B16A16_SFLOAT,
+                                    .usage  = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT |
+                                              VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+                                    .width  = (int)width,
+                                    .height = (int)height);
+    if (!cacaoOutput.img) {
+        return 0;
+    }
+
+    VulkanCommand* cmd = vulkanTransientBegin();
+    vulkanTransition(cmd, &cacaoOutput, VK_IMAGE_LAYOUT_GENERAL, 0, 1);
+    vulkanTransientEnd(cmd, 1);
+
+    FfxCacaoContextDescription desc = {};
+    desc.width              = width;
+    desc.height             = height;
+    desc.useDownsampledSsao = true; /* cheaper; bilateral 5x5 upscale reconstructs full-res AO */
+    desc.backendInterface   = cacaoBackendInterface;
+
+    FfxErrorCode createResult = ffxCacaoContextCreate(&cacaoContext, &desc);
+    if (createResult != FFX_OK) {
+        utils::error("vulkanAOPass: ffxCacaoContextCreate failed: %d", createResult);
+        cacaoDestroyOutput();
+        return 0;
+    }
+
+    cacaoContextReady = 1;
+    cacaoWidth        = width;
+    cacaoHeight       = height;
+    utils::info("vulkanAOPass: created CACAO context for %ux%u", width, height);
+    return 1;
+}
+
+static VkImageCreateInfo makeImageCreateInfo(VulkanImage* image) {
+    VkImageCreateInfo info = {};
+    info.sType             = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    info.imageType         = VK_IMAGE_TYPE_2D;
+    info.format            = image->format;
+    info.extent            = image->extent;
+    info.mipLevels         = (u32)image->mipLevels;
+    info.arrayLayers       = (u32)image->layers;
+    info.samples           = image->samples;
+    info.tiling            = VK_IMAGE_TILING_OPTIMAL;
+    info.usage             = image->usage;
+    info.sharingMode       = VK_SHARING_MODE_EXCLUSIVE;
+    info.initialLayout     = VK_IMAGE_LAYOUT_UNDEFINED;
+    return info;
+}
+
+static FfxResource wrapImageResource(VulkanImage* image,
+                                     FfxResourceUsage usage,
+                                     FfxResourceStates state,
+                                     const wchar_t* name) {
+    VkImageCreateInfo createInfo = makeImageCreateInfo(image);
+    FfxResourceDescription desc  = ffxGetImageResourceDescriptionVK(image->img, createInfo, usage);
+    return ffxGetResourceVK(image->img, desc, name, state);
+}
+
+static void cacaoUpdate(VulkanCommand* cmd, VulkanImage* depth, VulkanImage* normals, Camera* camera) {
+    if (!cacaoEnsureContext(depth->extent.width, depth->extent.height)) {
         return;
     }
-    /* R16G16_SFLOAT: .r = accumulated AO, .g = S-space inverse view depth
-     * (TAA's depthToInv; 0 = "no data" / sky).  TRANSFER_DST is required by
-     * the initial clear (vkCmdClearColorImage); TRANSFER_SRC so the "ao"
-     * debug dump can read the accumulator back. */
-    const VkImageUsageFlags usage =
-        VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT |
-        VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
-    aoA = vulkanCreateImage(.name   = "AoA",
-                            .format = VK_FORMAT_R16G16_SFLOAT,
-                            .usage  = usage,
-                            .width  = window.renderWidth,
-                            .height = window.renderHeight);
-    aoB = vulkanCreateImage(.name   = "AoB",
-                            .format = VK_FORMAT_R16G16_SFLOAT,
-                            .usage  = usage,
-                            .width  = window.renderWidth,
-                            .height = window.renderHeight);
-    aoWidth  = (u32)window.renderWidth;
-    aoHeight = (u32)window.renderHeight;
 
-    /* Clear both accumulators to (1.0, 0.0) = "no occlusion, no history"
-     * so the first temporal blend degrades gracefully to the current frame
-     * (S = 0 triggers rejection).  The images start in UNDEFINED layout;
-     * transition them to their first real layout (GENERAL — how the update
-     * path stages the write target before each dispatch) BEFORE clearing,
-     * so vulkanClearColorImage' restore-back barrier targets a defined
-     * layout (VUID 01198 forbids newLayout = UNDEFINED). */
-    VulkanCommand* cmd = vulkanTransientBegin();
-    clearAccumulator(cmd, &aoA);
-    clearAccumulator(cmd, &aoB);
-    vulkanTransientEnd(cmd, 1);
-}
+    /* Depth/normals were left SHADER_READ_ONLY by the SSR pass; stage them
+     * for the compute reads. */
+    vulkanTransition(cmd, depth, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
+    vulkanTransition(cmd, normals, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
+    vulkanTransition(cmd, &cacaoOutput, VK_IMAGE_LAYOUT_GENERAL, 0, 1);
 
-static void destroyAccumulators(void) {
-    if (aoA.img) {
-        vulkanDestroyImage(&aoA, NULL);
-        aoA = VulkanImage{};
+    FfxCacaoSettings settings = FFX_CACAO_DEFAULT_SETTINGS;
+    /* The engine's normal buffer is oct-encoded (.rg), which CACAO's affine
+     * unpack (mul/add) cannot decode — reconstruct normals from depth. */
+    settings.generateNormals = true;
+    /* Rotate/scale the sampling kernel per frame (AMD's TAA recommendation)
+     * so the spatial kernel doesn't alias against the jitter sequence. */
+    const u32 phase = camera->frameIndex % 3;
+    settings.temporalSupersamplingAngleOffset  = (float)phase / 3.0f * 3.14159265f;
+    settings.temporalSupersamplingRadiusOffset = 1.0f + (((float)phase - 1.0f) / 3.0f) * 0.1f;
+    ffxCacaoUpdateSettings(&cacaoContext, &settings, true);
+
+    /* CACAO derives the depth linearization from the projection matrix
+     * (proj[10]/proj[11]); the depth buffer holds standard [0,1] depth. */
+    FfxFloat32x4x4 proj          = {};
+    FfxFloat32x4x4 normalsToView = {};
+    memcpy(proj, camera->cameraUbo.projection, sizeof(proj));
+    memcpy(normalsToView, camera->cameraUbo.view, sizeof(normalsToView));
+
+    FfxCacaoDispatchDescription dispatch = {};
+    dispatch.commandList  = ffxGetCommandListVK(cmd->cmd);
+    dispatch.depthBuffer  = wrapImageResource(depth,
+                                              FFX_RESOURCE_USAGE_READ_ONLY,
+                                              FFX_RESOURCE_STATE_COMPUTE_READ,
+                                              L"cacao_depth");
+    dispatch.normalBuffer = wrapImageResource(normals,
+                                              FFX_RESOURCE_USAGE_READ_ONLY,
+                                              FFX_RESOURCE_STATE_COMPUTE_READ,
+                                              L"cacao_normals");
+    dispatch.outputBuffer = wrapImageResource(&cacaoOutput,
+                                              FFX_RESOURCE_USAGE_UAV,
+                                              FFX_RESOURCE_STATE_UNORDERED_ACCESS,
+                                              L"cacao_output");
+    dispatch.proj            = &proj;
+    dispatch.normalsToView   = &normalsToView;
+    dispatch.normalUnpackMul = 1.0f;
+    dispatch.normalUnpackAdd = 0.0f;
+
+    vulkanBeginProfile(cmd, &cacaoProfile, 0);
+    FfxErrorCode result = ffxCacaoContextDispatch(&cacaoContext, &dispatch);
+    vulkanEndProfile(cmd, &cacaoProfile, 0);
+
+    if (result != FFX_OK) {
+        utils::error("vulkanAOPass: ffxCacaoContextDispatch failed: %d", result);
+        cacaoDestroyContext();
+        cacaoDestroyOutput();
+        return;
     }
-    if (aoB.img) {
-        vulkanDestroyImage(&aoB, NULL);
-        aoB = VulkanImage{};
-    }
-    aoWidth  = 0;
-    aoHeight = 0;
-    aoCurrentOutput = NULL;
-}
 
-static void clearAccumulator(VulkanCommand* cmd, VulkanImage* img) {
-    /* Stage the write target in GENERAL, then clear to (1.0, 0.0) =
-     * "no occlusion, no history".  vulkanClearColorImage round-trips the
-     * image through TRANSFER_DST_OPTIMAL and restores the previous layout. */
-    vulkanTransition(cmd, img, VK_IMAGE_LAYOUT_GENERAL, 0, 1);
-    VkClearColorValue clear;
-    clear.float32[0] = 1.0f;
-    clear.float32[1] = 0.0f;
-    clear.float32[2] = 0.0f;
-    clear.float32[3] = 0.0f;
-    vulkanClearColorImage(cmd, img, clear);
+    vulkanTransition(cmd, &cacaoOutput, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
 }
 
 void VulkanAOPass::update() {
@@ -171,107 +263,25 @@ void VulkanAOPass::update() {
         return;
     }
 
-    VulkanCommand* cmd        = vulkan.currentCmd;
-    VulkanImage* depth        = vulkanFrameResourcesGetDepth();
-    VulkanImage* normals      = vulkanFrameResourcesGetNormals();
-    VulkanImage* velocity     = vulkanFrameResourcesGetVelocity();
-    VulkanImage* perFrameAO   = vulkanFrameResourcesGetAO();
-    if (!perFrameAO || !depth || !normals || !velocity) {
+    VulkanCommand* cmd     = vulkan.currentCmd;
+    VulkanImage* depth     = vulkanFrameResourcesGetDepth();
+    VulkanImage* normals   = vulkanFrameResourcesGetNormals();
+    if (!depth || !normals) {
         elapsedCPU = utils::nanos() - elapsedCPU;
         return;
     }
 
-    VulkanImage* prev = (aoFrame % 2) ? &aoA : &aoB;
-    VulkanImage* out  = (aoFrame % 2) ? &aoB : &aoA;
-    if (!aoA.img || !aoB.img || aoWidth != perFrameAO->extent.width ||
-        aoHeight != perFrameAO->extent.height) {
-        destroyAccumulators();
-        createAccumulators();
-        aoFrame = 0;
-        prev = &aoA;
-        out  = &aoB;
-        if (!aoA.img || !aoB.img) {
-            elapsedCPU = utils::nanos() - elapsedCPU;
-            return;
+    if (!aoDisabled) {
+        Entity* camEntity = cameraGetEntity();
+        Camera* camera    = getComponent(camEntity->scene, Camera, camEntity->id);
+        if (camera) {
+            cacaoUpdate(cmd, depth, normals, camera);
         }
     }
+    /* While disabled the composite skips the AO multiply entirely
+     * (absent-sentinel index), so no output needs producing. */
 
-    /* Disabled (or inputs missing above): clear the accumulator this frame
-     * would have written so re-enabling starts from fresh history, and the
-     * composite's "ao" debug dump reads clean 1.0s.  The composite skips the
-     * multiply entirely while disabled (0xFFFFFFFF index), so the frame is
-     * pixel-identical to pre-AO. */
-    if (aoDisabled) {
-        clearAccumulator(cmd, out);
-        aoCurrentOutput = out;
-        elapsedCPU = utils::nanos() - elapsedCPU;
-        return;
-    }
-
-    /* Inputs readable.  Depth/normals were left SHADER_READ_ONLY by the
-     * SSR pass; velocity may still be a render attachment — stage all of
-     * them for the compute reads. */
-    vulkanTransition(cmd, depth, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
-    vulkanTransition(cmd, normals, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
-    vulkanTransition(cmd, velocity, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
-
-    /* ── Ray pass: per-frame XeGTAO → R8 per-frame buffer ── */
-    vulkanBeginProfile(cmd, &rayPipe.profile, 0);
-    vulkanTransition(cmd, perFrameAO, VK_IMAGE_LAYOUT_GENERAL, 0, 1);
-    vulkanBindPipe(cmd, &rayPipe);
-
-    VulkanImage* hiz = vulkanHiZGetCurrentImage();
-    int mipCount = hiz ? vulkanHiZGetMipCount() : 1;
-    if (mipCount > MAX_HIZ_MIPS) mipCount = MAX_HIZ_MIPS;
-
-    AoRayPushConstants pc = {
-        .depthIndex    = (u32)depth->sampledPoolIndex,
-        .normalsIndex  = (u32)normals->sampledPoolIndex,
-        .outputIndex   = (u32)perFrameAO->storagePoolIndex,
-        .width         = perFrameAO->extent.width,
-        .height        = perFrameAO->extent.height,
-        .hizMipCount   = (u32)mipCount,
-        ._pad          = 0,
-        .hizMipIndex   = {0},
-    };
-    for (int m = 0; m < mipCount; m++) {
-        pc.hizMipIndex[m] =
-            hiz ? vulkanHiZGetMipSampledIndex(m) : (u32)depth->sampledPoolIndex;
-    }
-    vulkanPush(cmd, &rayPipe, sizeof(pc), &pc);
-
-    u32 groupsX = (perFrameAO->extent.width  + 7) / 8;
-    u32 groupsY = (perFrameAO->extent.height + 7) / 8;
-    vulkanDispatch(cmd, &rayPipe, groupsX, groupsY, 1);
-    vulkanEndProfile(cmd, &rayPipe.profile, 0);
-
-    /* ── Temporal pass: G-TAO accumulation into the ping-pong ── */
-    vulkanBeginProfile(cmd, &temporalPipe.profile, 0);
-    vulkanTransition(cmd, perFrameAO, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
-    vulkanTransition(cmd, prev, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
-    vulkanTransition(cmd, out, VK_IMAGE_LAYOUT_GENERAL, 0, 1);
-
-    vulkanBindPipe(cmd, &temporalPipe);
-    AoTemporalPushConstants tpc = {
-        .aoIndex         = (u32)perFrameAO->sampledPoolIndex,
-        .prevIndex       = (u32)prev->sampledPoolIndex,
-        .outIndex        = (u32)out->storagePoolIndex,
-        .velocityIndex   = (u32)velocity->sampledPoolIndex,
-        .depthIndex      = (u32)depth->sampledPoolIndex,
-        .width           = perFrameAO->extent.width,
-        .height          = perFrameAO->extent.height,
-        .historyWeight   = aoEnvHistoryWeight(),
-        .depthThreshold  = 0.05f,
-    };
-    vulkanPush(cmd, &temporalPipe, sizeof(tpc), &tpc);
-    vulkanDispatch(cmd, &temporalPipe, groupsX, groupsY, 1);
-    vulkanEndProfile(cmd, &temporalPipe.profile, 0);
-
-    vulkanTransition(cmd, out, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
-    aoCurrentOutput = out;
-    aoFrame++;
-
-    elapsedGPU = rayPipe.profile.elapsed + temporalPipe.profile.elapsed;
+    elapsedGPU = cacaoProfileReady ? cacaoProfile.elapsed : 0.0;
     elapsedCPU = utils::nanos() - elapsedCPU;
 }
 
@@ -281,14 +291,19 @@ void VulkanAOPass::postUpdate() {
 }
 
 void VulkanAOPass::removed() {
-    destroyAccumulators();
-    if (rayPipe.pipe) {
-        vulkanDestroyPipe(&rayPipe);
-        rayPipe = VulkanPipe{};
+    cacaoDestroyContext();
+    cacaoDestroyOutput();
+    if (cacaoScratchBuffer) {
+        free(cacaoScratchBuffer);
+        cacaoScratchBuffer     = NULL;
+        cacaoScratchBufferSize = 0;
     }
-    if (temporalPipe.pipe) {
-        vulkanDestroyPipe(&temporalPipe);
-        temporalPipe = VulkanPipe{};
+    cacaoBackendInterface = FfxInterface{};
+    cacaoBackendReady     = 0;
+    if (cacaoProfileReady) {
+        vulkanDestroyProfile(&cacaoProfile);
+        cacaoProfile      = VulkanProfile{};
+        cacaoProfileReady = 0;
     }
 }
 
@@ -302,21 +317,8 @@ char vulkanAOPassIsDisabled(void) {
 }
 
 VulkanImage* vulkanAOPassGetOutput(void) {
-    /* The accumulator written by the most recently completed frame.  While
-     * disabled it holds clean (1.0, 0.0) — safe to dump, ignored by the
-     * composite (which uses the absent-sentinel index). */
-    if (!aoA.img || !aoB.img) {
-        return NULL;
-    }
-    return aoCurrentOutput ? aoCurrentOutput : &aoA;
-}
-
-/* Debug override for the temporal history weight (no recompile needed). */
-static float aoEnvHistoryWeight(void) {
-    const char* env = getenv("ENGINE_AO_WEIGHT");
-    if (env && *env) {
-        return (float)atof(env);
-    }
-    return 0.9f;
+    /* CACAO's rgba16f output (.r = AO).  NULL until the context exists
+     * (i.e. before the first enabled frame after swapchain creation). */
+    return cacaoOutput.img ? &cacaoOutput : NULL;
 }
 }  // namespace engine

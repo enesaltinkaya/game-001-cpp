@@ -157,8 +157,6 @@ static void vulkanDebugDumpFrameImages(const char* shotPath) {
             img = vulkanTaaPassGetOutput();
         } else if (!strcmp(tok, "ao")) {
             img = vulkanAOPassGetOutput();
-        } else if (!strcmp(tok, "aoFrame")) {
-            img = vulkanFrameResourcesGetAO();
         }
         if (!img) {
             continue;

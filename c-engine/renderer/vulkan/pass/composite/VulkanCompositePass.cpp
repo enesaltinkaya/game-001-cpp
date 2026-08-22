@@ -95,9 +95,9 @@ void VulkanCompositePass::update() {
         .outputImageIndex     = (u32)composite->storagePoolIndex,
         .volumetricColorIndex = volumetric ? (u32)volumetric->sampledPoolIndex : 0u,
         .weatherMaskIndex     = weatherMask ? (u32)weatherMask->sampledPoolIndex : 0xFFFFFFFFu,
-        /* AO temporal accumulator (absent-sentinel pattern, like the
-         * weather mask): while AO is disabled the multiply is skipped
-         * entirely so the frame stays pixel-identical to pre-AO. */
+        /* CACAO AO output (absent-sentinel pattern, like the weather
+         * mask): while AO is disabled the multiply is skipped entirely so
+         * the frame stays pixel-identical to pre-AO. */
         .aoIndex              = vulkanAOPassIsDisabled()
                                    ? 0xFFFFFFFFu
                                    : (vulkanAOPassGetOutput()
