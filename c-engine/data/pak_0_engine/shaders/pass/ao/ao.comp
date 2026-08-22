@@ -127,6 +127,16 @@ void main() {
     float startDist = 0.005 + 0.01 * distToCam;  // self-intersection offset
     vec3  startPos  = worldPos + N * startDist;  // offset along the normal
 
+    // Reverse-Z self-intersection bias, in NDC depth units.  Reverse-Z depth
+    // is affine in distance (D = (zFar - z) / (zFar - zNear)), so a
+    // world-space offset maps to a constant depth offset.  The ray starts
+    // startDist along the normal and the first sample a further startDist
+    // along the ray, so samples within ~2*startDist of the surface are
+    // self-hits; the HiZ test below rejects hits inside that band.
+    float selfBias  = (2.0 * startDist) /
+                      (sceneBuffer.cameras[0].zFar -
+                       sceneBuffer.cameras[0].zNear);
+
     // ── Per-frame blue-noise jitter (rotated golden-angle per frame) ──
     uint noiseIdx = sceneBuffer.ibl.blueNoiseIndex;
     vec2 bn;
@@ -152,18 +162,17 @@ void main() {
     float occl = 0.0;
 
     for (int i = 0; i < RAY_COUNT; i++) {
-        // Stratified disk around the view axis, fanning out into the scene
-        // (away from the camera).  A camera-facing (+Z) disk would lift
-        // every step above the surface; the lifted step then projects onto
-        // a *farther* ground point and the HiZ test false-hits the ground
-        // under it (flat terrain reads as fully occluded).  With the −Z
-        // disk, near steps pass *below* the surface (no hit at the texel)
-        // and only real occluders above the tangent plane register —
-        // the `parallel > 0` gate below keeps below-plane hits out.
+        // Stratified disk around the view axis, fanning toward the camera
+        // (the lit hemisphere, where ambient light arrives).  Steps are
+        // lifted above the surface and project in front of it, so the
+        // reverse-Z HiZ test (D > max -> in front -> no hit) rejects the
+        // surface itself; only real occluders above the tangent plane
+        // register, and the `parallel > 0` gate below keeps below-plane
+        // hits out.
         float angle  = 6.2831853 * (halton2(i) + bn.x);
         float radius = DISK_RADIUS * sqrt((float(i) + bn.y) / float(RAY_COUNT));
         vec3  dirView = normalize(vec3(cos(angle) * radius, sin(angle) * radius,
-                                       -1.0));
+                                       1.0));
 
         // March in world space so every step projects through the same
         // unjittered VP as ssr.comp (one invView multiply per pixel).
@@ -198,27 +207,28 @@ void main() {
             uint mip = uint(clamp(floor(log2(t * pdu)) + 1.0, 0.0,
                                   float(uint(pc.hizMipCount) - 1u)));
 
-            // HiZ test with pyramid descent:
-            //   D > max  → in front of the closest surface → hit
-            //   D < min  → behind every surface → no hit, keep marching
-            //   else     → ambiguous, descend one mip
+            // HiZ test with pyramid descent.  Reverse-Z: .g = max = closest,
+            // .r = min = farthest, and larger depth = closer to the camera.
+            //   D < min - bias → behind every surface (beyond the self band)
+            //                    → hit
+            //   D > max        → in front of every surface (incl. our own)
+            //                    → no hit, keep marching
+            //   else           → ambiguous, descend to a finer mip
             uint m = mip;
             while (true) {
                 vec2 hz = fetchHiZ(m, pc.hizMipIndex[m], scr.xy);
-                if (D > hz.g) {
+                if (D < hz.r - selfBias) {
                     hit    = true;
                     hitT   = t;
                     break;
                 }
-                if (D < hz.r) {
-                    break;  // no hit at this step — keep marching
+                if (D > hz.g) {
+                    break;  // in front of every surface — keep marching
                 }
-                if (m + 1u >= pc.hizMipCount) {
-                    hit  = true;  // ambiguous at the pyramid base: conservative
-                    hitT = t;
-                    break;
+                if (m == 0u) {
+                    break;  // finest mip, inside the self-bias band: no hit
                 }
-                m++;
+                m--;
             }
             if (hit) break;
 
@@ -240,10 +250,10 @@ void main() {
                                      0.0));
         float horizonAngle = atan(perp / parallel);
 
-        // Weight: alignment with the disk axis (the view axis, −V).  With
-        // the narrow default cone this is ≈ constant; it matters once the
-        // cone is widened.  Range fade kills distant hits.
-        float w    = 1.0 + dot(-V, dirView);
+        // Weight: alignment with the disk axis (the view axis, +V toward
+        // the camera).  With the narrow default cone this is ≈ constant; it
+        // matters once the cone is widened.  Range fade kills distant hits.
+        float w    = 1.0 + dot(V, dirView);
         float fade = 1.0 / (1.0 + (hitT / maxDist) * (hitT / maxDist));
         occl += w * horizonAngle * fade;
     }
