@@ -1372,6 +1372,49 @@ static float propsClumpNoise(float wx, float wz) {
     return n;  // ~[0,0.9]
 }
 
+// Vegetation colour variation.  The old single scalar jitter only scaled the
+// uniform biome tint, so a dense field of grass read as one flat mint-green
+// carpet (identical hue everywhere).  Three stacked signals break that up:
+//   1. Coarse world-anchored patch noise (~50 / ~125 m octaves): open ground
+//      shows clumps of lighter/darker turf at a scale the eye registers.
+//   2. Per-instance brightness jitter (±25% at jitter = 1).
+//   3. Per-channel micro-shifts: individual plants drift toward yellowed or
+//      blue-green instead of merely brightening/darkening (the two classic
+//      dry/fresh grass extremes).
+// `jitter` scales the per-instance deviation (terms 2./3.): 1.0 keeps trees
+// subtle, grass passes a larger value so neighbouring tufts clearly differ.
+// Every term is a pure function of world position + tile seed (world-anchored
+// noise for 1., hashed texel randoms for 2./3.), so eviction + regeneration
+// stays bit-identical (determinism contract).
+// `saltBase` must leave the next three salt values free (+1..+3).
+static void propsVegetationColor(const AzgaarWorld* world,
+                                 u32 biome,
+                                 float wx,
+                                 float wz,
+                                 u32 tileSeed,
+                                 u32 tx,
+                                 u32 tz,
+                                 u32 saltBase,
+                                 float out[3],
+                                 float jitter = 1.0f) {
+    float bc[3];
+    azgaarWorldBiomeColor(world, biome, bc);
+    float n     = 0.6f * valueNoise10(wx * 0.02f, wz * 0.02f, 0x51A7435Fu) +
+              0.4f * valueNoise10(wx * 0.008f, wz * 0.008f, 0x51A7435Fu + 1013904223u);
+    float patch = 0.78f + 0.44f * n;  // ~±22% field-scale clumps
+    float r0    = propsRand(tileSeed, tx, tz, saltBase);
+    float r1    = propsRand(tileSeed, tx, tz, saltBase + 1u);
+    float r2    = propsRand(tileSeed, tx, tz, saltBase + 2u);
+    float r3    = propsRand(tileSeed, tx, tz, saltBase + 3u);
+    float j     = (1.0f + (2.0f * r0 - 1.0f) * 0.25f * jitter) * patch;   // brightness
+    float jr    = 1.0f + (2.0f * r1 - 1.0f) * 0.18f * jitter;            // dry/yellowed drift
+    float jg    = 1.0f + (2.0f * r2 - 1.0f) * 0.10f * jitter;
+    float jb    = 1.0f + (2.0f * r3 - 1.0f) * 0.25f * jitter;           // fresh blue-green drift
+    out[0]        = bc[0] * j * jr;
+    out[1]        = bc[1] * j * jg;
+    out[2]        = bc[2] * j * jb;
+}
+
 // ── Road distance hash (section-37 routes, "no trees on roads" gate) ──────
 // A coarse uniform-grid hash of road centreline points (world space, `bucket`
 // m buckets).  Query checks the 3x3 neighbourhood for any point within `maxD`.
@@ -2583,24 +2626,30 @@ static void propsScatterJob(void* userData) {
                 if (propsRand(tileSeed, tx, tz, 0xD1) < underD) {
                     const PropSpeciesDef* gdef = &kSpecies[AZGAAR_PROP_GRASS_TUFT];
                     float baseAng = propsRand(tileSeed, tx, tz, 0xD6) * 2.0f * static_cast<float>(M_PI);
-                    float bc[3];
-                    azgaarWorldBiomeColor(g_world, biome, bc);
                     for (u32 gi = 0; gi < 2; gi++) {
                         float ang    = baseAng + static_cast<float>(gi) * static_cast<float>(M_PI);
                         float gwx    = wx + cosf(ang) * 2.0f;
                         float gwz    = wz + sinf(ang) * 2.0f;
                         float gScale = gdef->baseMin + (gdef->baseMax - gdef->baseMin) *
                                                            propsRand(tileSeed, tx, tz, 0xD2 + gi);
-                        float j      = 0.6f + 0.8f * propsRand(tileSeed, tx, tz, 0xD3 + gi);
                         engine::PropInstance inst = {};
                         inst.pos[0]       = gwx;
                         inst.pos[1]       = h;
                         inst.pos[2]       = gwz;
                         inst.yaw      = propsRand(tileSeed, tx, tz, 0xD4 + gi) * 2.0f * static_cast<float>(M_PI);
                         inst.scale    = gScale;
-                        inst.color[0] = bc[0] * j;
-                        inst.color[1] = bc[1] * j;
-                        inst.color[2] = bc[2] * j;
+                        propsVegetationColor(g_world, biome, gwx, gwz, tileSeed, tx, tz, 0xD7u + gi * 4u,
+                                             inst.color, 2.0f);
+                        {
+                            // Grass albedo (biome tint) lands on the tonemap
+                            // shoulder where per-tuft brightness differences
+                            // get crushed to one flat pastel; pull it down so
+                            // the variation stays visible.
+                            const float g = 0.55f;
+                            inst.color[0] *= g;
+                            inst.color[1] *= g;
+                            inst.color[2] *= g;
+                        }
                         inst.phase    = propsRand(tileSeed, tx, tz, 0xD5 + gi) * 2.0f * static_cast<float>(M_PI);
                         inst.species  = AZGAAR_PROP_GRASS_TUFT;
                         inst.variant  = 0;
@@ -2651,13 +2700,24 @@ static void propsScatterJob(void* userData) {
                 inst.pos[2]       = wz;
                 inst.yaw          = propsRand(tileSeed, tx, tz, 0xE1) * 2.0f * static_cast<float>(M_PI);
                 inst.scale        = instScale;
-                // Colour: biome tint x jitter (wider range so trees vary).
-                float bc[3];
-                azgaarWorldBiomeColor(g_world, biome, bc);
-                float j       = 0.6f + 0.8f * propsRand(tileSeed, tx, tz, 0xE3);
-                inst.color[0] = bc[0] * j;
-                inst.color[1] = bc[1] * j;
-                inst.color[2] = bc[2] * j;
+                // Colour: biome tint x patch + per-instance variation
+                // (see propsVegetationColor).
+                if (sp == AZGAAR_PROP_GRASS_TUFT) {
+                    // Grass gets a stronger per-instance spread than the
+                    // default (see propsVegetationColor), plus a tonemap-
+                    // shoulder pull so the differences survive grading.
+                    propsVegetationColor(g_world, biome, wx, wz, tileSeed, tx, tz, 0xE6u,
+                                     inst.color, 2.0f);
+                    const float g = 0.55f;
+                    inst.color[0] *= g;
+                    inst.color[1] *= g;
+                    inst.color[2] *= g;
+                } else {
+                    // Colour: biome tint x patch + per-instance variation
+                    // (see propsVegetationColor).
+                    propsVegetationColor(g_world, biome, wx, wz, tileSeed, tx, tz, 0xE6u,
+                                     inst.color);
+                }
                 inst.phase    = propsRand(tileSeed, tx, tz, 0xE4) * 2.0f * static_cast<float>(M_PI);
                 inst.species  = sp;
                 // Deterministic per-instance variant pick (pure function of the tile

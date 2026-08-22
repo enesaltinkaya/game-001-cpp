@@ -239,6 +239,18 @@ void main() {
             mapUV);
     }
 
+    // ── Turf colour variation ───────────────────────────────────
+    // Coarse world-anchored value noise (40 m / 80 m) modulates the grass
+    // albedo so open fields read as patches of lighter/darker turf instead
+    // of one uniform tint.  World-anchored + stateless → stable across
+    // tiles/frames.  Inserted before the beach/cliff/snow swaps below so
+    // only the grass base is affected.
+    {
+        float n = 0.6 * microValueNoise(inWorldPos.xz / 40.0 + 31.7) +
+                  0.4 * microValueNoise(inWorldPos.xz / 80.0 + 71.3);  // [-1,1]
+        baseColor *= 0.82 + 0.36 * (0.5 + 0.5 * n);  // ~±18%
+    }
+
     // 2) Beach band: low land near sea level becomes sand, with a darker
     // wet-sand strip right at the waterline.  Driven by the fragment's own
     // height (metres, 4 m grid), not the coarse climate grid.
