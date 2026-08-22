@@ -22,9 +22,10 @@
 layout(location = 0) in vec3 inNormal;
 layout(location = 1) in vec3 inWorldPos;
 
-layout(location = 0) out vec4 outColor;     // scene color (HDR, R16G16B16A16)
-layout(location = 1) out vec2 outNormal;    // oct-encoded world normal (R16G16)
-layout(location = 2) out vec4 outMaterial;  // r=roughness g=metallic b=ao a=ground flag for decal pass (R8G8B8A8)
+layout(location = 0) out vec4 outColor;   // scene color (HDR, R16G16B16A16)
+layout(location = 1) out vec2 outNormal;  // oct-encoded world normal (R16G16)
+layout(location = 2) out vec4
+    outMaterial;  // r=roughness g=metallic b=ao a=ground flag for decal pass (R8G8B8A8)
 
 // Push constants: identical layout to the vertex shader's HeightmapPC block
 // (Vulkan requires compatible push constant declarations across stages; a
@@ -34,7 +35,9 @@ layout(push_constant, std430) uniform HeightmapPC {
     vec4 tile;   // x = originX, y = originZ, z = sizeMeters, w = gridSegments
     vec4 flags;  // x = heightScale, y = texDim (TEX), z = wireFrame,
                  // w = debugHeightRamp
-} pc;
+}
+
+pc;
 
 #include "../../includes/utils.shader"
 #include "../../includes/globalset.shader"
@@ -210,33 +213,34 @@ void main() {
     // world -Z (azgaarMapToWorld), hence the mirrored formulation.
     uint biomeColorIndex = sceneBuffer.terrain.biomeColorIndex;
     uint climateIndex    = sceneBuffer.terrain.climateIndex;
-    vec2 mapExtent  = sceneBuffer.terrain.worldMax.xz - sceneBuffer.terrain.worldMin.xz;
-    bool climateOn  = sceneBuffer.terrain.climateParams.w > 0.5 && biomeColorIndex != 0u &&
-                     climateIndex != 0u && mapExtent.x > 1.0 && mapExtent.y > 1.0;
-    vec4 climate    = vec4(0.0);
-    vec2 mapUV      = vec2(0.0);
-    float landMask  = smoothstep(0.0, 0.2, inWorldPos.y);  // sea level = 0 m
-    float snowT     = 0.0;
-    float beachT    = 0.0;
-    uint sandAlbedo = sceneBuffer.terrain.sandAlbedoIndex;
-    uint snowAlbedo = sceneBuffer.terrain.snowAlbedoIndex;
+    vec2 mapExtent       = sceneBuffer.terrain.worldMax.xz - sceneBuffer.terrain.worldMin.xz;
+    bool climateOn       = sceneBuffer.terrain.climateParams.w > 0.5 && biomeColorIndex != 0u &&
+                           climateIndex != 0u && mapExtent.x > 1.0 && mapExtent.y > 1.0;
+    vec4 climate         = vec4(0.0);
+    vec2 mapUV           = vec2(0.0);
+    float landMask       = smoothstep(0.0, 0.2, inWorldPos.y);  // sea level = 0 m
+    float snowT          = 0.0;
+    float beachT         = 0.0;
+    uint sandAlbedo      = sceneBuffer.terrain.sandAlbedoIndex;
+    uint snowAlbedo      = sceneBuffer.terrain.snowAlbedoIndex;
 
     if (climateOn) {
-        mapUV = clamp(
-            vec2((sceneBuffer.terrain.worldMax.x - inWorldPos.x) / mapExtent.x,
-                 (sceneBuffer.terrain.worldMax.z - inWorldPos.z) / mapExtent.y),
-            0.0, 1.0);
+        mapUV = clamp(vec2((sceneBuffer.terrain.worldMax.x - inWorldPos.x) / mapExtent.x,
+                           (sceneBuffer.terrain.worldMax.z - inWorldPos.z) / mapExtent.y),
+                      0.0,
+                      1.0);
 
         // 1) Biome tint over the grass base — soft multiply keeps the grass
         // texture detail while the world reads as FMG's authored biome map.
-        vec3 biomeT = texture(
-            sampler2D(textures[nonuniformEXT(biomeColorIndex)], samplers[SAMPLER_LINEAR]),
-            mapUV).rgb;
+        vec3 biomeT =
+            texture(sampler2D(textures[nonuniformEXT(biomeColorIndex)], samplers[SAMPLER_LINEAR]),
+                    mapUV)
+                .rgb;
         baseColor = mix(baseColor, baseColor * (biomeT * 2.0), 0.55);
 
-        climate = texture(
-            sampler2D(textures[nonuniformEXT(climateIndex)], samplers[SAMPLER_LINEAR]),
-            mapUV);
+        climate =
+            texture(sampler2D(textures[nonuniformEXT(climateIndex)], samplers[SAMPLER_LINEAR]),
+                    mapUV);
     }
 
     // ── Turf colour variation ───────────────────────────────────
@@ -248,7 +252,7 @@ void main() {
     {
         float n = 0.6 * microValueNoise(inWorldPos.xz / 40.0 + 31.7) +
                   0.4 * microValueNoise(inWorldPos.xz / 80.0 + 71.3);  // [-1,1]
-        baseColor *= 0.82 + 0.36 * (0.5 + 0.5 * n);  // ~±18%
+        baseColor *= 0.82 + 0.36 * (0.5 + 0.5 * n);                    // ~±18%
     }
 
     // 2) Beach band: low land near sea level becomes sand, with a darker
@@ -262,16 +266,16 @@ void main() {
             // grass tint (landMask cuts off underwater) and reads as a green
             // ring seen through the translucent water.
             float beachMask = smoothstep(-1.5, 0.2, inWorldPos.y);
-            beachT = (1.0 - smoothstep(beachH * 0.24, beachH, inWorldPos.y)) * beachMask;
-            float wetT = (1.0 - smoothstep(0.1, 1.2, inWorldPos.y)) * landMask;
-            vec3 sandColor = sandAlbedo != 0u
-                                 ? texture(sampler2D(textures[nonuniformEXT(sandAlbedo)],
-                                                     samplers[SAMPLER_LINEAR]),
-                                           grassUV)
-                                       .rgb
-                                 : AZGAAR_FALLBACK_SAND_COLOR;
-            baseColor = mix(baseColor, sandColor, beachT);
-            baseColor = mix(baseColor, sandColor * 0.55, wetT);
+            beachT          = (1.0 - smoothstep(beachH * 0.24, beachH, inWorldPos.y)) * beachMask;
+            float wetT      = (1.0 - smoothstep(0.1, 1.2, inWorldPos.y)) * landMask;
+            vec3 sandColor  = sandAlbedo != 0u
+                                  ? texture(sampler2D(textures[nonuniformEXT(sandAlbedo)],
+                                                      samplers[SAMPLER_LINEAR]),
+                                            grassUV)
+                                        .rgb
+                                  : AZGAAR_FALLBACK_SAND_COLOR;
+            baseColor       = mix(baseColor, sandColor, beachT);
+            baseColor       = mix(baseColor, sandColor * 0.55, wetT);
         }
     }
 
@@ -285,10 +289,9 @@ void main() {
         float slope      = 1.0 - max(dot(geometryNormal, vec3(0.0, 1.0, 0.0)), 0.0);
         float cliffBlend = smoothstep(0.1, 0.4, slope);
         float maxLandY   = sceneBuffer.terrain.worldMax.y;
-        float rockAlt    = maxLandY > 1.0
-                               ? smoothstep(0.55, 0.85, inWorldPos.y / maxLandY) * landMask
-                               : 0.0;
-        rockT            = max(cliffBlend, rockAlt);
+        float rockAlt = maxLandY > 1.0 ? smoothstep(0.55, 0.85, inWorldPos.y / maxLandY) * landMask
+                                       : 0.0;
+        rockT         = max(cliffBlend, rockAlt);
 
         uint cliffAlbedoIdx = sceneBuffer.terrain.cliffAlbedoIndex;
         uint cliffNormalIdx = sceneBuffer.terrain.cliffNormalIndex;
@@ -355,9 +358,9 @@ void main() {
         // outranks Glacier (id 11), which made whole wetlands render as snow
         // behind the old >= 10.5 threshold.  Exact-id match on the snapped
         // value instead.
-        vec4 climateNearest = texture(
-            sampler2D(textures[nonuniformEXT(climateIndex)], samplers[SAMPLER_NEAREST]),
-            mapUV);
+        vec4 climateNearest =
+            texture(sampler2D(textures[nonuniformEXT(climateIndex)], samplers[SAMPLER_NEAREST]),
+                    mapUV);
         float tempC   = climate.r * 255.0 - AZGAAR_CLIMATE_TEMP_BIAS;
         float biomeId = floor(climateNearest.a * 255.0 + 0.5);
         float snowLo  = sceneBuffer.terrain.climateParams.x;
@@ -365,8 +368,9 @@ void main() {
 
         snowT = 1.0 - smoothstep(snowLo, snowHi, tempC);
         snowT = max(snowT,
-                    (biomeId > AZGAAR_BIOME_GLACIER - 0.5 &&
-                     biomeId < AZGAAR_BIOME_GLACIER + 0.5) ? 1.0 : 0.0);
+                    (biomeId > AZGAAR_BIOME_GLACIER - 0.5 && biomeId < AZGAAR_BIOME_GLACIER + 0.5)
+                        ? 1.0
+                        : 0.0);
         snowT *= landMask;
         snowT *= 0.75 + 0.25 * (0.5 + 0.5 * microValueNoise(inWorldPos.xz * 0.02));
 
@@ -377,7 +381,7 @@ void main() {
                                            grassUV)
                                        .rgb
                                  : AZGAAR_FALLBACK_SNOW_COLOR;
-            baseColor = mix(baseColor, snowColor, snowT);
+            baseColor      = mix(baseColor, snowColor, snowT);
             // Snow normal stays flat in v1 (micro-band noise still applies
             // below, which reads well on snow).
             N = normalize(mix(N, geometryNormal, snowT));
@@ -385,6 +389,10 @@ void main() {
     }
 
     // Roughness follows the same material chain (snow smooth, sand rough).
+    // Scale the base (grass/cliff) roughness down first so the sun produces
+    // a visible specular lobe; snow/beach values below keep their authored
+    // levels.
+    roughness = clamp(roughness * 0.1, 0.05, 1.0); // SSSR TEST
     roughness = mix(roughness, 0.6, snowT);
     roughness = mix(roughness, 0.85, beachT);
 
@@ -514,7 +522,7 @@ void main() {
 
     // Attenuate ambient in shadow so shadowed terrain isn't lit only by sky.
     float shadowAmbientFade = mix(1.0 - SHADOW_DARKNESS, 1.0, mix(1.0, cascadeShadow, NdotL));
-    vec3 color = (ambientDiffuse + ambientSpecular) * shadowAmbientFade + Lo;
+    vec3 color              = (ambientDiffuse + ambientSpecular) * shadowAmbientFade + Lo;
 
     // Cheap sky-fill bounce on faces turned away from the sun.
     {
