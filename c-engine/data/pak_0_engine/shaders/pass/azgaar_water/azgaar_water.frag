@@ -103,15 +103,31 @@ void main() {
     // Costs one depth fetch + one noise tap instead of the full shader.
     float time = float(sceneBuffer.time) / 1000.0;
     vec3 terrainPos = terrainPosAtPixel();
-    float waterY    = inWorldPos.y;
-    // Widen the land/water transition band with noise so the waterline is
-    // not a straight, hard edge.  bandEdge = base * (1 + noise): base 0.4 m,
-    // noise ±0.3 → bandEdge 0.28..0.52 m, total fade band 0.56..1.04 m
-    // (was 0.8..3.2 m, too long).
+    // Key every waterline decision (discard / shore foam / absorption depth)
+    // to the *undisturbed* water level, not the wave-displaced vertex height.
+    // Animating the waterline with the Gerstner crests/troughs made the
+    // shoreline flicker over the shallow beach: as a trough passed, the
+    // surface dipped below the terrain and a dry patch popped into the water
+    // (the "holes"); a crest sealed it again.  The waves still shape the
+    // surface appearance (normals + ripples); they just no longer toggle
+    // where the water is present.
+    float waterY    = sceneBuffer.water.surfaceY.x;
+    // Organic shoreline: displace the waterline with slow noise so it is not
+    // a straight, hard edge, and fade the water out in a band *below* that
+    // line.  The fade is asymmetric: the water is hard-culled above the
+    // displaced line (no translucent film over dry land) and blends into it
+    // from the water side over SHORE_FADE.
+    const float SHORE_FADE = 0.4;   // metres of fade below the shoreline
     float shoreNoise = snoise(vec2(inWorldPos.x, inWorldPos.z) * 0.02
                           + vec2(time * 0.15, time * 0.1));
-    float bandEdge   = 0.4 * (1.0 + 0.3 * shoreNoise);
-    if (terrainPos.y > waterY + bandEdge) discard;
+    // The noise displacement is only effective within a couple of metres of
+    // the waterline.  On a gently sloping beach the terrain sits inside the
+    // ±0.2 m noise band over wide areas, so an unweighted line carves
+    // animated dry "holes" and puddles into the shallow water.  Weighting by
+    // proximity keeps water deeper than ~1 m pinned to a stable sea level.
+    float lineProx = 1.0 - smoothstep(1.0, 3.0, abs(terrainPos.y - waterY));
+    float shoreY   = waterY + 0.2 * shoreNoise * lineProx;
+    if (terrainPos.y > shoreY + 0.05) discard;
 
     vec3 N = normalize(inWorldNormal);
     vec3 V = normalize(sceneBuffer.cameras[0].position.xyz - inWorldPos);
@@ -168,21 +184,24 @@ void main() {
     vec3 waterColor = mix(shallowTint, deepTint, absorptionT);
 
     // ── 6. Foam (crest + shore) ─────────────────────────────────────────
-    // Crest foam from vertex wave height factor
-    float crestFoam = smoothstep(0.6, 1.0, inWaveHeightFactor);
-    // Add ripple-driven foam at wave peaks
-    crestFoam = max(crestFoam, smoothstep(0.7, 0.95, abs(ripple) * 0.5 + inWaveHeightFactor));
+    // Crest foam: only at genuine wave peaks.  inWaveHeightFactor is a
+    // true [0,1] crest metric (vertex normalises by the actual peak
+    // displacement), so a high smoothstep keeps it to the tips.  The
+    // ripple detail *modulates* the crest foam (breaks it into organic
+    // patches) instead of acting as an independent low-threshold foam
+    // source — the old additive term lit broad swaths of open water.
+    float crestFoam = smoothstep(0.75, 1.0, inWaveHeightFactor)
+                    * (0.4 + 0.6 * smoothstep(0.3, 0.8, abs(ripple)));
 
     // Shore foam: a band around the waterline, modulated by animated noise
     // so the edge is irregular — this replaces the old hard depth-test
     // cutoff that made the waterline look like a sharp line.
     float foamThreshold = sceneBuffer.water.foamColor.a;  // metres
     float shoreFoam     = smoothstep(foamThreshold, 0.0, waterDepth);
-    // landT = 1 where the terrain is above the water surface (dry land);
-    // the water fades out there instead of painting a translucent film
-    // over the ground.  Fully-dry pixels already discarded above, so
-    // landT < 1 here and the fade band is applied to survivors only.
-    float landT         = smoothstep(waterY - bandEdge, waterY + bandEdge, terrainY);
+    // landT = 1 where the terrain is above the displaced shoreline (dry
+    // land); the water fades out on the water side of the line and is hard-
+    // culled on the land side, so no translucent film over dry ground.
+    float landT         = smoothstep(shoreY - SHORE_FADE, shoreY, terrainY);
     shoreFoam          *= (1.0 - landT);
     float foamA = clamp(max(crestFoam, shoreFoam), 0.0, 1.0);
 
@@ -198,8 +217,16 @@ void main() {
     vec3 foamColor = sceneBuffer.water.foamColor.rgb;
     color = mix(color, foamColor, foamA * sceneBuffer.water.foamColor.a);
 
-    // Alpha: more solid at grazing angles, less at normal incidence
-    float alpha = mix(0.35, 0.85, fresnel);
+    // Alpha: more solid at grazing angles, less at normal incidence.
+    // The nadir base is kept high enough that the green seabed of the
+    // shallow lagoon basin does not read as a glass sheet through the water.
+    float alpha = mix(0.55, 0.85, fresnel);
+    // Shallow water: get more opaque as the terrain approaches the waterline
+    // so the bright lagoon floor does not show through and make the near-shore
+    // water read as dry "holes"; deep water keeps the translucent nadir so the
+    // open basin stays glassy-clear.
+    float shallowSolid = 1.0 - smoothstep(0.0, 2.5, waterDepth);
+    alpha = max(alpha, mix(alpha, 0.9, shallowSolid));
     alpha = max(alpha, foamA * 0.8);
     // Fully transparent over dry land (terrain above the water surface),
     // with a noise-widened soft band — no hard cutoff line.

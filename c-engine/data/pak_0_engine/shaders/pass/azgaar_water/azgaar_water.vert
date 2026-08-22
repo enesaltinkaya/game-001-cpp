@@ -1,6 +1,7 @@
 #version 460
 #extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
 #extension GL_EXT_buffer_reference : require
+#extension GL_EXT_nonuniform_qualifier : require
 #extension GL_ARB_shading_language_include : enable
 
 // ── Azgaar water vertex shader ─────────────────────────────────────────
@@ -12,6 +13,12 @@
 // Wave displacement is a sum-of-sines (Gerstner-like) computed from
 // sceneBuffer.water params.  Analytic normals are accumulated and passed
 // to the fragment shader for lighting.
+//
+// Near the beach the Gerstner crests/troughs would dip the surface below
+// the (shallow) terrain and poke dry patches into the water ("holes").  The
+// wave amplitude is therefore attenuated by water depth: sampled from the
+// scene depth buffer, the swell fades out over the last few metres so the
+// near-shore surface stays nearly flat while open water keeps full swells.
 
 layout(location = 0) in vec3 inPosition;   // local grid pos (-0.5..0.5)
 layout(location = 1) in vec3 inNormal;     // (0,1,0)
@@ -25,6 +32,44 @@ layout(location = 0) out vec3 outWorldPos;
 layout(location = 1) out vec3 outWorldNormal;
 layout(location = 2) out vec2 outUV;
 layout(location = 3) out float outWaveHeightFactor;  // [0,1] for crest foam
+
+// Must match the fragment shader's WaterPushConstants (same push-constant
+// payload is pushed once per draw and read by both stages).
+layout(push_constant) uniform WaterPushConstants {
+    uint  depthIndex;
+    uint  width;
+    uint  height;
+    float nearZ;
+    float farZ;
+    float projM00;
+    float projM11;
+    float projM20;
+    float projM21;
+} pc;
+
+// ── Water-depth sampling (mirrors azgaar_water.frag terrainPosAtPixel) ──
+// Project the undisturbed surface point to the screen, fetch the scene depth
+// there and recover the terrain height, so the wave amplitude can be damped
+// as the seabed approaches.  A sub-pixel TAA jitter offset between the
+// unjittered projection and the jittered depth is negligible for this
+// smoothly-varying attenuation.
+float terrainHeightAt(vec2 xz, float y) {
+    vec4 clip = sceneBuffer.cameras[0].viewProjection * vec4(xz.x, y, xz.y, 1.0);
+    if (clip.w <= 0.0) return y;  // behind the camera — leave undisturbed
+    vec2 ndcV = clip.xy / clip.w;
+    vec2 uvV  = vec2(ndcV.x * 0.5 + 0.5, 0.5 - ndcV.y * 0.5);  // y down (0=top)
+    vec2 pxV  = clamp(uvV * vec2(pc.width, pc.height), vec2(0.0), vec2(float(pc.width - 1), float(pc.height - 1)));
+    float d   = texelFetch(sampler2D(textures[nonuniformEXT(pc.depthIndex)],
+                                     samplers[SAMPLER_NEAREST]),
+                           ivec2(pxV), 0).r;
+    float linZ = (pc.nearZ * pc.farZ) / (pc.nearZ + (pc.farZ - pc.nearZ) * d);
+    vec2 uvF   = (pxV + 0.5) / vec2(pc.width, pc.height);
+    vec2 ndcF  = vec2(uvF.x * 2.0 - 1.0, 1.0 - uvF.y * 2.0);
+    vec3 viewPos = vec3((ndcF.x + pc.projM20) * linZ / pc.projM00,
+                        (ndcF.y + pc.projM21) * linZ / pc.projM11,
+                        -linZ);
+    return (sceneBuffer.cameras[0].invView * vec4(viewPos, 1.0)).xyz.y;
+}
 
 // Grid parameters (must match AzgaarWater.c CPU side)
 #define AZGAAR_WATER_GRID_SIZE    8192.0
@@ -77,12 +122,29 @@ void main() {
         waveNormal.z += -dir.y * dk;
         waveNormal.y += -q * k * amp * s;  // dz contribution
 
-        totalAmp += amp;
+        // Normalise the crest metric by the actual peak displacement (q-scaled
+        // amplitude), not the raw amplitude, so outWaveHeightFactor is a true
+        // [0,1] crest value (1.0 at a full peak) instead of sitting near 0.5.
+        totalAmp += qa;
     }
 
-    waveNormal = normalize(waveNormal);
-    float worldY = surfaceY + waveHeight;
+    // ── 4. Depth-based wave attenuation (calm near the beach) ─────────
+    // Sample the terrain height below this vertex and damp the swell as the
+    // seabed approaches, so the near-shore surface stays nearly flat and the
+    // Gerstner crests/troughs no longer poke dry "holes" into the shallow
+    // water.  Open water (deep) keeps the full swell.
+    float terrainY = terrainHeightAt(worldXZ, surfaceY);
+    float waterDepth = max(surfaceY - terrainY, 0.0);
+    float depthCalm  = smoothstep(0.0, 8.0, waterDepth);   // 0 shallow → 1 deep
+    float waveScale  = mix(0.10, 1.0, depthCalm);
 
+    // Scale the accumulated normal perturbation (waveNormal = (0,1,0)+perturb)
+    // by the same factor so the ripple shading calms down with the swell.
+    waveNormal = vec3(0.0, 1.0, 0.0) + (waveNormal - vec3(0.0, 1.0, 0.0)) * waveScale;
+    waveNormal = normalize(waveNormal);
+    waveHeight *= waveScale;
+
+    float worldY = surfaceY + waveHeight;
     vec3 worldPos = vec3(worldXZ.x, worldY, worldXZ.y);
 
     gl_Position = sceneBuffer.cameras[0].viewProjection * vec4(worldPos, 1.0);
