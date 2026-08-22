@@ -257,7 +257,12 @@ void main() {
     {
         float beachH = sceneBuffer.terrain.climateParams.z;
         if (beachH > 0.0) {
-            beachT = (1.0 - smoothstep(beachH * 0.24, beachH, inWorldPos.y)) * landMask;
+            // The sand band extends ~1.5 m below the waterline: the shallow
+            // submerged shelf around beaches/ponds would otherwise keep the
+            // grass tint (landMask cuts off underwater) and reads as a green
+            // ring seen through the translucent water.
+            float beachMask = smoothstep(-1.5, 0.2, inWorldPos.y);
+            beachT = (1.0 - smoothstep(beachH * 0.24, beachH, inWorldPos.y)) * beachMask;
             float wetT = (1.0 - smoothstep(0.1, 1.2, inWorldPos.y)) * landMask;
             vec3 sandColor = sandAlbedo != 0u
                                  ? texture(sampler2D(textures[nonuniformEXT(sandAlbedo)],

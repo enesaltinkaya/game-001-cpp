@@ -105,7 +105,7 @@ void azgaarWaterInit(const AzgaarWorld* world) {
                                   0.0f},
         .shallowColor          = {0.05f, 0.25f, 0.45f, 5.0f},
         .deepColor             = {0.01f, 0.05f, 0.15f, 40.0f},
-        .foamColor             = {0.95f, 0.95f, 1.0f, 0.3f},
+        .foamColor             = {0.95f, 0.95f, 1.0f, 0.5f},  // a = shore-foam band (m)
         .waveDirAmp            = {
             {0.8f, 0.6f, 0.4f, 40.0f},
             {0.5f, -0.5f, 0.2f, 20.0f},

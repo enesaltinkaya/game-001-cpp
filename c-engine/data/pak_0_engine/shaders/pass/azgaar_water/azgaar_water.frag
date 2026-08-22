@@ -117,9 +117,13 @@ void main() {
     // line.  The fade is asymmetric: the water is hard-culled above the
     // displaced line (no translucent film over dry land) and blends into it
     // from the water side over SHORE_FADE.
-    const float SHORE_FADE = 0.4;   // metres of fade below the shoreline
-    float shoreNoise = snoise(vec2(inWorldPos.x, inWorldPos.z) * 0.02
-                          + vec2(time * 0.15, time * 0.1));
+    const float SHORE_FADE = 0.25;  // metres of fade below the shoreline
+    // The shoreline irregularity is STATIC (no time term): a drifting waterline
+    // made the beach puddle's outline morph continuously (the noise offset
+    // walked ~7 m/s through the 50 m wavelength field), so the water read as
+    // leaking in and out of the shallows.  The foam/ripples still animate; the
+    // waterline itself is stable.
+    float shoreNoise = snoise(vec2(inWorldPos.x, inWorldPos.z) * 0.02);
     // The noise displacement is only effective within a couple of metres of
     // the waterline.  On a gently sloping beach the terrain sits inside the
     // ±0.2 m noise band over wide areas, so an unweighted line carves
@@ -193,17 +197,26 @@ void main() {
     float crestFoam = smoothstep(0.75, 1.0, inWaveHeightFactor)
                     * (0.4 + 0.6 * smoothstep(0.3, 0.8, abs(ripple)));
 
-    // Shore foam: a band around the waterline, modulated by animated noise
-    // so the edge is irregular — this replaces the old hard depth-test
-    // cutoff that made the waterline look like a sharp line.
-    float foamThreshold = sceneBuffer.water.foamColor.a;  // metres
-    float shoreFoam     = smoothstep(foamThreshold, 0.0, waterDepth);
+    // Shore foam: a band around the *displaced waterline* (lineDepth > 0
+    // under water, < 0 dry land).  Keying the foam to absolute depth from the
+    // undisturbed sea level instead made the whole flat lagoon shelf (terrain
+    // 0..-0.5 m, hundreds of metres wide) read as solid foam — a white wash
+    // over the beach.  The band straddles the waterline so the white line
+    // sits on the water side of the edge.
+    // A thin, partially-intense line: on the gently sloping lagoon shelf the
+    // ±0.4 m full-white band read as a foam wash over the whole beach.  Real
+    // calm-water shorelines are a slim bright line; the wide shallows around
+    // it should read as pale shallow water, not foam.
+    float lineDepth = shoreY - terrainY;
+    float shoreFoam = (1.0 - smoothstep(0.0, 0.2, abs(lineDepth))) * 0.7;
     // landT = 1 where the terrain is above the displaced shoreline (dry
     // land); the water fades out on the water side of the line and is hard-
     // culled on the land side, so no translucent film over dry ground.
     float landT         = smoothstep(shoreY - SHORE_FADE, shoreY, terrainY);
-    shoreFoam          *= (1.0 - landT);
     float foamA = clamp(max(crestFoam, shoreFoam), 0.0, 1.0);
+    // Note: foamColor.a is the shore-foam *threshold* (metres) used above;
+    // the foam itself is a full-strength white line (the old foamA * foamColor.a
+    // capped the blend at 30% and turned the waterline into a grey haze).
 
     // ── 7. Compose ──────────────────────────────────────────────────────
     vec3 color = mix(waterColor, skyRefl, fresnel) + sunSpecular;
@@ -215,7 +228,7 @@ void main() {
                  inWorldPos, N, V, sceneBuffer.water.sunSpecularPower)
            * (1.0 - foamA);
     vec3 foamColor = sceneBuffer.water.foamColor.rgb;
-    color = mix(color, foamColor, foamA * sceneBuffer.water.foamColor.a);
+    color = mix(color, foamColor, foamA);
 
     // Alpha: more solid at grazing angles, less at normal incidence.
     // The nadir base is kept high enough that the green seabed of the
@@ -227,7 +240,7 @@ void main() {
     // open basin stays glassy-clear.
     float shallowSolid = 1.0 - smoothstep(0.0, 2.5, waterDepth);
     alpha = max(alpha, mix(alpha, 0.9, shallowSolid));
-    alpha = max(alpha, foamA * 0.8);
+    alpha = max(alpha, foamA);
     // Fully transparent over dry land (terrain above the water surface),
     // with a noise-widened soft band — no hard cutoff line.
     alpha = mix(alpha, 0.0, landT);
