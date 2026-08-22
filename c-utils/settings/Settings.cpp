@@ -45,6 +45,7 @@ void settingsInit(void) {
     templates.push_back((Template{"moreShadows", "boolean", 1.}));
     templates.push_back((Template{"shadowsDisabled", "boolean", 0.}));
     templates.push_back((Template{"ssrDisabled", "boolean", 0.}));
+    templates.push_back((Template{"aoDisabled", "boolean", 0.}));
     templates.push_back((Template{"bloomDisabled", "boolean", 0.}));
     templates.push_back((Template{"contactShadowDisabled", "boolean", 0.}));
     templates.push_back((Template{"fogMode", "double", 1.}));
