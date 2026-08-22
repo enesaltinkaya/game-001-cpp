@@ -92,6 +92,19 @@ vec2 fetchHiZ(uint mip, uint poolIndex, vec2 uv) {
                       icoord, 0).rg;
 }
 
+// Reverse-Z window depth → view-space distance.  The camera uses a finite
+// reversed-Z projection (glm_perspective with near/far swapped), for which
+// d(rho) = B/rho - A with A = zNear/(zFar - zNear), B = zNear*zFar/(zFar -
+// zNear); the exact inverse below stays correct to the far plane (the
+// naive zNear/d drifts by hundreds of metres at kilometre range).
+float viewZ(float d) {
+    float N = sceneBuffer.cameras[0].zNear;
+    float F = sceneBuffer.cameras[0].zFar;
+    float A = N / (F - N);
+    float B = N * F / (F - N);
+    return B / (d + A);
+}
+
 // Base-2 Halton (bit reversal) — per-ray equidistributed angles.
 float halton2(int i) {
     uint x = uint(i);
@@ -170,6 +183,19 @@ void main() {
     // ── March parameters ─────────────────────────────────────────────
     float maxDist   = clamp(MAX_DIST_SCALE * distToCam + 0.04,
                             MAX_DIST_MIN, MAX_DIST_MAX);
+    // Thin-occluder slab: a HiZ "hit" only means the projected ray point
+    // is behind SOME closer surface — that surface may be far off the ray
+    // in world space (a near object's inflated screen silhouette over
+    // background pixels: e.g. the player's head 1.5 m above the ground
+    // darkening the terrain around it as if it were in contact).  The
+    // recorded occluder is accepted only when it sits within this many
+    // metres of the ray point along the VIEW ray; beyond that the ray
+    // merely passed behind a foreground object and keeps marching.  The
+    // slab grows with the march budget so far-range marches still accept
+    // the thick, genuine occluders (tree canopies) they reach for, while
+    // near-range contact AO (feet, grass, neck under hair) — whose
+    // occluders sit ~0 m off the ray point — is untouched.
+    float thicknessLimit = max(0.5, 0.75 * maxDist);
     // Self-intersection offset: keep it O(1 cm) near the camera and small
     // at range (the old 0.01*dist gave a 5 m offset at 500 m, voiding all
     // far-range contact AO).
@@ -258,7 +284,8 @@ void main() {
             // HiZ test with pyramid descent.  Reverse-Z: .g = max = closest,
             // .r = min = farthest, and larger depth = closer to the camera.
             //   D < min - bias → behind every surface (beyond the self band)
-            //                    → hit
+            //                    → hit, IF the closest surface is within the
+            //                      thin-occluder slab (see thicknessLimit)
             //   D > max        → in front of every surface (incl. our own)
             //                    → no hit, keep marching
             //   else           → ambiguous, descend to a finer mip
@@ -266,9 +293,22 @@ void main() {
             while (true) {
                 vec2 hz = fetchHiZ(m, pc.hizMipIndex[m], scr.xy);
                 if (D < hz.r - selfBias) {
-                    hit    = true;
-                    hitT   = t;
-                    break;
+                    // Candidate hit.  Gap = how far in front of the ray
+                    // point the closest surface sits along the view ray;
+                    // hz.g >= hz.r > D > 0 here, so viewZ() is well defined.
+                    float gap = viewZ(D) - viewZ(hz.g);
+                    if (gap <= thicknessLimit) {
+                        hit  = true;
+                        hitT = t;
+                        break;
+                    }
+                    // Passed behind a foreground occluder.  Descend: a
+                    // mixed cell may also hold a surface near the ray's
+                    // own depth (a genuine occluder).  At mip 0 the cell is
+                    // a single texel — nothing else to find, no hit.
+                    if (m == 0u) break;
+                    m--;
+                    continue;
                 }
                 if (D > hz.g) {
                     break;  // in front of every surface — keep marching
