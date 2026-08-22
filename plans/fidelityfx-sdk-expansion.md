@@ -21,8 +21,8 @@ implementation starts.
 - [x] Phase 1 — CAS (done 2026-08-22, **no new SDK component needed** —
       RCAS rides the existing FSR3 upscaler context; see phase notes)
 - [x] Phase 2 — SPD (done 2026-08-22 — scope corrected during research,
-  see phase notes: only the runtime-HDR-pyramid use is viable; first real
-  consumer is SSSR in Phase 5)
+      see phase notes: only the runtime-HDR-pyramid use is viable; first real
+      consumer is SSSR in Phase 5)
 - [x] Phase 3 — Lens (grain, vignette, chromatic aberration)
 - [x] Phase 4 — DOF (depth of field / bokeh)
 - [ ] Phase 5 — SSSR (stochastic SSR, replaces custom SSR; needs Denoiser)
@@ -164,8 +164,8 @@ thin geometry; check with FSR on and off (native 1.0x too).
 
 ## Phase 2 — SPD
 
-*Done 2026-08-22 — with material scope corrections from investigating the
-actual component.*
+_Done 2026-08-22 — with material scope corrections from investigating the
+actual component._
 
 **Corrections to the original sketch (kept below):**
 
@@ -207,7 +207,7 @@ actual component.*
   future SDK/fork updates, since nothing compile-time covers the format
   patch.
 
-*Original sketch (superseded, kept for context):*
+_Original sketch (superseded, kept for context):_
 
 _Effort: small. Utility component — no visible feature, unlocks perf/quality._
 
@@ -235,9 +235,9 @@ prefilter, a test texture); perf profile of load-time genMips.
 
 ## Phase 3 — Lens
 
-*Done (status was stale — the lens pass + component had already landed in
+_Done (status was stale — the lens pass + component had already landed in
 the engine and `ENABLED_COMPONENTS`; see `VulkanLensPass` and the lens
-registry block in `fsr3.1/build.sh`).*
+registry block in `fsr3.1/build.sh`)._
 
 _Original sketch (kept for context):_
 
@@ -256,7 +256,7 @@ RmlUI UI elements.
 
 ## Phase 4 — DOF
 
-*Done 2026-08-22 — first pre-upscale effect; manual focus model.*
+_Done 2026-08-22 — first pre-upscale effect; manual focus model._
 
 **What landed:**
 
