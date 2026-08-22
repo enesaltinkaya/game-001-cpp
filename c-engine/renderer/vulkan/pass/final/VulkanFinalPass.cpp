@@ -26,7 +26,8 @@ struct FinalPushConstants {
     u32 bloomTextureIndex = 0;
     float bloomStrength   = 0.0f;
     float contrast        = 0.0f;
-    u32 pad[4]           = {};
+    float rcasStrength    = 0.0f;
+    u32 pad[3]           = {};
 };
 
 void VulkanFinalPass::added() {
@@ -76,6 +77,11 @@ void VulkanFinalPass::update() {
         .bloomTextureIndex = (u32)vulkanBloomPassGetBloomSampledIndex(),
         .bloomStrength     = vulkanBloomPassGetStrength(),
         .contrast          = CONTRAST,
+        /* RCAS runs here only when the upscaler is off (TAA / raw path).
+         * When the FSR3 upscaler is active it applies RCAS internally on
+         * the upscaled image — pushing a nonzero strength here too would
+         * sharpen twice (stacked kernels cause ringing). */
+        .rcasStrength      = rendererIsUpscalerEnabled() ? 0.0f : rendererGetCasStrength(),
     };
     vulkanPush(cmd, &pipeline, sizeof(pc), &pc);
     vulkanDraw(cmd, 3, 1);

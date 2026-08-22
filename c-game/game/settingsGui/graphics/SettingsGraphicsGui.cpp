@@ -34,7 +34,6 @@ static void* model;
 static engine::RendererAASettings aaSettings;
 static engine::RendererUpscalerMode upscalerMode;
 static char renderScaleDisabled;
-static char casDisabled;
 static float casStrengthPercent;
 static float renderScalePercent;
 static int upscalerTaskKey    = -1;
@@ -115,7 +114,6 @@ void SettingsGraphicsGui::added() {
     document = rmlNewDocument("gui/settings/graphics/graphics.html");
     model    = rmlCreateModel("graphics");
     rmlBindBool(model, "renderScaleDisabled", &renderScaleDisabled);
-    rmlBindBool(model, "casDisabled", &casDisabled);
     rmlBind(model, "upscalerLabel", &upscalerLabel);
     rmlBind(model, "aaPolicyLabel", &aaPolicyLabel);
     rmlBind(model, "upscalePolicyLabel", &upscalePolicyLabel);
@@ -149,9 +147,6 @@ void SettingsGraphicsGui::removed() {
 
 static void syncAAUi(void) {
     renderScaleDisabled   = engine::rendererIsUpscalerEnabled();
-    /* RCAS runs inside the FSR3 upscaler dispatch — no upscaler, no
-     * sharpening (the engine has no separate CAS pass anymore). */
-    casDisabled           = !engine::rendererIsUpscalerEnabled();
     snprintf(taaLabelText, sizeof(taaLabelText), "%s", engine::rendererIsTAAEnabled() ? "On" : "Off");
     taaLabel = taaLabelText;
 

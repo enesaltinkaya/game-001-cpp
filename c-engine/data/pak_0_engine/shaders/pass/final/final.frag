@@ -12,16 +12,20 @@ layout(push_constant) uniform PushConstants {
     uint bloomTextureIndex;
     float bloomStrength;
     float contrast;
-    uint pad[4];
+    float rcasStrength;  // 0 = off; AMD RCAS in this pass (upscaler off)
+    uint pad[3];
 };
 
 #include "../../includes/utils.shader"
 #include "../../includes/globalset.shader"
+#include "../../includes/rcas.shader"
 
-/* Sharpening note: CAS/RCAS is NOT applied here. AMD's RCAS kernel runs
- * inside the FSR3 upscaler dispatch (VulkanFsrPass) on the upscaled image,
- * driven by the same aaCasStrength setting. This pass only composes bloom,
- * tonemaps (AgX LUT / ACES / ...) and applies the contrast curve. */
+/* Sharpening: AMD RCAS has two placements, both driven by the aaCasStrength
+ * setting —
+ *   upscaler on:  inside the FSR3 upscaler dispatch (VulkanFsrPass) on
+ *                 the upscaled image (this pass receives strength 0)
+ *   upscaler off: here, on the tonemapped LDR result (TAA / raw path)
+ *                 using the same vendored RCAS kernel. */
 
 vec3 sampleSceneHdr(vec2 uv) {
     vec3 hdr = texture(sampler2D(textures[nonuniformEXT(colorTextureIndex)],
@@ -164,6 +168,10 @@ vec3 tonemapAndContrast(vec3 hdr) {
     return ldr;
 }
 
+vec3 fetchDisplay(vec2 uv) {
+    return tonemapAndContrast(sampleSceneHdr(uv));
+}
+
 /* -----------------------------------------------------------------------
    Blue-noise dither — ±0.5/255 rotated per frame to prevent 8-bit banding
    ----------------------------------------------------------------------- */
@@ -193,7 +201,28 @@ vec3 blueNoiseDither(vec3 color, vec2 fragCoord) {
 void main() {
     vec2 uv = vec2(inUV.x, 1.0 - inUV.y);
 
-    vec3 ldr = tonemapAndContrast(sampleSceneHdr(uv));
+    /* Source-texel grid: the color texture may be render-resolution
+     * (renderScale < 1 with the upscaler off), so RCAS taps must step in
+     * source texels, not output pixels. */
+    ivec2 colorSize = textureSize(
+        sampler2D(textures[nonuniformEXT(colorTextureIndex)], samplers[SAMPLER_CLAMP_LINEAR]),
+        0);
+    vec2 texelSize = 1.0 / vec2(max(colorSize, ivec2(1)));
+
+    /* RCAS in the display-referred domain — after bloom/tonemap/contrast,
+     * before dithering. exp2(2*s - 2) maps the slider to FsrRcasCon's linear
+     * sharpness, the same remap the FSR3 upscaler host applies. */
+    vec3 ldr;
+    if (rcasStrength > 0.0) {
+        vec3 b = fetchDisplay(uv + texelSize * vec2(0.0, -1.0));
+        vec3 d = fetchDisplay(uv + texelSize * vec2(-1.0, 0.0));
+        vec3 e = fetchDisplay(uv);
+        vec3 f = fetchDisplay(uv + texelSize * vec2(1.0, 0.0));
+        vec3 h = fetchDisplay(uv + texelSize * vec2(0.0, 1.0));
+        ldr    = rcasFilter(b, d, e, f, h, exp2(2.0 * rcasStrength - 2.0));
+    } else {
+        ldr = fetchDisplay(uv);
+    }
 
     ldr = blueNoiseDither(ldr, gl_FragCoord.xy);
 

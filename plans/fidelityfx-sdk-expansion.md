@@ -114,16 +114,22 @@ permutations) runs inside the existing FSR3 upscaler dispatch.
   `enableSharpening = strength > 0`. Removed the unused `fsrSharpness`
   static + `vulkanFsrPass{Set,Get}Sharpness` API and the old mutual-
   exclusion guard against the final pass's scalar CAS.
-- `final.frag` / `VulkanFinalPass`: hand-rolled scalar CAS kernel deleted
-  (~70 lines); `casStrength` push constant removed; contrast/bloom/
-  tonemap untouched.
-- Settings GUI: slider relabeled "Sharpening — RCAS" and greyed out
-  (`casDisabled`) when the upscaler is off — sharpening now requires the
-  upscaler (Native AA keeps full resolution). Known consequence: the
-  previous FSR-off + TAA config loses sharpening (was: scalar CAS at 100%).
-- Validated: FSR-off run clean; FSR Native AA runs at 40% / 100% with
-  center-crop Laplacian variance 359 (off) → 854 (40%) → 1754 (100%),
-  no ringing artifacts at max (vision-checked). Recommend ~40%.
+- **TAA/no-upscaler path (follow-up, same day):** the vendored RCAS kernel
+  (`FsrRcasFilterF`, f32, `FSR_RCAS_DENOISE` on — the exact kernel + config
+  the upscaler's RCAS pass uses) now also runs in `final.frag` via
+  `shaders/includes/rcas.shader`, post-tonemap on the LDR result. Same
+  `aaCasStrength` slider; `exp2(2*s - 2)` applies the identical FSR3
+  strength remap so both placements feel the same. `VulkanFinalPass`
+  pushes `rcasStrength = 0` while the upscaler is active (mutual
+  exclusion — stacked kernels ring); the scalar imitation kernel stays
+  deleted. Slider is enabled on all paths.
+- Settings GUI: slider relabeled "Sharpening — RCAS" (always enabled).
+- Validated: FSR Native AA 40%/100% Laplacian variance 854/1754 (off=359);
+  TAA path + RCAS100 visibly counters TAA blur (vision-checked, no
+  ringing); FSR regression clean (single sharpening stage, 0 errors).
+  Note: RCAS is more conservative than the old scalar kernel (its denoise
+  stage suppresses sharpening on noise-like regions by design), so 100%
+  here ≈ perceptually milder than the old scalar 100%.
 
 *Original sketch (superseded, kept for context):*
 
