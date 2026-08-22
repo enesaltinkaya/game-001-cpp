@@ -35,6 +35,8 @@ layout(push_constant) uniform PushConstants {
     float depthThreshold; // relative inv-depth rejection threshold
     float clampSlack;     // AABB expansion as a fraction of the local range
     float clampFloor;     // AABB expansion, absolute floor (block-pop scale)
+    float devStart;       // deviation damping start (sustained-change catch)
+    float devEnd;         // deviation damping end (fast convergence)
 } pc;
 
 /* Inverse view-space depth S = (N + (F-N)*d) / (N*F), affine in the raw
@@ -134,7 +136,24 @@ void main() {
     float hi    = nMax + pad;
     float prevClamped = clamp(prevAO, lo, hi);
 
-    float weight  = pc.blendWeight * velDamp * (1.0 - reject * 0.75);
+    /* Deviation-adaptive convergence.
+     *
+     * A SUSTAINED large deviation between the current AO and the history
+     * is a legitimate change that must converge within a frame or two —
+     * the canonical case is an occluder leaving: the character runs away
+     * from ground it darkened, and that ground's depth is UNCHANGED, so
+     * the disocclusion test above cannot catch it.  Without this term the
+     * long blend (0.92 ≈ 12-frame time constant) plus the clamp floor's
+     * equilibrium offset leave a dark trail along her path.
+     *
+     * TRANSIENT deviations (half-res block pops oscillating around the
+     * true value) stay below the damping window and keep the full blend
+     * weight, so the de-flicker property is preserved: a pop lasts one
+     * frame, a trail lasts until she stops. */
+    float dev     = abs(currAO - prevClamped);
+    float devDamp = 1.0 - smoothstep(pc.devStart, pc.devEnd, dev);
+
+    float weight  = pc.blendWeight * velDamp * (1.0 - reject * 0.75) * devDamp;
     float outAO   = mix(currAO, prevClamped, weight);
 
     imageStore(storageImages[nonuniformEXT(pc.outIndex)],

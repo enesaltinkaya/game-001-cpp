@@ -330,6 +330,8 @@ typedef struct AoTemporalPushConstants {
     float depthThreshold; /* relative inv-depth rejection threshold */
     float clampSlack;     /* scalar AABB expansion (fraction of range) */
     float clampFloor;     /* scalar AABB expansion (absolute floor)    */
+    float devStart;       /* deviation damping start                  */
+    float devEnd;         /* deviation damping end (full convergence)  */
 } AoTemporalPushConstants;
 
 static float temporalEnvOrDefault(const char* name, float def) {
@@ -417,6 +419,8 @@ static void temporalDispatch(VulkanCommand* cmd, VulkanImage* depth, VulkanImage
         .depthThreshold = temporalEnvOrDefault("ENGINE_AO_TDEPTH", 0.05f),
         .clampSlack    = temporalEnvOrDefault("ENGINE_AO_TCLAMP", 0.35f),
         .clampFloor    = temporalEnvOrDefault("ENGINE_AO_TFLOOR", 0.15f),
+        .devStart      = temporalEnvOrDefault("ENGINE_AO_TDEV0", 0.12f),
+        .devEnd        = temporalEnvOrDefault("ENGINE_AO_TDEV1", 0.50f),
     };
 
     vulkanBindPipe(cmd, &temporalPipe);
