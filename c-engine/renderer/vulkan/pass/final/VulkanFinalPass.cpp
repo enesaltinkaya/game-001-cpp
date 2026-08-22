@@ -11,6 +11,7 @@
 #include "renderer/vulkan/pass/lens/VulkanLensPass.h"
 #include "renderer/vulkan/pass/taa/VulkanTaaPass.h"
 #include "renderer/vulkan/pass/bloom/VulkanBloomPass.h"
+#include "renderer/vulkan/pass/dof/VulkanDofPass.h"
 
 namespace engine {
 
@@ -50,9 +51,15 @@ void VulkanFinalPass::update() {
     VulkanCommand* cmd      = vulkan.currentCmd;
     VulkanImage* taaImage       = vulkanTaaPassGetOutput();
     VulkanImage* fsrImage       = vulkanFsrPassGetOutput();
+    VulkanImage* dofImage       = vulkanDofPassGetOutput();
     VulkanImage* compositeImage = vulkanFrameResourcesGetCompositeColor();
-    VulkanImage* colorImage     = taaImage       ? taaImage
+    /* TAA keeps priority (a stale FSR output from a previous upscaler
+     * session must not win while TAA is on). DOF output replaces the TAA
+     * color in the non-upscaler path; the upscaler path already consumed
+     * the DOF output, so its output takes priority there. */
+    VulkanImage* colorImage     = taaImage ? (dofImage ? dofImage : taaImage)
                            : fsrImage       ? fsrImage
+                           : dofImage       ? dofImage
                            : compositeImage ? compositeImage
                                            : vulkanFrameResourcesGetSceneColor();
     VulkanImage* swapImage  = vulkanSwapchain.currentSwapchainImage;

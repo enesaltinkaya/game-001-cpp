@@ -6,6 +6,7 @@
 #include "renderer/gui/rmlui/GuiManagerRmlUi.h"
 #include "renderer/vulkan/pass/ao/VulkanAOPass.h"
 #include "renderer/vulkan/pass/bloom/VulkanBloomPass.h"
+#include "renderer/vulkan/pass/dof/VulkanDofPass.h"
 #include "renderer/vulkan/pass/lens/VulkanLensPass.h"
 #include "renderer/vulkan/pass/shadow/VulkanShadowPass.h"
 #include "renderer/vulkan/pass/ssr/VulkanSsrPass.h"
@@ -21,6 +22,7 @@ namespace game {
 static void syncAAUi(void);
 static void persistAASettings(void* _);
 static void persistLensSettings(void* _);
+static void persistDofSettings(void* _);
 static void queueAAPersist(void);
 static void applyUpscalerModeLater(void* _);
 static void flushPendingTasks(void);
@@ -42,9 +44,15 @@ static char lensParamsDisabled;
 static float lensGrainPercent;
 static float lensChromAbPercent;
 static float lensVignettePercent;
+static char dofParamsDisabled;
+static float dofFocus;
+static float dofFNumber;
+static float dofFocalLength;
+static float dofQuality;
 static int upscalerTaskKey    = -1;
 static int aaTaskKey          = -1;
 static int lensTaskKey        = -1;
+static int dofTaskKey         = -1;
 static int renderScaleTaskKey = -1;
 
 static const char* upscalerNames[] = {
@@ -67,6 +75,7 @@ static char* ssrLabel;
 static char* aoLabel;
 static char* bloomLabel;
 static char* lensLabel;
+static char* dofLabel;
 static char* contactShadowLabel;
 static char* fogLabel;
 static char* taaLabel;
@@ -79,6 +88,7 @@ static char ssrLabelText[16];
 static char aoLabelText[16];
 static char bloomLabelText[16];
 static char lensLabelText[16];
+static char dofLabelText[16];
 static char contactShadowLabelText[16];
 static char fogLabelText[16];
 static char taaLabelText[16];
@@ -89,6 +99,8 @@ static int aaCasStrengthChange(void* _);
 static int renderScaleChange(void* _);
 static int toggleLens(void* _);
 static int lensParamChange(void* _);
+static int toggleDof(void* _);
+static int dofParamChange(void* _);
 static int graphicsClose(void* _);
 static int toggleShadows(void* _);
 static int toggleSsr(void* _);
@@ -110,6 +122,8 @@ void SettingsGraphicsGui::added() {
     engine::luaRegisterFunction("toggleBloom", toggleBloom);
     engine::luaRegisterFunction("toggleLens", toggleLens);
     engine::luaRegisterFunction("lensParamChange", lensParamChange);
+    engine::luaRegisterFunction("toggleDof", toggleDof);
+    engine::luaRegisterFunction("dofParamChange", dofParamChange);
     engine::luaRegisterFunction("toggleContactShadow", toggleContactShadow);
     engine::luaRegisterFunction("toggleFog", toggleFog);
     engine::luaRegisterFunction("toggleTaa", toggleTaa);
@@ -124,6 +138,11 @@ void SettingsGraphicsGui::added() {
     lensChromAbPercent  = engine::vulkanLensPassGetChromAb() * 100.0f;
     lensVignettePercent = engine::vulkanLensPassGetVignette() * 100.0f;
     lensParamsDisabled  = engine::vulkanLensPassIsDisabled();
+    dofFocus            = engine::vulkanDofPassGetFocus();
+    dofFNumber          = engine::vulkanDofPassGetFNumber();
+    dofFocalLength      = engine::vulkanDofPassGetFocalLength();
+    dofQuality          = (float)engine::vulkanDofPassGetQuality();
+    dofParamsDisabled   = engine::vulkanDofPassIsDisabled();
     syncAAUi();
 
     renderScalePercent = engine::rendererGetRenderScale() * 100.0f;
@@ -140,11 +159,17 @@ void SettingsGraphicsGui::added() {
     rmlBindFloat(model, "lensGrainPercent", &lensGrainPercent);
     rmlBindFloat(model, "lensChromAbPercent", &lensChromAbPercent);
     rmlBindFloat(model, "lensVignettePercent", &lensVignettePercent);
+    rmlBindBool(model, "dofParamsDisabled", &dofParamsDisabled);
+    rmlBindFloat(model, "dofFocus", &dofFocus);
+    rmlBindFloat(model, "dofFNumber", &dofFNumber);
+    rmlBindFloat(model, "dofFocalLength", &dofFocalLength);
+    rmlBindFloat(model, "dofQuality", &dofQuality);
     rmlBind(model, "shadowsLabel", &shadowsLabel);
     rmlBind(model, "ssrLabel", &ssrLabel);
     rmlBind(model, "aoLabel", &aoLabel);
     rmlBind(model, "bloomLabel", &bloomLabel);
     rmlBind(model, "lensLabel", &lensLabel);
+    rmlBind(model, "dofLabel", &dofLabel);
     rmlBind(model, "contactShadowLabel", &contactShadowLabel);
     rmlBind(model, "fogLabel", &fogLabel);
     rmlBind(model, "taaLabel", &taaLabel);
@@ -203,6 +228,8 @@ static void syncAAUi(void) {
     contactShadowLabel = contactShadowLabelText;
     snprintf(lensLabelText, sizeof(lensLabelText), "%s", engine::vulkanLensPassIsDisabled() ? "Off" : "On");
     lensLabel = lensLabelText;
+    snprintf(dofLabelText, sizeof(dofLabelText), "%s", engine::vulkanDofPassIsDisabled() ? "Off" : "On");
+    dofLabel = dofLabelText;
     snprintf(fogLabelText, sizeof(fogLabelText), "%s", fogModeNames[fogMode]);
     fogLabel = fogLabelText;
 }
@@ -360,6 +387,10 @@ static void flushPendingTasks(void) {
         utils::futureTaskRemove(lensTaskKey);
         persistLensSettings(nullptr);
     }
+    if (dofTaskKey != -1) {
+        utils::futureTaskRemove(dofTaskKey);
+        persistDofSettings(nullptr);
+    }
 }
 
 int graphicsClose(void* _) {
@@ -375,6 +406,8 @@ static void syncEffectLabels(void) {
     taaLabel = taaLabelText;
     snprintf(lensLabelText, sizeof(lensLabelText), "%s", engine::vulkanLensPassIsDisabled() ? "Off" : "On");
     lensLabel = lensLabelText;
+    snprintf(dofLabelText, sizeof(dofLabelText), "%s", engine::vulkanDofPassIsDisabled() ? "Off" : "On");
+    dofLabel = dofLabelText;
     snprintf(ssrLabelText, sizeof(ssrLabelText), "%s", engine::vulkanSsrPassIsDisabled() ? "Off" : "On");
     ssrLabel = ssrLabelText;
     snprintf(aoLabelText, sizeof(aoLabelText), "%s", engine::vulkanAOPassIsDisabled() ? "Off" : "On");
@@ -478,6 +511,46 @@ int lensParamChange(void* _) {
         utils::futureTaskRemove(lensTaskKey);
     }
     lensTaskKey = utils::futureTaskAdd(500, persistLensSettings, nullptr);
+    return 0;
+}
+
+static void persistDofSettings(void* _) {
+    dofTaskKey = -1;
+
+    /* Read the bound slider values here (debounced), not in the change
+     * handler — RMLUI writes the fresh value back only while processing
+     * the 'change' event (same caveat as the lens sliders). */
+    engine::vulkanDofPassSetFocus(dofFocus);
+    engine::vulkanDofPassSetFNumber(dofFNumber);
+    engine::vulkanDofPassSetFocalLength(dofFocalLength);
+    engine::vulkanDofPassSetQuality((int)dofQuality);
+
+    utils::settingsSetDouble("dofFocus", static_cast<double>(dofFocus));
+    utils::settingsSetDouble("dofFNumber", static_cast<double>(dofFNumber));
+    utils::settingsSetDouble("dofFocalLength", static_cast<double>(dofFocalLength));
+    utils::settingsSetDouble("dofQuality", static_cast<double>(dofQuality));
+    utils::settingsWrite();
+
+    if (model) {
+        rmlUpdateDirtyAll(model);
+    }
+}
+
+int toggleDof(void* _) {
+    engine::vulkanDofPassSetDisabled(!engine::vulkanDofPassIsDisabled());
+    utils::settingsSetBool("dofEnabled", !engine::vulkanDofPassIsDisabled());
+    utils::settingsWrite();
+    dofParamsDisabled = engine::vulkanDofPassIsDisabled();
+    syncEffectLabels();
+    rmlUpdateDirtyAll(model);
+    return 0;
+}
+
+int dofParamChange(void* _) {
+    if (dofTaskKey != -1) {
+        utils::futureTaskRemove(dofTaskKey);
+    }
+    dofTaskKey = utils::futureTaskAdd(500, persistDofSettings, nullptr);
     return 0;
 }
 

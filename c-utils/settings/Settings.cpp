@@ -57,6 +57,14 @@ void settingsInit(void) {
     templates.push_back((Template{"lensGrain", "double", 20.0}));
     templates.push_back((Template{"lensChromAb", "double", 20.0}));
     templates.push_back((Template{"lensVignette", "double", 70.0}));
+    /* DOF is off by default — a strong aesthetic effect, player's choice.
+     * Focus model: focus distance (m), f-number, focal length (mm),
+     * blur quality (ring count 1..8). */
+    templates.push_back((Template{"dofEnabled", "boolean", 0.}));
+    templates.push_back((Template{"dofFocus", "double", 10.0}));
+    templates.push_back((Template{"dofFNumber", "double", 2.8}));
+    templates.push_back((Template{"dofFocalLength", "double", 50.0}));
+    templates.push_back((Template{"dofQuality", "double", 4.0}));
 
     settingsPath = stringNew("%s%s%s%s", platform.cwd, "data", platform.seperator, "settings.json");
     debug("settings: path %s", settingsPath->data);

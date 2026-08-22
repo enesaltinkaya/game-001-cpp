@@ -22,6 +22,7 @@ below and the game repo's `plans/fidelityfx-sdk-expansion.md`).
 | --------------------------------------------------------------------- | ------------------------------------------------------------------------- |
 | `src/components/fsr3upscaler/ffx_fsr3upscaler.cpp`                    | FSR3 upscaler core logic                                                  |
 | `src/components/cacao/ffx_cacao.cpp`                                  | CACAO AO core logic (`ffxCacaoContextCreate/Dispatch/Destroy`, `ffxCacaoUpdateSettings`) |
+| `src/components/dof/ffx_dof.cpp`                                      | DOF core logic (`ffxDofContextCreate/Dispatch/Destroy`, `ffxDofCalculateCoc{Scale,Bias}`) |
 | `src/shared/ffx_assert.cpp`                                           | Assert/debug utilities                                                    |
 | `src/shared/ffx_message.cpp`                                          | Message/logging utilities                                                 |
 | `src/shared/ffx_object_management.cpp`                                | Internal object management                                                |
@@ -29,6 +30,7 @@ below and the game repo's `plans/fidelityfx-sdk-expansion.md`).
 | `src/backends/shared/ffx_shader_blobs.cpp`                            | Shader blob dispatch (routes by `FFX_FSR3UPSCALER` / `FFX_CACAO` defines) |
 | `src/backends/shared/blob_accessors/ffx_fsr3upscaler_shaderblobs.cpp` | Precompiled SPIR-V shader permutations (FSR3)                             |
 | `src/backends/shared/blob_accessors/ffx_cacao_shaderblobs.cpp`        | Precompiled SPIR-V shader permutations (CACAO)                            |
+| `src/backends/shared/blob_accessors/ffx_dof_shaderblobs.cpp`          | Precompiled SPIR-V shader permutations (DOF)                              |
 | `../../ffx_stubs.cpp`                                                 | Stubs for unbuilt components (breadcrumbs, frame interpolation swapchain) |
 
 All SDK paths relative to `git/sdk/`. `ffx_stubs.cpp` lives next to `build.sh`.
@@ -43,6 +45,12 @@ required — `ffx_cacao_shaderblobs.cpp` includes them unconditionally, even
 though the engine uses the 32-bit permutations). CACAO permutation args come
 from `gpu/cacao/CMakeCompileCACAOShaders.txt` (only
 `-DFFX_CACAO_OPTION_APPLY_SMART={0,1}`).
+
+DOF: 5 shaders × 8 permutations (MAX_RING_MERGE_LOG × COMBINE_IN_PLACE ×
+REVERSE_DEPTH) × 4 variants. The VK backend forces `fp16Supported = false`
+(1080 Ti compat), so the engine selects the 32-bit permutations — the
+internal UAVs (bilateral color, near/far, radius) stay `rgba32f`/`rg32f`,
+matching the GLSL qualifiers without any host-side format patch.
 
 Output: `git/sdk/src/backends/vk/shader_output/`.
 
@@ -79,13 +87,17 @@ CACAO shaders (31): `ffx_cacao_apply_pass`, `ffx_cacao_apply_non_smart_pass`,
 `ffx_cacao_prepare_native_normals{,_from_input_normals}_pass`,
 `ffx_cacao_upscale_bilateral_5x5_pass`.
 
+DOF shaders (5): `ffx_dof_downsample_depth_pass`,
+`ffx_dof_downsample_color_pass`, `ffx_dof_dilate_pass`, `ffx_dof_blur_pass`,
+`ffx_dof_composite_pass`.
+
 ## What's NOT Built
 
 - **DX12 backend** (`src/backends/dx12/`) — not needed
 - **ffx-api layer** (`ffx-api/`) — has hard-coded Windows/DX12 dependencies; we use the SDK-level API directly
 - **Frame generation / interpolation** (`src/components/frameinterpolation/`, `src/components/opticalflow/`)
-- **All other FidelityFX effects** (blur, CAS, denoiser, DOF, brixelizer, FSR1, FSR2, lens, LPM, SPD, SSSR, VRS, etc.)
-- **All other shader blob accessors** — only `ffx_fsr3upscaler_shaderblobs.cpp` and `ffx_cacao_shaderblobs.cpp` are compiled
+- **All other FidelityFX effects** (blur, CAS, denoiser, brixelizer, FSR1, FSR2, LPM, SSSR, VRS, etc.)
+- **All other shader blob accessors** — only `ffx_fsr3upscaler_shaderblobs.cpp`, `ffx_cacao_shaderblobs.cpp` and `ffx_dof_shaderblobs.cpp` are compiled
 
 ## SDK Header Patches
 
@@ -190,6 +202,27 @@ includable from C11 code (committed in git):
   any effect binding a storage buffer (SPD's atomic counter is the first)
   allocates from an unsized type — validation warning, OOM on strict
   drivers.
+
+### `sdk/include/FidelityFX/gpu/dof/ffx_dof_callbacks_glsl.h` (DOF round)
+
+- Output UAV `rw_output_color` qualifier `rgba32f` → `rgba16f`: the DOF
+  output is an engine-provided image, and the engine's HDR render targets
+  are R16G16B16A16_SFLOAT. The storage-image format qualifier is baked
+  into the precompiled SPIR-V, so a `rgba32f` UAV could only legally bind
+  an R32G32B32A32 image (4× the bandwidth of the engine convention). The
+  engine always uses a separate output image (no `FFX_DOF_OUTPUT_PRE_INIT`),
+  so the `COMBINE_IN_PLACE` `imageLoad`-as-input path is unaffected in
+  practice. The internal UAVs (bilateral color / near / far / radius) keep
+  their `rgba32f`/`rg32f` qualifiers — the VK backend forces
+  `fp16Supported = false`, so the 32-bit permutations are selected and the
+  host allocations (R32G32B32A32 / R32G32) already match.
+
+### `sdk/include/FidelityFX/host/ffx_dof.h` (DOF round)
+
+- `FFX_DOF_CONTEXT_SIZE` 45674 → 88000 uint32s on non-Windows (Linux
+  `wchar_t` inflation: `FfxDofContext_Private` with its 5
+  `FfxPipelineState` members is 349096 B = 87274 uint32s there; the SDK's
+  `FFX_STATIC_ASSERT` in `ffxDofContextCreate` catches regressions).
 
 ## Compatibility Header
 

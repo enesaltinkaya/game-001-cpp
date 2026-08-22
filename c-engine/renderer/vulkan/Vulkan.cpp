@@ -41,6 +41,7 @@
 #include "renderer/vulkan/pass/oit/VulkanOitCompositePass.h"
 #include "renderer/vulkan/pass/fsr/VulkanFsrPass.h"
 #include "renderer/vulkan/pass/taa/VulkanTaaPass.h"
+#include "renderer/vulkan/pass/dof/VulkanDofPass.h"
 #include "renderer/vulkan/pass/bloom/VulkanBloomPass.h"
 #include "renderer/vulkan/pass/final/VulkanFinalPass.h"
 #include "renderer/vulkan/pass/lens/VulkanLensPass.h"
@@ -215,6 +216,7 @@ void vulkanInit(void) {
     addPass(&vulkanDecalPass);
     addPass(&vulkanCompositePass);
     addPass(&vulkanTaaPass);
+    addPass(&vulkanDofPass);
     addPass(&vulkanFsrPass);
     addPass(&vulkanBloomPass);
     addPass(&vulkanFinalPass);

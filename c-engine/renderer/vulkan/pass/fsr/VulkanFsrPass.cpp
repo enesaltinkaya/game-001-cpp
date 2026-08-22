@@ -13,6 +13,7 @@
 #include "renderer/vulkan/resources/VulkanResourceManager.h"
 #include "renderer/vulkan/pipeline/VulkanPipe.h"
 #include "renderer/vulkan/pipeline/VulkanProfile.h"
+#include "renderer/vulkan/pass/dof/VulkanDofPass.h"
 #include "timer/Timer.h"
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wmissing-field-initializers"
@@ -402,7 +403,11 @@ void VulkanFsrPass::update() {
 
     VulkanImage* sceneColor = vulkanFrameResourcesGetSceneColor();
     VulkanImage* compositeColor = vulkanFrameResourcesGetCompositeColor();
-    VulkanImage* color       = compositeColor ? compositeColor : sceneColor;
+    /* DOF (when active) consumed the composite/TAA color and produced the
+     * blurred HDR image — feed it to the upscaler so RCAS sharpens
+     * in-focus detail, not bokeh. */
+    VulkanImage* dofColor = vulkanDofPassGetOutput();
+    VulkanImage* color    = dofColor ? dofColor : (compositeColor ? compositeColor : sceneColor);
     VulkanImage* depth       = vulkanFrameResourcesGetDepth();
     VulkanImage* velocity    = vulkanFrameResourcesGetVelocity();
     VulkanImage* material    = vulkanFrameResourcesGetMaterial();
@@ -480,6 +485,10 @@ void VulkanFsrPass::update() {
     VulkanImage* opaqueColor = (color != sceneColor) ? sceneColor : NULL;
     if (reactiveMaskEnabled) {
         generateReactiveMask(cmd, opaqueColor, color, material, depth, normals);
+        /* DOF-blurred pixels are marked reactive so the upscaler does not
+         * accumulate detail the blur will destroy (max-blend into the mask
+         * the dispatch above just wrote). */
+        vulkanDofPassApplyReactiveMask(cmd, depth);
     }
 
     vulkanTransition(cmd, &reactiveMaskImage, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
@@ -651,5 +660,9 @@ void vulkanFsrPassSetReactiveMask(char enabled) {
 
 char vulkanFsrPassGetReactiveMask(void) {
     return reactiveMaskEnabled;
+}
+
+VulkanImage* vulkanFsrPassGetReactiveMaskImage(void) {
+    return reactiveMaskImage.img ? &reactiveMaskImage : NULL;
 }
 }  // namespace engine

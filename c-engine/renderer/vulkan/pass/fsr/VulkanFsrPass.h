@@ -21,4 +21,8 @@ struct VulkanImage* vulkanFsrPassGetOutput(void);
 char vulkanFsrPassIsEnabled(void);
 void vulkanFsrPassSetReactiveMask(char enabled);
 char vulkanFsrPassGetReactiveMask(void);
+/* The FSR reactive-mask image (render-res R32F), or NULL while the
+ * upscaler context is not created. The DOF pass max-blends its CoC mask
+ * into it before the FSR dispatch. */
+struct VulkanImage* vulkanFsrPassGetReactiveMaskImage(void);
 }  // namespace engine

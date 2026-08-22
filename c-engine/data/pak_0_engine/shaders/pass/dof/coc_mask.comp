@@ -1,0 +1,58 @@
+#version 460
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_nonuniform_qualifier : require
+#extension GL_ARB_shading_language_include : enable
+
+#include "../../includes/utils.shader"
+#include "../../includes/globalset.shader"
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(push_constant) uniform PushConstants {
+    uint depthIndex;        // depth buffer (sampled, D32, reverse-Z)
+    uint maskIndex;         // FSR reactive mask (storage, R32F)
+    float cocScale;         // thin-lens CoC constants (half-res pixels)
+    float cocBias;
+    float cocLimit;
+    uint width;
+    uint height;
+} pc;
+
+/* Max-blend a CoC-derived reactivity value into the FSR reactive mask.
+ * Pixels whose circle of confusion is large enough to be visibly blurred
+ * by the DOF pass are marked reactive so the upscaler does not accumulate
+ * detail that the blur will destroy (bokeh radius changes with camera
+ * motion; accumulating differently-blurred frames would ghost). The CoC
+ * is computed exactly like the DOF downsample pass (same scale/bias/limit
+ * push constants), so the mask tracks the actual blur. */
+void main() {
+    ivec2 coord = ivec2(gl_GlobalInvocationID.xy);
+    if (coord.x >= int(pc.width) || coord.y >= int(pc.height)) {
+        return;
+    }
+
+    float depth = texelFetch(
+        sampler2D(textures[nonuniformEXT(pc.depthIndex)],
+                  samplers[SAMPLER_NEAREST]),
+        coord, 0).r;
+
+    /* Sky (depth 0 in reverse-Z) is never blurred. */
+    float coc = 0.0;
+    if (depth > 0.0) {
+        coc = clamp(pc.cocScale * depth + pc.cocBias, -pc.cocLimit, pc.cocLimit);
+    }
+
+    /* |coc| is in half-res pixels: 2px is sub-perceptual, 8px is a clear
+     * bokeh. Ramp the reactivity to 0.5 (moderate — full 1.0 would also
+     * kill the upscaler's temporal stabilization on in-focus content at
+     * the ramp edge). */
+    float reactive = smoothstep(2.0, 8.0, abs(coc)) * 0.5;
+    if (reactive <= 0.0) {
+        return;
+    }
+
+    vec4 cur = imageLoad(storageImages[nonuniformEXT(pc.maskIndex)], coord);
+    imageStore(storageImages[nonuniformEXT(pc.maskIndex)],
+               coord, vec4(max(cur.r, reactive), 0.0, 0.0, 0.0));
+}

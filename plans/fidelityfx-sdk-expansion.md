@@ -23,8 +23,8 @@ implementation starts.
 - [x] Phase 2 — SPD (done 2026-08-22 — scope corrected during research,
   see phase notes: only the runtime-HDR-pyramid use is viable; first real
   consumer is SSSR in Phase 5)
-- [ ] Phase 3 — Lens (grain, vignette, chromatic aberration)
-- [ ] Phase 4 — DOF (depth of field / bokeh)
+- [x] Phase 3 — Lens (grain, vignette, chromatic aberration)
+- [x] Phase 4 — DOF (depth of field / bokeh)
 - [ ] Phase 5 — SSSR (stochastic SSR, replaces custom SSR; needs Denoiser)
 - [ ] Phase 6 — Brixelizer + Brixelizer GI (sparse voxel GI)
 - Deferred: Parallel Sort (see "Deferred" section)
@@ -37,14 +37,15 @@ implementation starts.
 Culling → Depth → Occlusion → HiZ → Shadow → ContactShadow → LightCulling
 → HeightmapTerrain → AzgaarProps → Scene → Skybox → Azgaar{River,Water,Weather}
 → OIT{Accum,Composite} → SSR → AO(CACAO) → Volumetric → Decal
-→ Composite → TAA → FSR → Bloom → Final → DebugPhysics → RmlUI
+→ Composite → TAA → DOF → FSR → Bloom → Final → Lens → DebugPhysics → RmlUI
 ```
 
-- `libffx_fsr3upscaler_vk.a` (linux + win) contains fsr3upscaler + cacao,
-  compiled via `build.sh` (wine `FidelityFX_SC.exe` shader permutations →
-  blob headers → static archive). Unbuilt components are stubbed in
-  `ffx_stubs.cpp`.
-- Integration pattern is established (FSR pass, CACAO inside `VulkanAOPass`):
+- `libffx_fsr3upscaler_vk.a` (linux + win) contains fsr3upscaler + cacao +
+  spd + lens + dof, compiled via `build.sh` (wine `FidelityFX_SC.exe`
+  shader permutations → blob headers → static archive). Unbuilt components
+  are stubbed in `ffx_stubs.cpp`.
+- Integration pattern is established (FSR pass, CACAO inside `VulkanAOPass`,
+  SPD in `VulkanSpd`, Lens in `VulkanLensPass`, DOF in `VulkanDofPass`):
   `ffxGetScratchMemorySizeVK` + `ffxGetInterfaceVK`, static FFX context,
   `wrapImageResource`-style local helpers, dispatch in `update()`.
 
@@ -234,7 +235,11 @@ prefilter, a test texture); perf profile of load-time genMips.
 
 ## Phase 3 — Lens
 
-_Effort: small. One fullscreen pass, big look-change-per-line-of-code._
+*Done (status was stale — the lens pass + component had already landed in
+the engine and `ENABLED_COMPONENTS`; see `VulkanLensPass` and the lens
+registry block in `fsr3.1/build.sh`).*
+
+_Original sketch (kept for context):_
 
 - SDK pieces: `ffx_lens.h`, `ffx_lens.cpp`, 1 shader (`ffx_lens_pass`,
   4 variants).
@@ -251,7 +256,57 @@ RmlUI UI elements.
 
 ## Phase 4 — DOF
 
-_Effort: medium. New capability; first "pre-upscale" effect._
+*Done 2026-08-22 — first pre-upscale effect; manual focus model.*
+
+**What landed:**
+
+- Archive: `dof` added to `ENABLED_COMPONENTS` (5 shaders × 8 permutations
+  × 4 variants). Two fork patches, documented in `docs/fsr3.1.md`:
+  output UAV qualifier `rgba32f→rgba16f` (engine HDR targets are
+  R16G16B16A16_SFLOAT; the internal UAVs keep `rgba32f`/`rg32f` because the
+  VK backend forces `fp16Supported=false`, so the 32-bit permutations are
+  selected and host allocations already match); `FFX_DOF_CONTEXT_SIZE`
+  Linux bump 45674→88000 uint32s (the predicted `wchar_t` round —
+  `FfxDofContext_Private` is 349096 B = 87274 uint32s; static assert
+  catches regressions). No descriptor-pool or other backend changes needed
+  (the SPD round's storage-buffer pool fix already covered DOF's atomic
+  `rw_internal_globals` counter).
+- Engine: `renderer/vulkan/pass/dof/VulkanDofPass.{h,cpp}` — lazy FFX
+  context (recreated on resize / quality change), full-res
+  R16G16B16A16_SFLOAT output, dispatch between TAA and FSR. Input color:
+  TAA output when TAA is on, else the post-composite HDR color (the same
+  image FSR would consume). Final + Bloom consume the DOF output in the
+  non-upscaler path (upscaler path already consumed it).
+- CoC model: thin-lens `ffxDofCalculateCoc{Scale,Bias}` against the
+  camera's cglm RH_ZO reverse-Z projection (near/far swapped, so
+  proj34 > 0, proj43 = −1); focus passed as negative view-space z;
+  conversion in **half-res** pixels (the shader's CoC units), sensor width
+  fixed at full-frame 36 mm; CoC limit factor 0.1 (≈ 1/10 screen height).
+- FSR reactive mask: small engine compute shader
+  (`shaders/pass/dof/coc_mask.comp`) max-blends a CoC-derived reactivity
+  (smoothstep 2→8 half-res px, capped 0.5) into the FSR reactive mask,
+  dispatched by the FSR pass right after its own reactive-mask generation
+  (`vulkanDofPassApplyReactiveMask`) — bokeh pixels tell the upscaler not
+  to accumulate detail the blur will destroy.
+- Settings GUI: "Depth of Field" toggle + Focus Distance (0.5–100 m),
+  Aperture (f/1.0–16), Focal Length (16–135 mm), Quality (1–8 rings)
+  sliders; off by default. Env overrides for headless validation:
+  `ENGINE_DOF_{ENABLED,FOCUS,FNUMBER,FOCAL,QUALITY}`.
+- **Known limitation (accepted first cut, per plan):** transparent/OIT
+  objects have no depth-buffer entry, so they render sharp over the
+  blurred background. Follow-up: depth contribution for OIT or a
+  transparency-aware composite.
+- Auto-focus (screen-center / GPU min depth) deferred — manual model only.
+
+**Validation:** parked-camera A/B screenshots (DOF off vs on: focus plane
+at the player, foreground grass + far trees/water blurred); focus 2 m /
+f/2.0 (whole scene soft) vs f/8 (near grass sharp, player + background
+blurred) — focus distance and aperture both move the plane/DoF correctly;
+FSR Native AA + DOF combined run clean (no validation errors, bokeh
+upscaled correctly); DOF-off regression run clean (pass fully dormant —
+context is lazy).
+
+_Original sketch (superseded, kept for context):_
 
 - SDK pieces: `ffx_dof.h`, `ffx_dof.cpp`, 5 shaders
   (downsample color/depth, dilate, blur, composite — 4 variants each).

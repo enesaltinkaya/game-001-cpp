@@ -5,6 +5,7 @@
 #include "renderer/vulkan/command/VulkanCommand.h"
 #include "renderer/vulkan/pass/fsr/VulkanFsrPass.h"
 #include "renderer/vulkan/pass/taa/VulkanTaaPass.h"
+#include "renderer/vulkan/pass/dof/VulkanDofPass.h"
 #include "renderer/vulkan/pipeline/VulkanPipe.h"
 #include "renderer/vulkan/resources/VulkanFrameResources.h"
 #include "renderer/vulkan/resources/VulkanImage.h"
@@ -216,7 +217,12 @@ void VulkanBloomPass::added() {
 void VulkanBloomPass::preUpdate() {
     if (vulkan.skipFrame) return;
 
-    VulkanImage* resolved = vulkanTaaPassGetOutput();
+    /* DOF (when active) is the resolved color for the whole chain — in the
+     * upscaler path it is the pre-upscale image the FSR pass consumed. */
+    VulkanImage* resolved = vulkanDofPassGetOutput();
+    if (!resolved) {
+        resolved = vulkanTaaPassGetOutput();
+    }
     if (!resolved) {
         resolved = vulkanFsrPassGetOutput();
     }
@@ -245,7 +251,10 @@ void VulkanBloomPass::update() {
         return;
     }
 
-    VulkanImage* resolved = vulkanTaaPassGetOutput();
+    VulkanImage* resolved = vulkanDofPassGetOutput();
+    if (!resolved) {
+        resolved = vulkanTaaPassGetOutput();
+    }
     if (!resolved) {
         resolved = vulkanFsrPassGetOutput();
     }
