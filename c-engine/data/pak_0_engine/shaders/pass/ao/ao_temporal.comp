@@ -10,9 +10,10 @@
 // stale history (out of bounds, no data, S-space depth change), clamps
 // the reprojected history into the current frame's 3×3 min/max box
 // (kills ghosting; built at the reprojected position so the box is stable
-// across jitter phases), then blends with an EMA.  Output: R16G16_SFLOAT,
-// .r = accumulated occlusion, .g = S-space inverse view depth (0 = no
-// data / sky).
+// across jitter phases), then blends with an EMA (the per-frame ray-pass
+// signal is first depth-gated spatially blurred — see below).
+// Output: R16G16_SFLOAT, .r = accumulated occlusion, .g = S-space
+// inverse view depth (0 = no data / sky).
 
 #include "../../includes/utils.shader"
 #include "../../includes/globalset.shader"
@@ -61,12 +62,45 @@ void main() {
         return;
     }
 
-    /* Current frame's (noisy) per-pixel AO from the ray pass. */
-    float curr = texelFetch(
-        sampler2D(textures[nonuniformEXT(pc.aoIndex)],
-                  samplers[SAMPLER_CLAMP_NEAREST]),
-        coord, 0).r;
+    /* Current frame's per-pixel AO from the ray pass, spatially blurred:
+     * 5×5 Gaussian gated by S-space (inverse view depth) continuity, the
+     * fast bilateral step of the XeGTAO pipeline.  Same-surface taps
+     * blend; taps across a silhouette keep near-zero weight (exp decay of
+     * |ΔS|) so occlusion never smears over an occluder edge.  Feeding the
+     * blurred value to the temporal blend is what turns the speckled,
+     * hard-edged per-frame band into a soft contact shadow. */
     float currS = depthToInv(depth);
+
+    const float G5[25] = {
+        1.0f,  4.0f,  6.0f,  4.0f,  1.0f,
+        4.0f, 16.0f, 24.0f, 16.0f,  4.0f,
+        6.0f, 24.0f, 36.0f, 24.0f,  6.0f,
+        4.0f, 16.0f, 24.0f, 16.0f,  4.0f,
+        1.0f,  4.0f,  6.0f,  4.0f,  1.0f};
+    float blurSum = 0.0;
+    float blurWgt = 0.0;
+    for (int dy = -2; dy <= 2; dy++) {
+        for (int dx = -2; dx <= 2; dx++) {
+            ivec2 n = coord + ivec2(dx, dy);
+            if (n.x < 0 || n.y < 0 || n.x >= int(pc.width) ||
+                n.y >= int(pc.height)) {
+                continue;
+            }
+            float v = texelFetch(
+                sampler2D(textures[nonuniformEXT(pc.aoIndex)],
+                          samplers[SAMPLER_CLAMP_NEAREST]),
+                n, 0).r;
+            float s = depthToInv(texelFetch(
+                sampler2D(textures[nonuniformEXT(pc.depthIndex)],
+                          samplers[SAMPLER_CLAMP_NEAREST]),
+                n, 0).r);
+            float g  = G5[(dy + 2) * 5 + (dx + 2)];
+            float dw = exp(-abs(s - currS) * 50.0);
+            blurSum += v * g * dw;
+            blurWgt += g * dw;
+        }
+    }
+    float curr = (blurWgt > 1e-6) ? blurSum / blurWgt : 1.0;
 
     /* ── Reprojection ── */
     vec2 mv     = texture(
@@ -110,7 +144,9 @@ void main() {
      *    phases, TAA convention).  Clamping the history (not the current
      *    sample) is what lets a cleared (all 1.0) history bootstrap:
      *    the current frame pulls the value in, the box only constrains
-     *    stale history. */
+     *    stale history.  Taps are only admitted when they sit on the
+     *    same surface (relative S-space change < ~2%, sky excluded), so a
+     *    silhouette-adjacent noisy neighbour cannot shrink the box. */
     float nMin = curr;
     float nMax = curr;
     for (int dy = -1; dy <= 1; dy++) {
@@ -118,6 +154,12 @@ void main() {
             if (dx == 0 && dy == 0) continue;
             vec2 nuv = clamp(prevUv + vec2(float(dx), float(dy)) / res,
                              vec2(0.0), vec2(1.0));
+            float s = depthToInv(texture(
+                sampler2D(textures[nonuniformEXT(pc.depthIndex)],
+                          samplers[SAMPLER_CLAMP_NEAREST]),
+                nuv).r);
+            if (s < 1e-6) continue;  /* sky neighbour */
+            if (abs(s - currS) >= 0.02 * max(s, currS)) continue;
             float v  = texture(
                 sampler2D(textures[nonuniformEXT(pc.aoIndex)],
                           samplers[SAMPLER_CLAMP_NEAREST]),
