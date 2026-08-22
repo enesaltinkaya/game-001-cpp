@@ -43,6 +43,14 @@ static const float DOF_COC_LIMIT_FACTOR = 0.1f;
  * natural, moderate bokeh at the camera distances the game uses. */
 static const float DOF_F_NUMBER        = 2.8f;
 static const float DOF_FOCAL_LENGTH_MM = 50.0f;
+/* Close-range DoF attenuation (see update()): at short focus distances the
+ * depth of field is physically very shallow, so the subject blurs easily
+ * (like a phone camera in macro mode). Stop down the effective aperture as
+ * the subject approaches to keep it sharp, ramping back to the base f-number
+ * at longer distances where the bokeh is desirable. */
+static const float DOF_CLOSE_FULL_M = 2.5f;  // at/below this, fully stopped down
+static const float DOF_CLOSE_NONE_M = 6.0f;  // at/above this, base f-number
+static const float DOF_STOPPED_F    = 16.0f; // effective f-number when fully stopped
 
 static void swapchainCreated(void* _);
 static void createOutput(void);
@@ -308,10 +316,21 @@ void VulkanDofPass::update() {
     float proj43 = (*proj)[2][3];
 
     float focalLengthM = DOF_FOCAL_LENGTH_MM * 0.001f;
-    float apertureM    = focalLengthM / DOF_F_NUMBER;
     float focusM       = focusDistance > 0.1f ? focusDistance : 0.1f;
     float focusSigned  = -focusM;
     float conversion   = ((float)window.renderWidth * 0.5f) / DOF_SENSOR_WIDTH_M;
+
+    /* Close-range DoF attenuation: ramp the effective f-number from the base
+     * (full bokeh) at DOF_CLOSE_NONE_M to DOF_STOPPED_F (deep DoF, subject
+     * sharp) at DOF_CLOSE_FULL_M. */
+    float fNumber = DOF_F_NUMBER;
+    if (focusM < DOF_CLOSE_NONE_M) {
+        float t = (DOF_CLOSE_NONE_M - focusM) / (DOF_CLOSE_NONE_M - DOF_CLOSE_FULL_M);
+        if (t < 0.0f) t = 0.0f;
+        if (t > 1.0f) t = 1.0f;
+        fNumber = DOF_F_NUMBER + (DOF_STOPPED_F - DOF_F_NUMBER) * t;
+    }
+    float apertureM = focalLengthM / fNumber;
 
     lastCocScale = ffxDofCalculateCocScale(apertureM, focusSigned, focalLengthM, conversion,
                                            proj33, proj34, proj43);
