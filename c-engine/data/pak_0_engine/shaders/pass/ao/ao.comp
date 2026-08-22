@@ -127,31 +127,22 @@ void main() {
     vec3  viewPos   = (sceneBuffer.cameras[0].view * vec4(worldPos, 1.0)).xyz;
     float distToCam = length(viewPos);
 
-    // ── Disk axis: fan toward the sun, or world-up when the sun is behind ──
+    // ── Disk axis: fan toward the sun (light-consistent) ────────────
     // Occlusion is light-consistent: fanning the disk toward the sun darkens
     // the shadow side of an occluder (matching the cast shadowmap) and leaves
-    // the lit side open.  That holds only while the sun is in the on-screen
-    // hemisphere; once it passes behind the camera the sun-facing disk fans
-    // the rays toward the viewer (= TAO) and traces the occluder's
-    // silhouette — the large disconnected dark blob on the lit side.  There
-    // we fall back to a world-up (sky) disk for a symmetric contact shadow
-    // (see the sunBehind blend below).
+    // the lit side open.  This holds whether or not the sun is on-screen:
+    // when the sun passes behind the camera the disk simply fans toward the
+    // viewer, which degrades to a view-dependent contact shadow on the
+    // shadow side (the G-TAO temporal pass stabilises the resulting
+    // view-dependence).  A world-up "sky" fallback was tried here but
+    // produced a disconnected dark ring on the LIT side of tall occluders
+    // (nearly-vertical rays from a ground pixel pass through the
+    // occluder's body at a distance, darkening a blob that is disconnected
+    // from the contact point), so it was removed.
     vec3 sunView = normalize(
         (sceneBuffer.cameras[0].invView * vec4(
             -sceneBuffer.directionalLight.direction.xyz, 0.0)).xyz);
-    vec3  V         = -normalize(viewPos);  // pixel → camera
-    float sunBehind = dot(sunView, V);      // >0: sun is behind the camera
-
-    // When the sun is behind the camera a sun-facing disk fans the rays
-    // toward the viewer (= TAO): it traces the occluder's screen silhouette
-    // and darkens the LIT side with a large disconnected blob (the reported
-    // artifact).  Fall back to a view-independent sky disk (facing world-up)
-    // so GTAO degrades to a proper symmetric contact shadow instead.  The
-    // blend is 0 while the sun is in the on-screen hemisphere (sun-facing,
-    // light-consistent) and 1 once it passes ~30° past the horizon.
-    vec3 upView = normalize(
-        (sceneBuffer.cameras[0].invView * vec4(0.0, 1.0, 0.0, 0.0)).xyz);
-    vec3 axis   = normalize(mix(sunView, upView, smoothstep(0.15, 0.5, sunBehind)));
+    vec3 axis   = sunView;
     // Orthonormal disk basis around `axis` (Y reference unless degenerate).
     vec3 refDir = (abs(axis.y) < 0.99) ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
     vec3 T      = normalize(cross(refDir, axis));
