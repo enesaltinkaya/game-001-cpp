@@ -16,31 +16,19 @@
 #define LIGHT_SPOT        2
 
 /* -----------------------------------------------------------------------
- * Single-light PBR evaluation (point or spot).
- * Returns Lo contribution in linear HDR.
+ * Distance/spot attenuation for a point or spot light.
+ * Out-parameters L (unit vector toward the light). Returns 0 when the
+ * light contributes nothing.  Shared by the PBR and diffuse variants so
+ * the falloff behaviour stays identical.
  * ----------------------------------------------------------------------- */
-vec3 evaluateOneLight(GpuLight light,
-                      vec3 worldPos,
-                      vec3 N,
-                      vec3 V,
-                      float NdotV,
-                      vec3 F0,
-                      float roughness,
-                      float metallic,
-                      vec3  baseColor,
-                      vec3  T_aniso,
-                      vec3  B_aniso,
-                      float anisotropy) {
-    int  lightType = int(light.directionAndType.w);
-    vec3 lightCol  = light.colorAndIntensity.rgb;
+float computeLightAttenuation(GpuLight light,
+                              vec3 worldPos,
+                              out vec3 L) {
+    int   lightType = int(light.directionAndType.w);
     float intensity = light.colorAndIntensity.w;
-
-    vec3 L;
     float attn;
 
     if (lightType == LIGHT_DIRECTIONAL) {
-        /* Directional light: no distance attenuation, no shadows (shadows
-           are handled separately by sceneBuffer.directionalLight / IBL sun). */
         L    = -normalize(light.directionAndType.xyz);
         attn = intensity;
     } else {
@@ -79,11 +67,31 @@ vec3 evaluateOneLight(GpuLight light,
         }
     }
 
-    if (attn < 0.0001) return vec3(0.0);
+    return attn;
+}
 
-    /* --- PBR BRDF --- */
+/* -----------------------------------------------------------------------
+ * Single-light PBR evaluation (point or spot).
+ * Returns Lo contribution in linear HDR.
+ * ----------------------------------------------------------------------- */
+vec3 evaluateOneLight(GpuLight light,
+                      vec3 worldPos,
+                      vec3 N,
+                      vec3 V,
+                      float NdotV,
+                      vec3 F0,
+                      float roughness,
+                      float metallic,
+                      vec3  baseColor,
+                      vec3  T_aniso,
+                      vec3  B_aniso,
+                      float anisotropy) {
+    vec3 L;
+    float attn = computeLightAttenuation(light, worldPos, L);
+    if (attn < 0.0001) return vec3(0.0);
+    vec3  lightCol = light.colorAndIntensity.rgb;
+    float NdotL    = max(dot(N, L), 0.0);
     vec3  H      = normalize(V + L);
-    float NdotL  = max(dot(N, L), 0.0);
     float HdotV  = max(dot(H, V), 0.0);
 
     if (NdotL <= 0.0) return vec3(0.0);
@@ -151,6 +159,43 @@ vec3 evaluateForwardPlusLights(vec3 worldPos,
         Lo += evaluateOneLight(light, worldPos, N, V, NdotV, F0,
                                roughness, metallic, baseColor,
                                T_aniso, B_aniso, anisotropy);
+    }
+
+    return Lo;
+}
+
+/* -----------------------------------------------------------------------
+ * Lambert-only (matte) accumulation of all point/spot lights affecting
+ * this fragment's tile.  For vegetation-scale surfaces (grass, tree
+ * canopies) the specular GGX term is negligible at their high roughness,
+ * so this cheaper variant carries only the energy-consistent /PI diffuse:
+ *     Lo += albedo / PI * lightColor * attenuation * max(dot(N, L), 0)
+ * Same light-grid traversal as evaluateForwardPlusLights().
+ * ----------------------------------------------------------------------- */
+vec3 evaluateForwardPlusLightsDiffuse(vec3 worldPos,
+                                      vec3 N,
+                                      vec3 baseColor) {
+    ivec2 tileCoord = ivec2(gl_FragCoord.xy) / ivec2(16, 16);
+    uint  tileCountX = uint((sceneBuffer.cameras[0].viewport.x + 15.0) / 16.0);
+    uint  tileIndex  = uint(tileCoord.y) * tileCountX + uint(tileCoord.x);
+
+    uvec2 tileData   = lightGridBuffer.tiles[tileIndex];
+    uint  startIndex = tileData.x;
+    uint  lightCount = tileData.y;
+
+    vec3 Lo = vec3(0.0);
+
+    for (uint i = 0; i < lightCount; i++) {
+        uint lightIndex = lightIndexBuffer.indices[startIndex + i];
+        GpuLight light  = sceneBuffer.lights[lightIndex];
+        if (int(light.directionAndType.w) == LIGHT_DIRECTIONAL) continue;
+
+        vec3  L;
+        float attn = computeLightAttenuation(light, worldPos, L);
+        if (attn < 0.0001) continue;
+
+        float NdotL = max(dot(N, L), 0.0);
+        Lo += (baseColor / PI) * light.colorAndIntensity.rgb * attn * NdotL;
     }
 
     return Lo;

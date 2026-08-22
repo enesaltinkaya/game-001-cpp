@@ -6,7 +6,8 @@
 
 // ── Azgaar props fragment shader (workstream B) ───────────────────────────
 // Cheap analytic lighting (Lambert + hemispheric) mirroring the old Azgaar
-// pass — vegetation-scale detail doesn't pay for full PBR / IBL / forward+.
+// pass, plus a Lambert-only Forward+ point/spot accumulation (full PBR /
+// IBL is overkill at vegetation scale).
 // Receives the scene's cascaded sun shadows, screen-space contact shadows
 // and screen-space AO (same sources as the terrain/scene passes) so grass
 // under tree canopies darkens with the ground instead of staying lit.
@@ -28,6 +29,7 @@ layout(location = 2) out vec4 outMaterial; // roughness, metallic, alphaMask, ao
 #include "../../includes/utils.shader"
 #include "../../includes/globalset.shader"
 #include "../../includes/shadow.shader"
+#include "../../includes/forwardplus.shader"
 
 void main() {
     /* Jitter compensation for alpha-cutout: undo the UV shift caused by
@@ -135,6 +137,12 @@ void main() {
     // it, e.g. house roofs reading as glowing white triangles) while the
     // sibling slope stays deep brown.
     vec3 color = albedo * (ambient * shadowAmbientFade + (sunColor / PI) * NdotL * shadow);
+
+    // Forward+ point/spot lights: Lambert-only accumulation (vegetation is
+    // matte, so the specular GGX term is skipped).  Same light-grid source
+    // as the terrain / scene passes, so a torch near some trees reads as
+    // lit canopies instead of sun-lit green.
+    color += evaluateForwardPlusLightsDiffuse(inWorldPos, N, albedo);
 
     if (any(isnan(color)) || any(isinf(color))) color = vec3(0.0);
     outColor    = vec4(color, 1.0); // opaque: the LOD hard switch is resolved in the vertex shader
