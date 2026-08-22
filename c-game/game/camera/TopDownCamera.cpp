@@ -18,6 +18,9 @@ static float TD_DISTANCE           = 10.0f;  // default orbit distance from look
 static float TD_MIN_DIST           = 3.0f;   // minimum zoom-in distance
 static float TD_MAX_DIST           = 40.0f;  // maximum zoom-out distance
 static float TD_LOOK_HEIGHT        = 0.0f;   // look-at offset above player feet
+/* DoF focus height above the feet: the player transform sits at the feet, so
+ * the focus point is offset up to the head to keep the character sharp. */
+static const float TD_DOF_FOCUS_HEIGHT = 1.5f;
 static float TD_ROTATE_SENSITIVITY = 0.15f;  // match third-person mouse orbit
 
 static float TD_ZOOM_SPEED = 15.0f;  // exponential-smooth interpolation rate
@@ -317,7 +320,14 @@ void topDownCameraUpdate(void) {
     engine::transformQuatToPitchYaw(tdCam.camTransform->rot, &tdCam.camera->pitch, &tdCam.camera->yaw);
 
     engine::vulkanShadowPassSetFocusDistance(tdCam.distance);
-    engine::vulkanDofPassSetFocusDistance(tdCam.distance);
+    /* DoF focuses on the player's head: the transform is at the feet, so
+     * offset the focus point up by the head height before measuring the
+     * (Y-clamped) camera-to-subject distance. Keeps the character sharp and
+     * blurs the background; follows wheel zoom. */
+    vec3 dofFocusPoint;
+    glm_vec3_copy(targetPos, dofFocusPoint);
+    dofFocusPoint[1] += TD_DOF_FOCUS_HEIGHT;
+    engine::vulkanDofPassSetFocusDistance(glm_vec3_distance(dofFocusPoint, desired));
     tdCam.camera->zfar = 4096.0f;
 }
 

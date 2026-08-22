@@ -17,6 +17,9 @@ static float tpCameraSensitivity = 0.15f;
 static float tpPitchMin          = -20.0f * GLM_PIf / 180.0f;
 static float tpPitchMax          = 60.0f * GLM_PIf / 180.0f;
 static float tpLookAtHeight      = 1.1f;  // camera look-at ~chest height
+/* DoF focus height above the feet: the player transform sits at the feet, so
+ * the focus point is offset up to the head to keep the character sharp. */
+static const float tpDofFocusHeight = 1.5f;
 
 static vec3 Y_UP = {0.0f, 1.0f, 0.0f};
 static vec3 X_AXIS = {1.0f, 0.0f, 0.0f};
@@ -275,10 +278,14 @@ void thirdPersonCameraUpdate(void) {
 
     engine::vulkanShadowPassSetFocusDistance(fullOrbitDist);
 
-    /* DoF focuses on the player: use the actual (obstacle-clamped) camera-to-
-     * player distance so the focus plane tracks the subject and follows wheel
-     * zoom. */
-    engine::vulkanDofPassSetFocusDistance(glm_vec3_distance(playerPos, desiredCamPos));
+    /* DoF focuses on the player's head: the transform is at the feet, so
+     * offset the focus point up by the head height before measuring the
+     * (obstacle-clamped) camera-to-subject distance. Keeps the character
+     * sharp and blurs the background; follows wheel zoom. */
+    vec3 dofFocusPoint;
+    glm_vec3_copy(transform->pos, dofFocusPoint);
+    dofFocusPoint[1] += tpDofFocusHeight;
+    engine::vulkanDofPassSetFocusDistance(glm_vec3_distance(dofFocusPoint, desiredCamPos));
 
     // Camera looks at the player's look-at point, tilted up by sky-look offset.
     vec3 lookTarget;
