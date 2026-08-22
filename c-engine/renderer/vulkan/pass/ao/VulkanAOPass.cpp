@@ -39,6 +39,12 @@ static double elapsedCPU;
 static double elapsedGPU;
 static char aoDisabled;
 
+/* Env-parsed float with fallback ("" falls back to the default too). */
+static float aoEnvFloat(const char* name, float def) {
+    const char* env = getenv(name);
+    return (env && *env) ? (float)atof(env) : def;
+}
+
 /* CACAO (FidelityFX) state.  Own FfxInterface + scratch buffer (same
  * pattern as the FSR pass); the CACAO context's internal GPU resources
  * are freed on swapchain recreation / pass removal. */
@@ -235,6 +241,17 @@ static void cacaoUpdate(VulkanCommand* cmd, VulkanImage* depth, VulkanImage* nor
     /* The engine's normal buffer is oct-encoded (.rg), which CACAO's affine
      * unpack (mul/add) cannot decode — reconstruct normals from depth. */
     settings.generateNormals = true;
+    /* Tuned down from the CACAO defaults (radius 1.2, multiplier 1.0, power
+     * 1.5, clamp 0.98): obscurance = multiplier * 4.3, then occlusion =
+     * pow(1 - min(obscurance, clamp), power) — so at the defaults even weak
+     * occlusion multiplies the image by ~0.7 and creases bottom out near
+     * black, reading as an over-dark, too-wide contact band.  The smaller
+     * radius keeps it a believable contact shadow; the linear power and the
+     * clamped floor keep creases from going pitch black. */
+    settings.radius           = aoEnvFloat("ENGINE_AO_RADIUS", 0.6f);
+    settings.shadowMultiplier = aoEnvFloat("ENGINE_AO_STRENGTH", 0.8f);
+    settings.shadowPower      = aoEnvFloat("ENGINE_AO_POWER", 1.0f);
+    settings.shadowClamp      = aoEnvFloat("ENGINE_AO_CLAMP", 0.75f);
     /* Debug knobs: ENGINE_AO_ANGLE_OFF / ENGINE_AO_DETAIL / ENGINE_AO_QUALITY
      * (see the header comment for the full list). */
     static const char* angleOffEnv = getenv("ENGINE_AO_ANGLE_OFF");

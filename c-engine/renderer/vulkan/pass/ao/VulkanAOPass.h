@@ -15,7 +15,8 @@ struct VulkanImage;
  * Debug knobs (env vars): ENGINE_AO_DISABLED=1, ENGINE_AO_TEMPORAL=0,
  * ENGINE_AO_TWEIGHT / _TDEPTH / _TCLAMP / _TFLOOR (temporal filter tuning),
  * ENGINE_AO_ANGLE_OFF=1 (disable kernel rotation), ENGINE_AO_DETAIL=<f>,
- * ENGINE_AO_QUALITY=<0-4>. */
+ * ENGINE_AO_QUALITY=<0-4>, ENGINE_AO_RADIUS / _STRENGTH / _POWER / _CLAMP
+ * (CACAO shape overrides). */
 class VulkanAOPass : public System {
 public:
     VulkanAOPass();
