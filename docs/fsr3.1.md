@@ -2,8 +2,10 @@
 
 Custom build of the AMD FidelityFX FSR 3.1 SDK for use from a **C++ game engine**
 via Vulkan. Currently enabled via `ENABLED_COMPONENTS` in `build.sh`:
-the **FSR3 Upscaler**, **CACAO** (ambient occlusion) and **SPD** (Single Pass
-Downsampler) components (no frame generation, no DX12 backend). The SDK tree
+the **FSR3 Upscaler**, **CACAO** (ambient occlusion), **SPD** (Single Pass
+Downsampler), **Lens**, **DOF**, **SSSR** (stochastic screen-space
+reflections) and **Denoiser** (reflections subset, SSSR's temporal denoiser)
+components (no frame generation, no DX12 backend). The SDK tree
 ships 21 components; enabling more is a registry edit (see "Build Script"
 below and the game repo's `plans/fidelityfx-sdk-expansion.md`).
 
@@ -23,6 +25,8 @@ below and the game repo's `plans/fidelityfx-sdk-expansion.md`).
 | `src/components/fsr3upscaler/ffx_fsr3upscaler.cpp`                    | FSR3 upscaler core logic                                                  |
 | `src/components/cacao/ffx_cacao.cpp`                                  | CACAO AO core logic (`ffxCacaoContextCreate/Dispatch/Destroy`, `ffxCacaoUpdateSettings`) |
 | `src/components/dof/ffx_dof.cpp`                                      | DOF core logic (`ffxDofContextCreate/Dispatch/Destroy`, `ffxDofCalculateCoc{Scale,Bias}`) |
+| `src/components/sssr/ffx_sssr.cpp`                                    | SSSR core logic (`ffxSssrContextCreate/Dispatch/Destroy`); internally creates a Denoiser context |
+| `src/components/denoiser/ffx_denoiser.cpp`                            | Denoiser core logic (reflections subset; `ffxDenoiserContextCreate/DispatchReflections/Destroy`) — SSSR's temporal denoiser |
 | `src/shared/ffx_assert.cpp`                                           | Assert/debug utilities                                                    |
 | `src/shared/ffx_message.cpp`                                          | Message/logging utilities                                                 |
 | `src/shared/ffx_object_management.cpp`                                | Internal object management                                                |
@@ -31,6 +35,8 @@ below and the game repo's `plans/fidelityfx-sdk-expansion.md`).
 | `src/backends/shared/blob_accessors/ffx_fsr3upscaler_shaderblobs.cpp` | Precompiled SPIR-V shader permutations (FSR3)                             |
 | `src/backends/shared/blob_accessors/ffx_cacao_shaderblobs.cpp`        | Precompiled SPIR-V shader permutations (CACAO)                            |
 | `src/backends/shared/blob_accessors/ffx_dof_shaderblobs.cpp`          | Precompiled SPIR-V shader permutations (DOF)                              |
+| `src/backends/shared/blob_accessors/ffx_sssr_shaderblobs.cpp`         | Precompiled SPIR-V shader permutations (SSSR)                            |
+| `src/backends/shared/blob_accessors/ffx_denoiser_shaderblobs.cpp`     | Precompiled SPIR-V shader permutations (Denoiser)                        |
 | `../../ffx_stubs.cpp`                                                 | Stubs for unbuilt components (breadcrumbs, frame interpolation swapchain) |
 
 All SDK paths relative to `git/sdk/`. `ffx_stubs.cpp` lives next to `build.sh`.
@@ -91,13 +97,29 @@ DOF shaders (5): `ffx_dof_downsample_depth_pass`,
 `ffx_dof_downsample_color_pass`, `ffx_dof_dilate_pass`, `ffx_dof_blur_pass`,
 `ffx_dof_composite_pass`.
 
+SSSR shaders (5): `ffx_sssr_depth_downsample_pass`,
+`ffx_sssr_classify_tiles_pass`, `ffx_sssr_prepare_blue_noise_texture_pass`,
+`ffx_sssr_prepare_indirect_args_pass`, `ffx_sssr_intersect_pass`. Each has a
+single permutation axis (`FFX_SSSR_OPTION_INVERTED_DEPTH={0,1}`); the engine
+selects the inverted-depth (reverse-Z) permutation.
+
+Denoiser shaders (8): `ffx_denoiser_prepare_shadow_mask_pass`,
+`ffx_denoiser_shadows_tile_classification_pass`,
+`ffx_denoiser_filter_soft_shadows_{0,1,2}_pass`,
+`ffx_denoiser_prefilter_reflections_pass`,
+`ffx_denoiser_reproject_reflections_pass`,
+`ffx_denoiser_resolve_temporal_reflections_pass`. All 8 are compiled (the blob
+accessor includes them unconditionally); only the 3 reflections passes are
+ever dispatched (the SSSR-embedded denoiser context is created with
+`FFX_DENOISER_REFLECTIONS`).
+
 ## What's NOT Built
 
 - **DX12 backend** (`src/backends/dx12/`) — not needed
 - **ffx-api layer** (`ffx-api/`) — has hard-coded Windows/DX12 dependencies; we use the SDK-level API directly
 - **Frame generation / interpolation** (`src/components/frameinterpolation/`, `src/components/opticalflow/`)
-- **All other FidelityFX effects** (blur, CAS, denoiser, brixelizer, FSR1, FSR2, LPM, SSSR, VRS, etc.)
-- **All other shader blob accessors** — only `ffx_fsr3upscaler_shaderblobs.cpp`, `ffx_cacao_shaderblobs.cpp` and `ffx_dof_shaderblobs.cpp` are compiled
+- **All other FidelityFX effects** (blur, CAS, brixelizer, FSR1, FSR2, LPM, VRS, etc.)
+- **All other shader blob accessors** — only `ffx_fsr3upscaler_shaderblobs.cpp`, `ffx_cacao_shaderblobs.cpp`, `ffx_dof_shaderblobs.cpp`, `ffx_sssr_shaderblobs.cpp` and `ffx_denoiser_shaderblobs.cpp` are compiled
 
 ## SDK Header Patches
 
@@ -223,6 +245,46 @@ includable from C11 code (committed in git):
   `wchar_t` inflation: `FfxDofContext_Private` with its 5
   `FfxPipelineState` members is 349096 B = 87274 uint32s there; the SDK's
   `FFX_STATIC_ASSERT` in `ffxDofContextCreate` catches regressions).
+
+### `sdk/include/FidelityFX/gpu/sssr/ffx_sssr_callbacks_glsl.h` (SSSR round)
+
+- Fixed the storage-image format qualifiers to match the resource formats the
+  SDK allocates in `ffx_sssr.cpp`: the callbacks declared `rw_radiance`
+  `rgba32f`, `rw_variance` `r32f`, `rw_extracted_roughness` `r32f`, and
+  `rw_blue_noise_texture` `rg32f`, but the host creates them as
+  `R16G16B16A16_FLOAT`, `R16_FLOAT`, `R8_UNORM`, and `R8G8_UNORM`
+  respectively. The storage-image format qualifier is baked into the
+  precompiled SPIR-V, so a `rgba32f` UAV could only legally bind an
+  R32G32B32A32 image (4× the bandwidth, and a validation error against the
+  actual R16F image). Qualifiers changed to `rgba16f`/`r16f`/`r8`/`rg8`
+  (restoring the lean formats, DX12 parity). `rw_output` (the
+  engine-provided reflection buffer, R16G16B16A16_SFLOAT) was patched
+  `rgba32f` → `rgba16f` for consistency, though no SSSR/denoiser compute pass
+  binds it — the final result reaches the output via a `vkCmdCopyImage`
+  blit, not a UAV write. `rw_depth_hierarchy` stays `r32f` (host R32_FLOAT,
+  already matching).
+
+### `sdk/include/FidelityFX/host/ffx_denoiser.h` + `ffx_sssr.h` (SSSR round)
+
+- `FFX_DENOISER_CONTEXT_SIZE` 73098 → 140000 uint32s on non-Windows (Linux
+  `wchar_t` inflation: `FfxDenoiserContext_Private` with its 8
+  `FfxPipelineState` members is 558608 B = 139652 uint32s there).
+- `FFX_SSSR_CONTEXT_SIZE` 118914 → 228000 uint32s on non-Windows. The SSSR
+  private context **embeds a full `FfxDenoiserContext`** (SSSR owns its own
+  denoiser), so its Linux size is the sum of 5 SSSR `FfxPipelineState`
+  members + the (bumped) denoiser context = 909664 B = 227416 uint32s. Both
+  are guarded by `#if defined(_WIN32)`; the SDK's `FFX_STATIC_ASSERT` in
+  `ffxSssrContextCreate` / `ffxDenoiserContextCreate` catches regressions at
+  compile time.
+- `ffx_sssr.cpp` / `ffx_denoiser.cpp`: explicit `static_cast<uint32_t>` on the
+  buffer-size fields of the internal-resource initializer lists
+  (`numPixels * sizeof(uint32_t)`, `sizeof(uint32_t) * tileCount`) — the
+  strict `-Wc++11-narrowing` build rejects the implicit `size_t` → `uint32_t`
+  narrowing in brace-initializers.
+
+The denoiser's **reflections** UAV qualifiers already matched the host
+formats (`rgba16f`/`r16f`/`r11f_g11f_b10f`), so no GLSL patch was needed for
+it — only the context-size bump.
 
 ## Compatibility Header
 

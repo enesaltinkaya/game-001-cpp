@@ -74,20 +74,23 @@ void main() {
         vec3 V      = normalize(sceneBuffer.cameras[0].position.xyz - worldPos);
         float NdotV = max(dot(worldN, V), 0.0);
 
-        // ── 5. Sample SSR (nearest to avoid silhouette bleed) ────────────
+        // ── 5. Sample SSSR (denoised reflection radiance) ───────────────
+        // The FidelityFX SSSR pass writes a temporally denoised reflection
+        // radiance: the screen-space hit colour blended with the IBL
+        // environment fallback. Surfaces above the SSSR roughness threshold
+        // carry zero radiance, so the blend is gated by the roughness fade
+        // below (there is no separate confidence channel anymore — the old
+        // custom SSR packed one in the alpha, SSSR's alpha is ray length).
         vec3 ssrColor = vec3(0.0);
-        float ssrConfidence = 0.0;
         {
             ivec2 ssrSize = textureSize(
                 sampler2D(textures[nonuniformEXT(pc.ssrColorIndex)], samplers[SAMPLER_CLAMP_NEAREST]),
                 0);
             ivec2 ssrCoord = clamp(ivec2(uv * vec2(ssrSize)), ivec2(0), ssrSize - ivec2(1));
-            vec4 ssrSample = texelFetch(
+            ssrColor = texelFetch(
                 sampler2D(textures[nonuniformEXT(pc.ssrColorIndex)], samplers[SAMPLER_CLAMP_NEAREST]),
                 ssrCoord,
-                0);
-            ssrColor    = ssrSample.rgb;
-            ssrConfidence = ssrSample.a;
+                0).rgb;
         }
 
         // ── 6. Reflection blend weight ───────────────────────────────────
@@ -108,7 +111,7 @@ void main() {
         fresnel = max(fresnel, vec3(wetMinRefl));
 
         float roughFade = 1.0 - smoothstep(0.06, 0.25, roughness);
-        vec3 reflBlend = fresnel * ssrConfidence * roughFade;
+        vec3 reflBlend = fresnel * roughFade;
 
         // ── 7. Base composite (direct lighting + reflections) ────────────
         composite = sceneCol * (1.0 - reflBlend) + reflBlend * ssrColor;

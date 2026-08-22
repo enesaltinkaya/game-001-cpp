@@ -13,6 +13,11 @@ struct IblSunLight {
 void vulkanIblInit(void);
 void vulkanIblDestroy(void);
 VulkanImage* vulkanIblGetEnvironmentImage(void);
+/* Prefiltered specular environment cubemap (R16G16B16A16, mipped) — the
+ * image-based-lighting fallback for screen-space reflections (SSSR). */
+VulkanImage* vulkanIblGetPrefilterImage(void);
+/* Precomputed BRDF integration LUT (R16G16, 512x512). */
+VulkanImage* vulkanIblGetBrdfLutImage(void);
 IblSunLight vulkanIblGetExtractedSun(void);
 void vulkanIblSetDisabled(bool disabled);
 bool vulkanIblIsDisabled(void);

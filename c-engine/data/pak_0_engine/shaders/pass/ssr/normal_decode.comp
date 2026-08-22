@@ -1,0 +1,41 @@
+#version 460
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_nonuniform_qualifier : require
+#extension GL_ARB_shading_language_include : enable
+
+#include "../../includes/utils.shader"
+#include "../../includes/globalset.shader"
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(push_constant) uniform PushConstants {
+    uint normalsIndex;   // oct-encoded world normals (sampled, R16G16_SFLOAT)
+    uint outputIndex;    // linear world normals (storage, R16G16B16A16_SFLOAT)
+    uint width;
+    uint height;
+} pc;
+
+/* Decode the G-buffer's oct-encoded world normals into a linear-normal image.
+ *
+ * FidelityFX SSSR (and its bundled denoiser) expect a linear world-space
+ * normal that it can transform with a single multiply/add
+ * (normalUnpackMul/Add). The engine's G-buffer stores normals oct-encoded
+ * in RG, which the SDK's unpack can't invert (OctDecode is nonlinear), so
+ * this tiny pre-pass expands them to a full linear RGB normal. The denoiser
+ * blit-copies this image to its normal history each frame, so the history
+ * format matches (R16G16B16A16). */
+void main() {
+    ivec2 coord = ivec2(gl_GlobalInvocationID.xy);
+    if (coord.x >= int(pc.width) || coord.y >= int(pc.height)) {
+        return;
+    }
+
+    vec2 enc = texelFetch(
+        sampler2D(textures[nonuniformEXT(pc.normalsIndex)],
+                  samplers[SAMPLER_CLAMP_NEAREST]),
+        coord, 0).rg;
+
+    vec3 n = OctDecode(enc);
+    imageStore(storageImages[nonuniformEXT(pc.outputIndex)], coord, vec4(n, 1.0));
+}

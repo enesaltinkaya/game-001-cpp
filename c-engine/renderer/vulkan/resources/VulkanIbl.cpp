@@ -302,6 +302,14 @@ VulkanImage* vulkanIblGetEnvironmentImage(void) {
     return ibl.environment.img ? &ibl.environment : nullptr;
 }
 
+VulkanImage* vulkanIblGetPrefilterImage(void) {
+    return ibl.prefilter.img ? &ibl.prefilter : nullptr;
+}
+
+VulkanImage* vulkanIblGetBrdfLutImage(void) {
+    return ibl.brdfLut.img ? &ibl.brdfLut : nullptr;
+}
+
 IblSunLight vulkanIblGetExtractedSun(void) {
     return ibl.extractedSun;
 }

@@ -25,7 +25,7 @@ implementation starts.
       consumer is SSSR in Phase 5)
 - [x] Phase 3 — Lens (grain, vignette, chromatic aberration)
 - [x] Phase 4 — DOF (depth of field / bokeh)
-- [ ] Phase 5 — SSSR (stochastic SSR, replaces custom SSR; needs Denoiser)
+- [x] Phase 5 — SSSR (stochastic SSR, replaces custom SSR; needs Denoiser)
 - [ ] Phase 6 — Brixelizer + Brixelizer GI (sparse voxel GI)
 - Deferred: Parallel Sort (see "Deferred" section)
 
@@ -325,7 +325,7 @@ _Original sketch (superseded, kept for context):_
 **Validation**: parked-camera screenshots near/far focus; sky vs foreground
 separation; motion stability with FSR on; RenderDoc for the half-res chain.
 
-## Phase 5 — SSSR (+ Denoiser dependency)
+## Phase 5 — SSSR (+ Denoiser dependency) — DONE (2026-08-22)
 
 _Effort: medium. Replaces the custom SSR pass the user is unhappy with._
 
@@ -334,20 +334,35 @@ _Effort: medium. Replaces the custom SSR pass the user is unhappy with._
   (`ffx_denoiser.h/.cpp`, 8 shaders, reflection subset) because
   `ffxSssrContextCreate` internally creates a `FfxDenoiserContext`
   (`FFX_DENOISER_SHADOWS` mode is not needed — only reflections pass set).
-- Engine: replace `VulkanSsrPass` internals; keep its slot and its interface
+- Engine: replaced `VulkanSsrPass` internals; kept its slot and its interface
   to composite (reflection buffer + where composite samples it today).
   Inputs: HDR color, depth, **normals — SSSR wants linear normals, ours are
   oct-encoded `rg`** (CACAO hit the same issue and reconstructs from depth;
   SSSR's `normalUnpackMul/Add` can't decode oct either) → decode to a
-  linear-normal image in a tiny pre-pass or feed `generateNormals`-style
-  reconstruction per the detailed plan. Motion vectors + camera matrices for
+  linear-normal image in a tiny pre-pass (`normal_decode.comp`, oct→linear
+  world normal, R16G16B16A16_SFLOAT). Motion vectors + camera matrices for
   denoiser reprojection (both already exist for TAA/FSR/CameraUbo).
 - Remove: current `ssr` shaders/pipes and the HiZ consumer that only served
-  SSR (HiZ stays — culling uses it).
-- Settings GUI: replace current SSR quality options with SSSR ones
-  (ray length, roughness threshold, temporal stability).
+  SSR (HiZ stays — culling uses it). Done: old `ssr.comp` deleted.
+- Settings GUI: kept the on/off toggle; SSSR params (roughness threshold,
+  temporal stability, ray length, variance threshold) are env-var tunable
+  (`ENGINE_SSSR_*`) for now — a GUI slider set is a follow-up.
+- **Validation**: SSSR context created + dispatched at render res, no
+  validation errors. The denoised reflection buffer was dumped directly
+  (`ENGINE_SSSR_DUMP`): frame 0 is black (temporal history starts at zero),
+  by frame 60 it shows correct scene reflections (bright ground reflecting
+  sky, character + trees reflected). The default parked view is a poor test
+  because the **water is a pure color pass with no depth attachment**, so
+  screen-space reflections (old SSR and SSSR alike) cannot reflect off it —
+  same engine-wide property as the DOF note. A higher roughness threshold
+  (`ENGINE_SSSR_ROUGHNESS=0.95`) makes the whole scene reflective and
+  confirms the ray-march + denoiser chain is correct.
+- **Known limitation**: SSSR's environment fallback does not apply the
+  engine's `envRotation` (IBL rotation); acceptable for a first cut.
 
-**Validation**: side-by-side vs old SSR on water/azgaar river and wet props;
+_Original sketch (superseded, kept for context):_
+
+- **Validation**: side-by-side vs old SSR on water/azgaar river and wet props;
 temporal stability while strafing; noise under flickering light; RenderDoc on
 the denoiser chain.
 
