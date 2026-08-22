@@ -8,7 +8,16 @@ implementation starts.
 
 ## Status
 
-- [ ] Phase 0 — Build infrastructure generalization (multi-component build)
+- [x] Phase 0 — Build infrastructure generalization (done 2026-08-22:
+  `fsr3.1/build.sh` restructured into a `comp_<name>_` registry +
+  `ENABLED_COMPONENTS` list; blob accessors & `-DFFX_<NAME>` defines wired
+  automatically; `validate_component` fail-fast guard; single-archive name
+  kept (`libffx_fsr3upscaler_vk.a`); no SDK patches were needed this phase;
+  validated by symbol-identical archives on both platforms (nm diff vs
+  pre-refactor = identical), full game build + `play log 5000` + screenshot
+  (CACAO contact shadows + FSR output intact). Known behavior: re-running
+  the build reorders entries in generated `*_permutations.h` wrappers —
+  benign, documented in `docs/fsr3.1.md` "Re-run note".)
 - [ ] Phase 1 — CAS (Contrast Adaptive Sharpening)
 - [ ] Phase 2 — SPD (Single Pass Downsampler)
 - [ ] Phase 3 — Lens (grain, vignette, chromatic aberration)

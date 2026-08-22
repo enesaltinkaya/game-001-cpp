@@ -1,8 +1,11 @@
-# FSR 3.1 — Static Library Build (Vulkan, Upscaler + CACAO)
+# FSR 3.1 — Static Library Build (Vulkan, component registry)
 
-Custom build of AMD FidelityFX FSR 3.1 SDK for use from a **C++ game engine**
-via Vulkan. The **FSR3 Upscaler** and **CACAO** (ambient occlusion)
-components are compiled (no frame generation, no DX12 backend).
+Custom build of the AMD FidelityFX FSR 3.1 SDK for use from a **C++ game engine**
+via Vulkan. Currently enabled via `ENABLED_COMPONENTS` in `build.sh`:
+the **FSR3 Upscaler** and **CACAO** (ambient occlusion) components (no frame
+generation, no DX12 backend). The SDK tree ships 21 components; enabling more
+is a registry edit (see "Build Script" below and the game repo's
+`plans/fidelityfx-sdk-expansion.md`).
 
 ## What's Built
 
@@ -303,11 +306,40 @@ jitter and the full dispatch pipeline.
 `build.sh` — run from the `fsr3.1/` directory. Sources `../exports.sh` for
 toolchain (clang, llvm-mingw, ccache). Requires Wine for shader compilation.
 
-Steps:
+### Component registry
 
-1. Compiles GLSL shaders → SPIR-V permutation headers (via Wine + FidelityFX_SC.exe)
-2. Compiles 7 C++ source files → `libffx_fsr3upscaler_vk.a` for Linux
-3. Compiles the same sources → `libffx_fsr3upscaler_vk.a` for Windows (MinGW)
+The script is component-table driven: each SDK component gets a
+`comp_<name>_` registry block (blob-dispatch define, C++ sources, shader
+list, SC base/permutation args, includes — copy from the component's
+`gpu/<name>/CMakeCompile<NAME>Shaders.txt`), and is built iff listed in
+`ENABLED_COMPONENTS`. Adding a component = patch the SDK fork if needed,
+write its block, add the name to the list, drop any `ffx_stubs.cpp` stub
+of its symbols. The blob accessor
+`src/backends/shared/blob_accessors/ffx_<name>_shaderblobs.cpp` and the
+`-DFFX_<NAME>` routing define are wired up automatically; a missing
+registry field fails fast via `validate_component`.
+
+Everything lands in the single `libffx_fsr3upscaler_vk.a` (name kept for
+CMake stability) for both platforms. Engine-side integration phases are
+tracked in `plans/fidelityfx-sdk-expansion.md` (game repo).
+
+### Steps
+
+1. Compiles GLSL shaders → SPIR-V permutation headers for every enabled
+   component (via Wine + FidelityFX_SC.exe, bounded parallel pool,
+   `MAX_SHADER_JOBS=N` to override)
+2. Compiles shared sources + per-component sources + blob accessors +
+   stubs → `libffx_fsr3upscaler_vk.a` for Linux
+3. Same for Windows (MinGW); per-object verification guards against
+   silently-incomplete archives
+
+### Re-run note
+
+Re-running the build reorders permutation entries inside the generated
+`*_permutations.h` tables (the SC tool emits whichever parallel variant
+finished first). The hash-named SPIR-V payload headers are unchanged and
+the key→blob mapping stays equivalent; expect these wrapper files to show
+as modified after every rebuild.
 
 ### Volk integration
 
