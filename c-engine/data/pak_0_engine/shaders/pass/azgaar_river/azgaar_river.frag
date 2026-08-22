@@ -21,6 +21,7 @@ layout(location = 0) out vec4 outColor;  // sceneColor (HDR, R16G16B16A16)
 
 #include "../../includes/utils.shader"
 #include "../../includes/globalset.shader"
+#include "../../includes/forwardplus.shader"
 
 // ── Push constants (must match RiverPushConstants in VulkanAzgaarRiverPass.c) ─
 layout(push_constant) uniform RiverPushConstants {
@@ -105,6 +106,10 @@ void main() {
 
     // Compose
     vec3 color = mix(waterColor, skyRefl, fresnel) + sunSpecular;
+    // Point/spot light streaks: tight glint on the ripple-perturbed normal,
+    // using the same Forward+ light grid as terrain/scene.  Exponent 32
+    // matches this pass's sun streak pow so both read consistently.
+    color += evaluateForwardPlusLightsSpecular(inWorldPos, N, V, 32.0);
     // Subtle animated bed darkening from the ripple field
     color *= (1.0 - 0.15 * clamp(ripple * 0.5 + 0.5, 0.0, 1.0));
 

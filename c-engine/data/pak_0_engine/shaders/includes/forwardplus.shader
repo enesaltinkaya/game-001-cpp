@@ -201,4 +201,43 @@ vec3 evaluateForwardPlusLightsDiffuse(vec3 worldPos,
     return Lo;
 }
 
+/* -----------------------------------------------------------------------
+ * Tight specular streak accumulation for reflective low-roughness
+ * surfaces (water, river ribbons, wet surfaces).  Mirrors each light about
+ * the (ripple-perturbed) normal and adds a Blinn-less highlight:
+ *     Lo += lightColor * attenuation * pow(max(dot(reflect(-L, N), V), 0), shininess)
+ * Ripples therefore sparkle under torches.  No fresnel here — the caller
+ * scales the result (e.g. by 1 - foam amount).
+ * ----------------------------------------------------------------------- */
+vec3 evaluateForwardPlusLightsSpecular(vec3 worldPos,
+                                       vec3 N,
+                                       vec3 V,
+                                       float shininess) {
+    ivec2 tileCoord = ivec2(gl_FragCoord.xy) / ivec2(16, 16);
+    uint  tileCountX = uint((sceneBuffer.cameras[0].viewport.x + 15.0) / 16.0);
+    uint  tileIndex  = uint(tileCoord.y) * tileCountX + uint(tileCoord.x);
+
+    uvec2 tileData   = lightGridBuffer.tiles[tileIndex];
+    uint  startIndex = tileData.x;
+    uint  lightCount = tileData.y;
+
+    vec3 Lo = vec3(0.0);
+
+    for (uint i = 0; i < lightCount; i++) {
+        uint lightIndex = lightIndexBuffer.indices[startIndex + i];
+        GpuLight light  = sceneBuffer.lights[lightIndex];
+        if (int(light.directionAndType.w) == LIGHT_DIRECTIONAL) continue;
+
+        vec3  L;
+        float attn = computeLightAttenuation(light, worldPos, L);
+        if (attn < 0.0001) continue;
+
+        vec3  R    = reflect(-L, N);          /* reflected light ray */
+        float spec = pow(max(dot(R, V), 0.0), shininess);
+        Lo += light.colorAndIntensity.rgb * attn * spec;
+    }
+
+    return Lo;
+}
+
 #endif /* FORWARD_PLUS_SHADER */

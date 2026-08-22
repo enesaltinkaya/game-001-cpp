@@ -26,6 +26,7 @@ layout(location = 0) out vec4 outColor;  // sceneColor (HDR, R16G16B16A16)
 
 #include "../../includes/utils.shader"
 #include "../../includes/globalset.shader"
+#include "../../includes/forwardplus.shader"
 
 // ── Push constants (must match WaterPushConstants in VulkanAzgaarWaterPass.c) ─
 layout(push_constant) uniform WaterPushConstants {
@@ -179,6 +180,13 @@ void main() {
 
     // ── 7. Compose ──────────────────────────────────────────────────────
     vec3 color = mix(waterColor, skyRefl, fresnel) + sunSpecular;
+    // Point/spot light streaks (e.g. a torch on a lake): the same Forward+
+    // light grid as terrain/scene, evaluated as a tight streak on the
+    // ripple-perturbed normal so the ripples glint.  Suppressed where foam
+    // is present.
+    color += evaluateForwardPlusLightsSpecular(
+                 inWorldPos, N, V, sceneBuffer.water.sunSpecularPower)
+           * (1.0 - foamA);
     vec3 foamColor = sceneBuffer.water.foamColor.rgb;
     color = mix(color, foamColor, foamA * sceneBuffer.water.foamColor.a);
 
