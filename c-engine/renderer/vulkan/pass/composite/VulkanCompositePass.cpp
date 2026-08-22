@@ -1,5 +1,6 @@
 #include "VulkanCompositePass.h"
 #include "VulkanCompositePass.h"
+#include "renderer/vulkan/pass/ao/VulkanAOPass.h"
 #include "renderer/vulkan/pass/azgaar_weather/VulkanAzgaarWeatherPass.h"
 #include "renderer/vulkan/pass/volumetric/VulkanVolumetricPass.h"
 #include "ecs/system/System.h"
@@ -28,6 +29,7 @@ typedef struct CompositePushConstants {
     u32 outputImageIndex;
     u32 volumetricColorIndex;
     u32 weatherMaskIndex;
+    u32 aoIndex;
     u32 width;
     u32 height;
 } CompositePushConstants;
@@ -93,6 +95,14 @@ void VulkanCompositePass::update() {
         .outputImageIndex     = (u32)composite->storagePoolIndex,
         .volumetricColorIndex = volumetric ? (u32)volumetric->sampledPoolIndex : 0u,
         .weatherMaskIndex     = weatherMask ? (u32)weatherMask->sampledPoolIndex : 0xFFFFFFFFu,
+        /* AO temporal accumulator (absent-sentinel pattern, like the
+         * weather mask): while AO is disabled the multiply is skipped
+         * entirely so the frame stays pixel-identical to pre-AO. */
+        .aoIndex              = vulkanAOPassIsDisabled()
+                                   ? 0xFFFFFFFFu
+                                   : (vulkanAOPassGetOutput()
+                                         ? (u32)vulkanAOPassGetOutput()->sampledPoolIndex
+                                         : 0xFFFFFFFFu),
         .width                = composite->extent.width,
         .height               = composite->extent.height,
     };

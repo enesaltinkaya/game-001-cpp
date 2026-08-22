@@ -18,6 +18,7 @@ struct VulkanFrameResources {
     VulkanImage roadLayer;
     VulkanImage resolvedColor;
     VulkanImage depth;
+    VulkanImage ao;
     VulkanImage velocity;
     VulkanImage viewNormal;
     u32 width;
@@ -97,6 +98,10 @@ VulkanImage* vulkanFrameResourcesGetRoadLayer(void) {
 
 VulkanImage* vulkanFrameResourcesGetDepth(void) {
     return frameResources.depth.img ? &frameResources.depth : nullptr;
+}
+
+VulkanImage* vulkanFrameResourcesGetAO(void) {
+    return frameResources.ao.img ? &frameResources.ao : nullptr;
 }
 
 VulkanImage* vulkanFrameResourcesGetVelocity(void) {
@@ -225,6 +230,19 @@ frameResources.depth =
                           .width  = window.renderWidth,
                           .height = window.renderHeight);
 
+    // Per-frame XeGTAO ray pass output (R8: 1.0 = open, 0 = occluded). The
+    // dedicated temporal accumulator (aoA/aoB, VulkanAOPass) is what the
+    // composite samples; this buffer is discarded after each temporal pass.
+    frameResources.ao =
+        vulkanCreateImage(.name   = "AO",
+                          .format = VK_FORMAT_R8_UNORM,
+                          .usage  = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+                                    VK_IMAGE_USAGE_SAMPLED_BIT |
+                                    VK_IMAGE_USAGE_STORAGE_BIT |
+                                    VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+                          .width  = window.renderWidth,
+                          .height = window.renderHeight);
+
     frameResources.velocity =
         vulkanCreateImage(.name   = "Velocity",
                           .format = VK_FORMAT_R16G16_SFLOAT,
@@ -265,6 +283,7 @@ static void destroyAll(void) {
     destroyImage(&frameResources.roadLayer);
     destroyImage(&frameResources.resolvedColor);
     destroyImage(&frameResources.depth);
+    destroyImage(&frameResources.ao);
     destroyImage(&frameResources.velocity);
     destroyImage(&frameResources.viewNormal);
 
@@ -310,6 +329,7 @@ static void transitionInitialLayouts(void) {
                      1);
     vulkanTransition(cmd, &frameResources.roadLayer, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, 0, 1);
     vulkanTransition(cmd, &frameResources.depth, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, 0, 1);
+    vulkanTransition(cmd, &frameResources.ao, VK_IMAGE_LAYOUT_GENERAL, 0, 1);
     vulkanTransition(cmd, &frameResources.velocity, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, 0, 1);
     vulkanTransition(cmd, &frameResources.viewNormal, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, 0, 1);
 

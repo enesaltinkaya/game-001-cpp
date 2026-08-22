@@ -18,6 +18,7 @@ layout(push_constant) uniform PushConstants {
     uint outputImageIndex;
     uint volumetricColorIndex;
     uint weatherMaskIndex;   // 0xFFFFFFFF = no weather pass / no mask
+    uint aoIndex;            // 0xFFFFFFFF = AO disabled / no output
     uint width;
     uint height;
 } pc;
@@ -111,6 +112,17 @@ void main() {
 
         // ── 7. Base composite (direct lighting + reflections) ────────────
         composite = sceneCol * (1.0 - reflBlend) + reflBlend * ssrColor;
+
+        // ── 7b. Ambient occlusion (XeGTAO temporal accumulator) ────────
+        // Applied before fog (step 8) so fogged geometry fades to the fog
+        // colour instead of staying dark.  0 = fully occluded, 1 = open.
+        if (pc.aoIndex != 0xFFFFFFFFu) {
+            float aoFactor = texelFetch(
+                sampler2D(textures[nonuniformEXT(pc.aoIndex)],
+                          samplers[SAMPLER_CLAMP_NEAREST]),
+                coord, 0).r;
+            composite *= aoFactor;
+        }
     }
 
     // ── 8. Fog (geometry only — skybox is the backdrop) ─────────────────

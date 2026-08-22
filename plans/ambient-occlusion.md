@@ -236,3 +236,55 @@ Inputs: `ao` (current per-frame R8), prev `aoAccum` ping-pong (R16F:
 - **R8 banding on the per-frame buffer** — the per-frame result is
   discarded after accumulation, so 8-bit is fine; the *accumulated* buffer
   is R16F. If isolated per-frame AO dumps look banded, that's expected.
+
+## Implementation notes (2026-08-22, XeGTAO v1 landed)
+
+Deviations from the plan above, found during implementation/validation:
+
+- **Ray disk points −Z (away from the camera), not +Z.** A camera-facing
+  (+Z) disk lifts every march step above the surface; the lifted step then
+  projects onto a *farther* ground point and the HiZ test false-hits the
+  ground underneath it (flat terrain reads as fully occluded in the raw
+  `aoFrame` dump). With the −Z disk, near steps pass *below* the surface
+  (no hit at the texel) and only real occluders above the tangent plane
+  register. The ray weight was re-based on the disk axis accordingly:
+  `1 + dot(−V, dirView)` (the plan's `1 + dot(V, dirView)` is ≈0 for −Z
+  rays and would kill the whole signal).
+- **Horizon-angle gate `parallel > 0` is mandatory.** The plan's
+  `atan(perp / max(parallel, 1e−4))` yields ≈π/2 for hits *below* the
+  tangent plane (all ground self-hits) → black ground. Hits below the
+  plane contribute 0 (the surface already blocks the back hemisphere);
+  only hits above it occlude.
+- **Temporal clamp direction: history → current-neighborhood box** (the
+  plan's step 3/4 were self-contradictory — "clamp the current sample
+  against the history neighborhood" deadlocks a cleared all-1.0 history:
+  the accumulator can never leave 1.0). The box is built from the current
+  per-frame AO taps at the *reprojected* position (TAA convention, stable
+  across jitter phases) and the reprojected history is clamped into it —
+  the plan's own step 4 (`mix(clampedPrev, current, …)`).
+- **Accumulator format is `R16G16_SFLOAT`** (`.r` = AO, `.g` = S-depth),
+  not single-channel R16F — the S-space depth needs a second channel.
+- **`maxDist = clamp(0.15 * distToCam, 1.0, 20.0)`** — the plan's 0.05
+  scale (0.7 m at 14 m) was too short for village-scale ground contact.
+- **Off-screen break**: steps whose UV leaves the screen terminate the ray
+  (clamped UVs would false-hit border geometry).
+- **Extra debug-dump token `aoFrame`** (raw per-frame R8) next to `ao`
+  (accumulated) — essential for ray-pass debugging (caught the two
+  self-hit bugs above).
+
+Validation (parked village scene, 2880×1627, NVIDIA):
+- `ENGINE_LOG_PASS_GPU=1`: **ao = 0.98 ms** (ray + temporal; 3rd heaviest
+  pass after depth 1.49 / shadow 1.60; ~6% of the 16.6 ms 60 fps frame).
+  Note the plan's "below SSR" expectation is scene-dependent: here SSR
+  skips almost every pixel (rough terrain) and costs 0.04 ms.
+- Multi-shot boiling test (`ENGINE_SCREENSHOT_COUNT=8`, 15 s settle):
+  inter-frame mean diff 2.4–2.7/255 with AO vs 1.8–2.1 without — the AO
+  temporal pass adds ≈0.5/255 of residual beyond the baseline pipeline.
+- A/B screenshots: ground contact at house bases + under trees + player
+  contact; grass mottling is the per-frame noise mean (tunable via
+  `HORIZON_SCALE` / `RAY_COUNT` / `DISK_RADIUS` / `MAX_DIST_SCALE` in
+  `ao.comp`); sky untouched; `ENGINE_AO_DISABLED=1` skips the composite
+  multiply entirely (sentinel index) → pixel-identical to pre-AO.
+- Open: visual ghost-trail check on camera motion (3×3 clamp + S-depth
+  rejection are in place; needs a moving-camera look). AMD DCC check not
+  possible on the dev box (NVIDIA ICD).

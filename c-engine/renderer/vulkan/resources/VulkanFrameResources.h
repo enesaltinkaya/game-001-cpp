@@ -19,6 +19,7 @@ VulkanImage* vulkanFrameResourcesGetOitAccum(void);
 VulkanImage* vulkanFrameResourcesGetOitReveal(void);
 VulkanImage* vulkanFrameResourcesGetRoadLayer(void);
 VulkanImage* vulkanFrameResourcesGetDepth(void);
+VulkanImage* vulkanFrameResourcesGetAO(void);
 VulkanImage* vulkanFrameResourcesGetVelocity(void);
 VulkanImage* vulkanFrameResourcesGetViewNormal(void);
 }  // namespace engine

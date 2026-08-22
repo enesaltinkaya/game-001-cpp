@@ -33,6 +33,7 @@
 #include "renderer/vulkan/pass/skybox/VulkanSkyboxPass.h"
 #include "renderer/vulkan/pass/azgaar_water/VulkanAzgaarWaterPass.h"
 #include "renderer/vulkan/pass/azgaar_river/VulkanAzgaarRiverPass.h"
+#include "renderer/vulkan/pass/ao/VulkanAOPass.h"
 #include "renderer/vulkan/pass/azgaar_props/VulkanAzgaarPropsPass.h"
 #include "renderer/vulkan/pass/azgaar_weather/VulkanAzgaarWeatherPass.h"
 #include "renderer/vulkan/pass/oit/VulkanOitAccumulatePass.h"
@@ -152,6 +153,10 @@ static void vulkanDebugDumpFrameImages(const char* shotPath) {
             img           = c ? c : vulkanFrameResourcesGetSceneColor();
         } else if (!strcmp(tok, "taa")) {
             img = vulkanTaaPassGetOutput();
+        } else if (!strcmp(tok, "ao")) {
+            img = vulkanAOPassGetOutput();
+        } else if (!strcmp(tok, "aoFrame")) {
+            img = vulkanFrameResourcesGetAO();
         }
         if (!img) {
             continue;
@@ -202,6 +207,7 @@ void vulkanInit(void) {
     addPass(&vulkanOitAccumulatePass);
     addPass(&vulkanOitCompositePass);
     addPass(&vulkanSsrPass);
+    addPass(&vulkanAOPass);
     addPass(&vulkanVolumetricPass);
     addPass(&vulkanDecalPass);
     addPass(&vulkanCompositePass);

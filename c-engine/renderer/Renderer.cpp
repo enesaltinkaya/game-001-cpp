@@ -12,6 +12,7 @@
 #include "renderer/vulkan/scene/VulkanScene.h"
 #include "renderer/vulkan/scene/VulkanVisibleScenes.h"
 #include "renderer/vulkan/swapchain/VulkanSwapchain.h"
+#include "renderer/vulkan/pass/ao/VulkanAOPass.h"
 #include "renderer/vulkan/pass/bloom/VulkanBloomPass.h"
 #include "renderer/vulkan/pass/contact_shadow/VulkanContactShadowPass.h"
 #include "renderer/vulkan/pass/fsr/VulkanFsrUtils.h"
@@ -71,6 +72,7 @@ void RenderSystem::added() {
     /* Restore per-effect enable/disable from saved settings. */
     if (utils::settingsGetBool("shadowsDisabled")) vulkanShadowPassSetDisabled(1);
     if (utils::settingsGetBool("ssrDisabled")) vulkanSsrPassSetDisabled(1);
+    if (utils::settingsGetBool("aoDisabled")) vulkanAOPassSetDisabled(1);
     if (utils::settingsGetBool("bloomDisabled")) vulkanBloomPassSetDisabled(1);
     if (utils::settingsGetBool("contactShadowDisabled")) vulkanContactShadowPassSetDisabled(1);
 
