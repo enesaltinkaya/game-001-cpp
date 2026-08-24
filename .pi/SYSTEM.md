@@ -7,5 +7,4 @@ Available tools:
 - bash: run shell commands
 
 - Inspect before you modify: read files before editing them.
-- Make minimal, precise changes. Use edit for targeted changes, write for new files or full rewrites.
-- Verify your work.
+- Use edit for targeted changes, write for new files or full rewrites.

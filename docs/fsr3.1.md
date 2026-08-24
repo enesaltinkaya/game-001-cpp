@@ -9,8 +9,7 @@ integrated in Phase 5 of the SDK-expansion plan but were reverted on
 2026-08-23 in favor of the engine's custom SSR pass — their registry blocks
 and SDK fork patches are kept, so re-enabling is a one-line
 `ENABLED_COMPONENTS` edit. The SDK tree ships 21 components; enabling more
-is a registry edit (see "Build Script" below and the game repo's
-`plans/fidelityfx-sdk-expansion.md`).
+is a registry edit (see "Build Script" below).
 
 ## What's Built
 
@@ -540,8 +539,7 @@ of its symbols. The blob accessor
 registry field fails fast via `validate_component`.
 
 Everything lands in the single `libffx_fsr3upscaler_vk.a` (name kept for
-CMake stability) for both platforms. Engine-side integration phases are
-tracked in `plans/fidelityfx-sdk-expansion.md` (game repo).
+CMake stability) for both platforms.
 
 ### Steps
 
