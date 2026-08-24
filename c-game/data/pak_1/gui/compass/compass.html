@@ -1,0 +1,45 @@
+<html>
+
+<head>
+  <link type="text/rcss" href="compass.css" />
+</head>
+
+<body>
+  <div id="compass-wrapper" data-model="compass">
+    <div id="compass-frame">
+      <div id="compass-needle"></div>
+      <!-- Direction labels positioned individually -->
+      <div class="dir" data-style-left="(d0 + 'dp')" data-style-opacity="d0a">{{ d0t }}</div>
+      <div class="dir" data-style-left="(d1 + 'dp')" data-style-opacity="d1a">{{ d1t }}</div>
+      <div class="dir" data-style-left="(d2 + 'dp')" data-style-opacity="d2a">{{ d2t }}</div>
+      <div class="dir" data-style-left="(d3 + 'dp')" data-style-opacity="d3a">{{ d3t }}</div>
+      <div class="dir" data-style-left="(d4 + 'dp')" data-style-opacity="d4a">{{ d4t }}</div>
+      <div class="dir" data-style-left="(d5 + 'dp')" data-style-opacity="d5a">{{ d5t }}</div>
+      <div class="dir" data-style-left="(d6 + 'dp')" data-style-opacity="d6a">{{ d6t }}</div>
+      <div class="dir" data-style-left="(d7 + 'dp')" data-style-opacity="d7a">{{ d7t }}</div>
+      <!-- Tick marks: height driven by tNh bindings (14dp=long at 30°, 8dp=short at 10°/20°) -->
+      <div class="tick" data-style-left="(t0 + 'dp')" data-style-opacity="t0a" data-style-height="(t0h + 'dp')"></div>
+      <div class="tick" data-style-left="(t1 + 'dp')" data-style-opacity="t1a" data-style-height="(t1h + 'dp')"></div>
+      <div class="tick" data-style-left="(t2 + 'dp')" data-style-opacity="t2a" data-style-height="(t2h + 'dp')"></div>
+      <div class="tick" data-style-left="(t3 + 'dp')" data-style-opacity="t3a" data-style-height="(t3h + 'dp')"></div>
+      <div class="tick" data-style-left="(t4 + 'dp')" data-style-opacity="t4a" data-style-height="(t4h + 'dp')"></div>
+      <div class="tick" data-style-left="(t5 + 'dp')" data-style-opacity="t5a" data-style-height="(t5h + 'dp')"></div>
+      <div class="tick" data-style-left="(t6 + 'dp')" data-style-opacity="t6a" data-style-height="(t6h + 'dp')"></div>
+      <div class="tick" data-style-left="(t7 + 'dp')" data-style-opacity="t7a" data-style-height="(t7h + 'dp')"></div>
+      <div class="tick" data-style-left="(t8 + 'dp')" data-style-opacity="t8a" data-style-height="(t8h + 'dp')"></div>
+      <div class="tick" data-style-left="(t9 + 'dp')" data-style-opacity="t9a" data-style-height="(t9h + 'dp')"></div>
+      <div class="tick" data-style-left="(t10 + 'dp')" data-style-opacity="t10a" data-style-height="(t10h + 'dp')"></div>
+      <div class="tick" data-style-left="(t11 + 'dp')" data-style-opacity="t11a" data-style-height="(t11h + 'dp')"></div>
+      <div class="tick" data-style-left="(t12 + 'dp')" data-style-opacity="t12a" data-style-height="(t12h + 'dp')"></div>
+      <div class="tick" data-style-left="(t13 + 'dp')" data-style-opacity="t13a" data-style-height="(t13h + 'dp')"></div>
+      <div class="tick" data-style-left="(t14 + 'dp')" data-style-opacity="t14a" data-style-height="(t14h + 'dp')"></div>
+      <div class="tick" data-style-left="(t15 + 'dp')" data-style-opacity="t15a" data-style-height="(t15h + 'dp')"></div>
+      <div class="tick" data-style-left="(t16 + 'dp')" data-style-opacity="t16a" data-style-height="(t16h + 'dp')"></div>
+      <div class="tick" data-style-left="(t17 + 'dp')" data-style-opacity="t17a" data-style-height="(t17h + 'dp')"></div>
+    </div>
+    <div id="compass-readout">{{ compassDegStr }}</div>
+  </div>
+</body>
+
+</html>
+<!--  -->

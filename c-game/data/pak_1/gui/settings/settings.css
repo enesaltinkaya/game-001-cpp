@@ -1,0 +1,90 @@
+body {
+  position: absolute;
+  width: 600dp;
+  height: 100%;
+  right: 0;
+  z-index: 30;
+  flex-direction: column;
+  opacity: 1;
+  display: flex;
+  background-color: #0000009f;
+
+  color: white;
+}
+
+.main {
+  width: 100%;
+  height: 100%;
+  justify-content: flex-start;
+}
+
+.top {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  background-color: #212121;
+  width: 100%;
+  display: flex;
+  height: 70dp;
+  align-items: center;
+  justify-content: center;
+  font-size: 25dp;
+  font-weight: bold;
+}
+
+.middle {
+  flex: 1;
+  width: 100%;
+  padding-top: 70dp;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+}
+
+.middle .buttonContainer {
+  max-width: 540dp;
+}
+
+#videoSettings .middle .buttonContainer {
+  max-width: 540dp;
+}
+
+#graphicsSettings .middle .buttonContainer {
+  max-width: 540dp;
+}
+
+#audioSettings button.active,
+#videoSettings button.active,
+#graphicsSettings button.active {
+  transform: scale(1.05);
+}
+
+#first {
+  nav-up: "#last";
+}
+
+#last {
+  nav-down: "#first";
+}
+
+.tab {
+  display: none;
+}
+
+.currentTab {
+  display: flex;
+
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  align-items: center;
+  justify-content: center;
+}
+
+.red {
+  background-color: red;
+  height: 10dp;
+  width: 10dp;
+}

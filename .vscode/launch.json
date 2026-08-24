@@ -1,0 +1,35 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Debug",
+            "type": "lldb",
+            "cwd": "${workspaceFolder}",
+            "request": "launch",
+            "preLaunchTask": "build",
+            "program": "${workspaceFolder}/build/c-game/c-game",
+            "environment": [
+                {
+                    "name": "ENGINE_DEBUG",
+                    "value": "1"
+                }
+            ],
+            "env": {
+                "ENGINE_DEBUG": "1",
+                "VK_ICD_FILENAMES": "/usr/share/vulkan/icd.d/radeon_icd.json"
+            }
+        },
+        {
+            "name": "Run",
+            "type": "f5anything",
+            "request": "launch",
+            "command": "${workspaceFolder}/scripts/run.sh"
+        },
+        {
+            "name": "Renderdoc",
+            "type": "f5anything",
+            "request": "launch",
+            "command": "${workspaceFolder}/scripts/run.sh renderdoc"
+        }
+    ]
+}

@@ -1,0 +1,161 @@
+#version 460
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_nonuniform_qualifier : require
+#extension GL_ARB_shading_language_include : enable
+
+#include "../../includes/utils.shader"
+#include "../../includes/globalset.shader"
+
+/* Temporal accumulation for the CACAO AO buffer.
+ *
+ * CACAO (v1.4) has no internal temporal filter: its output carries spatially
+ * correlated noise — half-resolution block pops and the jitter-shifted AO
+ * pattern — which the color TAA pass cannot average (its 3×3 neighborhood
+ * clamp tracks the current frame's mode for noise correlated over >=3 px, so
+ * the change passes through nearly unattenuated).  This pass accumulates the
+ * scalar AO into a history with reprojection, a disocclusion test and a
+ * WIDE scalar neighborhood clamp; block-scale pops stay inside the widened
+ * box and get averaged like ordinary per-pixel noise.
+ *
+ * .r = accumulated AO, .g = inverse view-space depth carried for the next
+ * frame's disocclusion test (same S-space convention as the TAA pass). */
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(push_constant) uniform PushConstants {
+    uint aoIndex;       // current-frame CACAO output (sampled, .r = AO)
+    uint velocityIndex; // motion vectors (sampled, R16G16_SFLOAT, pixels)
+    uint depthIndex;    // depth buffer (sampled, D32_SFLOAT, reversed)
+    uint prevIndex;     // previous accumulator (sampled)
+    uint outIndex;      // current accumulator (storage)
+    uint width;
+    uint height;
+    float blendWeight;    // max temporal blend (e.g. 0.92)
+    float depthThreshold; // relative inv-depth rejection threshold
+    float clampSlack;     // AABB expansion as a fraction of the local range
+    float clampFloor;     // AABB expansion, absolute floor (block-pop scale)
+    float devStart;       // deviation damping start (sustained-change catch)
+    float devEnd;         // deviation damping end (fast convergence)
+} pc;
+
+/* Inverse view-space depth S = (N + (F-N)*d) / (N*F), affine in the raw
+ * reversed-Z buffer value; relative differences in S equal relative
+ * differences in true view distance (see taa.comp for the derivation). */
+float depthToInv(float rawDepth) {
+    if (rawDepth <= 0.0) return 0.0; /* empty (sky) — "no data" */
+    float N = sceneBuffer.cameras[0].zNear;
+    float F = sceneBuffer.cameras[0].zFar;
+    return (N + (F - N) * rawDepth) / (N * F);
+}
+
+void main() {
+    ivec2 coord = ivec2(gl_GlobalInvocationID.xy);
+    if (coord.x >= int(pc.width) || coord.y >= int(pc.height)) {
+        return;
+    }
+
+    vec2 res = vec2(pc.width, pc.height);
+    vec2 uv  = (vec2(coord) + 0.5) / res;
+
+    /* Current-frame AO and its 3×3 neighborhood. */
+    float currAO = texelFetch(
+        sampler2D(textures[nonuniformEXT(pc.aoIndex)],
+                  samplers[SAMPLER_NEAREST]),
+        coord, 0).r;
+
+    float nMin = currAO;
+    float nMax = currAO;
+    for (int dy = -1; dy <= 1; dy++) {
+        for (int dx = -1; dx <= 1; dx++) {
+            if (dx == 0 && dy == 0) continue;
+            ivec2 c = clamp(coord + ivec2(dx, dy), ivec2(0), ivec2(pc.width - 1, pc.height - 1));
+            float a = texelFetch(
+                sampler2D(textures[nonuniformEXT(pc.aoIndex)],
+                          samplers[SAMPLER_NEAREST]),
+                c, 0).r;
+            nMin = min(nMin, a);
+            nMax = max(nMax, a);
+        }
+    }
+
+    /* Reprojection via the unjittered motion vectors. */
+    vec2 mv = texture(
+        sampler2D(textures[nonuniformEXT(pc.velocityIndex)],
+                  samplers[SAMPLER_NEAREST]),
+        uv).xy;
+    vec2 prevUv = uv - mv / res;
+
+    bool prevValid = prevUv.x >= 0.0 && prevUv.x <= 1.0 &&
+                     prevUv.y >= 0.0 && prevUv.y <= 1.0;
+
+    vec4 prevData = texture(
+        sampler2D(textures[nonuniformEXT(pc.prevIndex)],
+                  samplers[SAMPLER_CLAMP_LINEAR]),
+        prevUv);
+    float prevAO   = max(prevData.r, 0.0);
+    float prevInvD = max(prevData.g, 0.0); /* 0 = no history (cleared) */
+
+    float currInvD = depthToInv(
+        texelFetch(sampler2D(textures[nonuniformEXT(pc.depthIndex)],
+                             samplers[SAMPLER_NEAREST]),
+                   coord, 0).r);
+
+    /* Disocclusion rejection: same S-space relative-depth test as the TAA
+     * pass.  A genuine change of surface damps the history; identical
+     * surfaces (including swaying vegetation, whose motion is in the
+     * velocity buffer) accumulate normally.  Unlike the color TAA, the
+     * rejection only DAMPS the weight instead of killing it: blade-edge
+     * pixels flip surface every frame (blade <-> background), and a soft
+     * scalar field is best served by averaging the two modes — the wide
+     * clamp box below already bounds any residual ghosting. */
+    float sMax      = max(currInvD, prevInvD);
+    float depthDiff = (sMax > 1e-5) ? abs(currInvD - prevInvD) / sMax : 0.0;
+    float reject    = smoothstep(pc.depthThreshold * 0.5, pc.depthThreshold, depthDiff);
+    if (!prevValid) {
+        reject = 1.0;
+    }
+
+    /* Dampen the history for fast-moving content so the low-frequency AO
+     * signal does not smear along large per-frame motion. */
+    float motion  = length(mv);
+    float velDamp = 1.0 - smoothstep(4.0, 16.0, motion);
+
+    /* WIDE scalar neighborhood clamp.  AO noise is correlated over whole
+     * half-resolution blocks: within a popping block the current frame's
+     * 3×3 range is ~zero, so a purely range-proportional box (like the
+     * color TAA's) would collapse onto the current mode and pass the pop
+     * straight through.  The expansion therefore also carries an ABSOLUTE
+     * floor sized to typical pop amplitudes, so the running average stays
+     * inside the box and block pops are averaged out.  Real surface
+     * changes are still caught by the disocclusion test, and the finite
+     * box bounds ghosting from occluder motion. */
+    float range = nMax - nMin;
+    float pad   = max(range * pc.clampSlack, pc.clampFloor);
+    float lo    = nMin - pad;
+    float hi    = nMax + pad;
+    float prevClamped = clamp(prevAO, lo, hi);
+
+    /* Deviation-adaptive convergence.
+     *
+     * A SUSTAINED large deviation between the current AO and the history
+     * is a legitimate change that must converge within a frame or two —
+     * the canonical case is an occluder leaving: the character runs away
+     * from ground it darkened, and that ground's depth is UNCHANGED, so
+     * the disocclusion test above cannot catch it.  Without this term the
+     * long blend (0.92 ≈ 12-frame time constant) plus the clamp floor's
+     * equilibrium offset leave a dark trail along her path.
+     *
+     * TRANSIENT deviations (half-res block pops oscillating around the
+     * true value) stay below the damping window and keep the full blend
+     * weight, so the de-flicker property is preserved: a pop lasts one
+     * frame, a trail lasts until she stops. */
+    float dev     = abs(currAO - prevClamped);
+    float devDamp = 1.0 - smoothstep(pc.devStart, pc.devEnd, dev);
+
+    float weight  = pc.blendWeight * velDamp * (1.0 - reject * 0.75) * devDamp;
+    float outAO   = mix(currAO, prevClamped, weight);
+
+    imageStore(storageImages[nonuniformEXT(pc.outIndex)],
+               coord, vec4(outAO, currInvD, 0.0, 0.0));
+}

@@ -1,0 +1,47 @@
+{
+  "Lua.diagnostics.globals": [
+    "creditsKeyDown",
+    "rmlui",
+    "creditsClose",
+    "settingsClose",
+    "settingsKeyDown",
+    "videoClose",
+    "videoSettingsKeyDown",
+    "fpsLimitClick",
+    "audioSettingsKeyDown",
+    "audioSettingsClose"
+  ],
+  "folder-color.pathColors": [
+    {
+      "folderPath": "game-001/release/",
+      "color": "foldercolorizer.color_663300"
+    },
+    {
+      "folderPath": "game-001/build/",
+      "color": "foldercolorizer.color_663300"
+    },
+    {
+      "folderPath": "game-001/c-engine/",
+      "color": "foldercolorizer.color_00cc66",
+      "badge": "🥶"
+    },
+    {
+      "folderPath": "game-001/c-game/",
+      "color": "foldercolorizer.color_99ccff",
+      "badge": "🏹"
+    },
+    {
+      "folderPath": "game-001/c-utils/",
+      "color": "foldercolorizer.color_cc0066",
+      "badge": "⛏️"
+    },
+    {
+      "folderPath": "game-001/legacy/vulkan2/",
+      "color": "foldercolorizer.color_ffcc00"
+    },
+    {
+      "folderPath": "game-001/legacy/",
+      "color": "foldercolorizer.color_ffcc00"
+    }
+  ]
+}

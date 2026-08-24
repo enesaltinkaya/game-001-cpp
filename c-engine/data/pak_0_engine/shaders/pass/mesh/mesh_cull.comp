@@ -1,0 +1,103 @@
+#version 460
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+struct GpuTransform {
+    vec4 rot;
+    vec4 pos;
+};
+
+struct CullInstance {
+    uint entity;
+    uint primitiveIndex;
+    uint indexCount;
+    uint firstIndex;
+    int vertexOffset;
+    uint materialId;
+    vec4 aabbMin;
+    vec4 aabbMax;
+};
+
+struct IndirectCommand {
+    uint indexCount;
+    uint instanceCount;
+    uint firstIndex;
+    int vertexOffset;
+    uint firstInstance;
+};
+
+layout(set = 1, binding = 0, std430) readonly buffer CullInstanceBuffer {
+    CullInstance cullInstances[];
+};
+
+layout(set = 1, binding = 1, std430) writeonly buffer IndirectCommandBuffer {
+    IndirectCommand commands[];
+};
+
+layout(set = 1, binding = 2, std430) buffer IndirectCountBuffer {
+    uint drawCount;
+};
+
+layout(set = 1, binding = 3, std430) readonly buffer TransformBuffer {
+    GpuTransform transforms[];
+};
+
+layout(push_constant) uniform PushConstants {
+    uint cullInstanceCount;
+    vec4 frustumPlanes[6];
+} pc;
+
+mat3 quatToMat3(vec4 q) {
+    float x = q.x, y = q.y, z = q.z, w = q.w;
+    float xx = x * x, yy = y * y, zz = z * z;
+    float xy = x * y, xz = x * z, yz = y * z;
+    float wx = w * x, wy = w * y, wz = w * z;
+
+    return mat3(
+        1.0 - 2.0 * (yy + zz), 2.0 * (xy + wz), 2.0 * (xz - wy),
+        2.0 * (xy - wz), 1.0 - 2.0 * (xx + zz), 2.0 * (yz + wx),
+        2.0 * (xz + wy), 2.0 * (yz - wx), 1.0 - 2.0 * (xx + yy)
+    );
+}
+
+bool visibleFrustum(CullInstance ci, GpuTransform t) {
+    vec3 localCenter = (ci.aabbMin.xyz + ci.aabbMax.xyz) * 0.5;
+    vec3 localExtent = (ci.aabbMax.xyz - ci.aabbMin.xyz) * 0.5;
+    float scale = t.pos.w;
+    mat3 rot = quatToMat3(t.rot);
+    mat3 absRot = mat3(abs(rot[0]), abs(rot[1]), abs(rot[2]));
+
+    vec3 worldCenter = rot * (localCenter * scale) + t.pos.xyz;
+    vec3 worldExtent = absRot * (localExtent * abs(scale));
+
+    for (int i = 0; i < 6; i++) {
+        vec3 n = pc.frustumPlanes[i].xyz;
+        float d = pc.frustumPlanes[i].w;
+        float r = dot(worldExtent, abs(n));
+        float s = dot(n, worldCenter) + d;
+        if (s + r < 0.0) {
+            return false;
+        }
+    }
+    return true;
+}
+
+void main() {
+    uint index = gl_GlobalInvocationID.x;
+    if (index >= pc.cullInstanceCount) {
+        return;
+    }
+
+    CullInstance ci = cullInstances[index];
+    GpuTransform t = transforms[ci.entity];
+    if (!visibleFrustum(ci, t)) {
+        return;
+    }
+
+    uint outIndex = atomicAdd(drawCount, 1u);
+    commands[outIndex].indexCount = ci.indexCount;
+    commands[outIndex].instanceCount = 1u;
+    commands[outIndex].firstIndex = ci.firstIndex;
+    commands[outIndex].vertexOffset = ci.vertexOffset;
+    commands[outIndex].firstInstance = index;
+}

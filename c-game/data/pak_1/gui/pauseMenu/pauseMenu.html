@@ -1,0 +1,38 @@
+<html>
+
+<head>
+  <link type="text/rcss" href="../milligram.css" />
+  <link type="text/rcss" href="pauseMenu.css" />
+  <script src="pauseMenu.lua"></script>
+  <script src="../global.lua"></script>
+</head>
+
+<body id="pauseMenu" onkeydown="pauseKeyDown(event)" onload="documentInit(element)">
+  <div class="main">
+    <div class="top">
+      <span>Game Menu</span>
+    </div>
+
+    <div class="middle">
+      <div class="buttonContainer">
+        <button id="first" autofocus onclick="pauseSettingsOpen()">
+          <div>SETTINGS</div>
+        </button>
+
+        <div class="spacer"></div>
+
+        <button onclick="pauseExitGame()">
+          <div>EXIT GAME</div>
+        </button>
+
+        <div class="spacer spacer-large"></div>
+
+        <button id="last" onclick="pauseReturnToGame()">
+          <div>RETURN TO GAME</div>
+        </button>
+      </div>
+    </div>
+  </div>
+</body>
+
+</html>

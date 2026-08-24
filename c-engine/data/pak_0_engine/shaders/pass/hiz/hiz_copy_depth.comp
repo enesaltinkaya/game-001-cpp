@@ -1,0 +1,35 @@
+#version 460
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_nonuniform_qualifier : require
+#extension GL_ARB_shading_language_include : enable
+
+#include "../../includes/globalset.shader"
+
+layout(push_constant) uniform PushConstants {
+    uint srcIndex;   // sampled pool index of depth buffer
+    uint dstIndex;   // storage pool index of hiz mip 0
+    uint width;
+    uint height;
+};
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+void main() {
+    ivec2 coord = ivec2(gl_GlobalInvocationID.xy);
+
+    if (coord.x >= int(width) || coord.y >= int(height)) {
+        return;
+    }
+
+    vec2 uv     = (vec2(coord) + 0.5) / vec2(width, height);
+    float depth = texture(
+        sampler2D(textures[nonuniformEXT(srcIndex)], samplers[SAMPLER_NEAREST]),
+        uv).r;
+
+    // R32G32_SFLOAT: .r = min (farthest, for occlusion culling),
+    //                .g = max (closest, for Hi-Z tracing)
+    // At mip 0, a single texel has min == max.
+    imageStore(storageImages[nonuniformEXT(dstIndex)], coord,
+               vec4(depth, depth, 0.0, 0.0));
+}

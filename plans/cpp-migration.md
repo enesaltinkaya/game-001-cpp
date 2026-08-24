@@ -1,0 +1,334 @@
+# C++ Idiom Migration Plan
+
+**Date:** 2026-08-20
+**Scope:** Port the C-idiom codebase (already `.cpp`/C++23) to idiomatic modern C++.
+**Decisions (agreed):**
+
+- **Depth:** Full idiomatic C++ (classes w/ access control, smart pointers, RAII, namespaces, virtual-method systems, replace global singletons with owned instances).
+- **Containers:** Migrate hot-path containers to `std::vector` (accept perf change for portability/idiom).
+- **Order:** Bottom-up by dependency: `c-utils` → `c-engine` → `c-game`.
+- **Verification:** Build after each module (`./scripts/build.sh`); run the game (`./scripts/run.sh`) only at milestones.
+
+## Scale
+
+| Module     | Lines | Files | Notes                                      |
+| ---------- | ----- | ----- | ------------------------------------------ |
+| `c-utils`  | ~4.5k | 45    | Foundational. Convert first.               |
+| `c-engine` | ~32k  | 164   | ECS core + Vulkan renderer + GUI. Largest. |
+| `c-game`   | ~17k  | 80    | Gameplay, azgaar world, player/enemy, GUI. |
+| `tools`    | ~3k   | 4     | Offline builders; convert last / optional. |
+
+Current C-idiom footprint: `typedef struct X{…}X` ×190, stb_ds `Array(T)=T*` + `foreach` macros, function-pointer `System` structs, global singletons (`extern Ecs ecs`), `malloc/free/memcpy/memset/NULL` (×931 NULLs), designated initializers. Almost no C++ today (3 namespaces, ~189 `std::` uses).
+
+## Progress log (as of 2026-08-21 — all phases complete)
+
+| Item                                                           | Status                                                                                       |
+| -------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| Phase 0 — green baseline                                       | ✅ done (links clean; pre-existing warning debt catalogued)                                  |
+| Phase 1 — `c-utils` idiom                                      | ✅ done, **0 c-utils warnings**                                                              |
+| Phase 2 — ECS core (SparseSet→`std::vector`, `Ecs` modernized) | ✅ done, runtime-validated                                                                   |
+| Phase 2b — all 11 `c-engine` ECS systems (safe idiom subset)   | ✅ done, build green + smoke test passed                                                     |
+| Phase 3 — `c-engine` renderer/vulkan + GUI                     | ✅ done (safe idiom subset; **0 C99 warnings** in renderer; green build + clean screenshot)  |
+| Phase 4 — `c-game`                                             | ✅ done (safe idiom subset; **0 c-game warnings**; green build + clean milestone screenshot) |
+| Phase 5a — container flip (stb_ds → STL, shim removed)         | ✅ done (2026-08-21): all `Array/Map/StrMap` + macro call sites native STL; `container/Array.h`+`Map.h` shims deleted; stb_ds no longer referenced; build green + smoke + clean screenshot |
+| Phase 5b — allocator retirement (buddy → STL/native)           | ✅ done (2026-08-21): all `memoryAlloc/Free/Realloc` call sites replaced with `std::vector`/`new`; `c-utils/memorymanager/` deleted; `MemoryShim.cpp` provides C-linkage shims for prebuilt libstb.a; fixed use-after-free in `azgaarLoadDeciduousModel`; build green + smoke + clean screenshot |
+| Phase 5c — namespaces (`utils`/`engine`/`game`)                | ✅ done (2026-08-21): all c-utils in `namespace utils`, c-engine in `engine`, c-game in `game`; cross-module refs qualified; third-party/C-API types (GLFWwindow, SDL_Window, RcNavMesh, Jolt*, zip_file) kept global; build green + smoke + clean screenshot |
+| Phase 5e — `System` → virtual class                            | ✅ done (2026-08-21): `System` is an abstract base w/ virtual `added/removed/preUpdate/update/postUpdate`; all 70 system definitions (45 c-engine + 25 c-game) are derived classes; build green + smoke + clean screenshot |
+| Phase 5d — verify + optional `tools`                           | ✅ done (2026-08-21): warning-debt cleanup pass (494 → **0 warnings**), full pipeline green, smoke + screenshot verified, all 5 tool builders compile clean |
+ 
+**Next up:** none — all phases complete. The pre-existing `c-engine` warning debt (the ~200 `-Wmissing-*` / `-Wunused*` / C99-literal warnings in renderer passes + ECS systems, plus third-party header noise from cglm `types-struct.h`, FSR `ffx_types.h`, and a `loslib.c` linker note) was cleared as part of Phase 5d; see the Phase 5d status section below.
+
+### Phase 5c status (done 2026-08-21)
+
+- **Namespaces applied:** `c-utils` → `utils` (38 files wrapped; `Defines.h` typedefs + `MemoryShim.cpp` stay global), `c-engine` → `engine` (161 files; `pch.h` untouched), `c-game` → `game` (80 files; `main()` stays in the global namespace for the CRT).
+- **Cross-module references qualified** in consumers (`utils::…` in engine+game, `engine::…` in game) via a string/comment-aware bulk pass (~1.8k + ~850 replacements), then compiler-oracle iteration for multi-line-declared functions the header inventory missed (`vulkanAzgaarPropsSetTile/SetLandmarks/SetGlobal/SetMeshes`, `vulkanResourceSetTerrainBounds/ClimateParams`, `Light_id`/`Transform_id`).
+- **Third-party / C-API types kept in the global namespace** (forward-decls moved out of the module namespaces): `GLFWwindow`, `SDL_Window` (WindowSystem.h), `RcNavMesh` (debug-navmesh pass), `JoltCharacter/JoltBody/JoltMesh` (physics/debug-physics), `DtNavMeshQuery`/`RcNavMesh` (navmesh system), libzip `zip_file` (DataManager.h now includes `libzip/git/lib/zip.h`).
+- **Macro bodies that expand across namespaces** were qualified at the definition site: `vec*_print`→`utils::info`, `THREAD_LOCK/UNLOCK`→`utils::Thread/threadLock/threadUnlock`, SceneSystem component macros→`engine::F_scene*`, vulkan builder macros (`vulkanCreateImage/Copy/Desc/Pipe/BeginRender/Submit/ResourceSetIbl`)→`engine::r_vulkan*(engine::XInfo{…})`. `vulkanEndRender` body left unqualified (engine-internal only; qualified body trips `-Wextra-qualification` at in-namespace call sites).
+- **Cross-namespace forward declarations are illegal** (`struct engine::Scene;`): every `struct engine::X;` / `extern struct engine::System x;` in c-game headers became an `#include` of the owning engine header (`System.h`, `Scene.h`, `TransformComponent.h`, `PhysicsComponent.h`) + plain global fwd decls for the C-API types.
+- **Local vars/params named `info`/`error`** (logger-fn names) in renderer + tools got wrongly qualified by the bulk pass; de-qualified per file (params like `VulkanCopyInfo info`, locals `VkImageCreateInfo info`, X11 `int event, error;`, navmesh-tester `TileInfo info`).
+- **Tool build scripts:** 4 of 5 `tools/build-*.sh` had a broken lowercase path (`/home/enes/project/c/…`); fixed to `Projects`.
+- **Learned gotchas (new):**
+  - Bulk-replace with a precomputed string-mask must be **single-pass** (one combined regex over the original line): sequential per-symbol passes shift indices and both miss matches and corrupt string literals (corrupted `"scripts/gltf-json-debug"` → `gltf-json-utils::debug`, caught via a runtime segfault in `fileWriteBinary`).
+  - Namespace-wrapping scripts must (a) treat multi-line `#define` continuations as preprocessor (VulkanError.h opened mid-macro), (b) not open before leading `#include`s when a real line precedes them (Enemy.h/Player.h parsed engine headers *inside* `namespace game` → phantom `game::engine`), (c) append the closer on its own line (files ending without a trailing newline glued `}  // namespace` onto the last code line; one file's closer landed inside a `//` comment and left the namespace open).
+  - `main` must stay global; wrapping it in `namespace game` breaks the link (`undefined reference to 'main'`).
+- **Verified:** `./scripts/build.sh` green (0 errors; only the pre-existing warning debt remains, no new classes), `./scripts/run.sh play log 5000` clean boot/shutdown, screenshot `/tmp/milestone_5c.jpg` full-scene correct (terrain, water, props, HUD, compass — no regression). All 5 standalone tool builders compile against the namespaced headers.
+
+### Phase 5e status (done 2026-08-21)
+
+- **`System` is now an abstract base class** (`ecs/system/System.h`): virtual `added/removed/preUpdate/update/postUpdate` with empty defaults (so un-overridden hooks are no-ops, replacing the old fn-ptr null-checks), public fields `name`, `priority`, `cpuElapsedLastFrame/cpuElapsed/gpuElapsed`, ctor takes the name (`System("transform")`), virtual dtor. `systemPreUpdate/Update/PostUpdate` helpers keep the `showStats` timing but call the virtuals directly (null-checks dropped in `Ecs.cpp`, `Vulkan.cpp`, `GuiManagerRmlUi.cpp`).
+- **All 70 system definitions converted to derived classes** (45 c-engine + 25 c-game, incl. 2 in `Game.cpp`): each gets a `class X : public System` (c-game: `public engine::System`) declared in its owning header with overrides only for the previously non-null hooks; hook free-fns became member methods (`void TransformSystem::added()`); the aggregate literal + forward-decls were replaced by `X instance;` + a one-line ctor. Bulk-converted by script (`/tmp/opencode/convert_systems.py`), then hand-fixed.
+- **Ownership model:** instances stay static-storage singletons (app-scoped lifetime), so `ecs.systems` remains a **non-owning** `std::vector<System*>` (the plan's allowed alternative to `unique_ptr`; every instance is a named TU-owned object, none heap-allocated). `extern Ecs ecs` is kept as the one explicitly-owned engine singleton (defined in `Ecs.cpp`, lifecycle via `ecsInit/ecsDestroy`) — the documented exception from the "pragmatic ceiling"; full DI of `Ecs&` through ~70 systems × all public fns was judged disproportionate.
+- **File-local case:** `azgaarWorldCleanupSystem` has no owning header → class defined in `Game.cpp` itself.
+- **Typo preserved:** instance `pyhsicsSystem` keeps its historical name (renaming would ripple into `Ecs.cpp`); its class is correctly spelled `PhysicsSystem`.
+- **Member promotion (file-static state → members): deferred as documented debt.** Analysis of all 70 files shows essentially zero hook-exclusive statics — every file-static is also referenced by the file's public API free-functions (pass getters/setters like `vulkanShadowPassSetDisabled`, GUI event handlers, `rendererSetVsync`, …), so promoting them forces converting each file's whole C-style API to class methods (cross-module call-site fallout — a separate phase). State stays TU-private `static` (still strictly better than the old header globals).
+- **Learned gotchas (new):**
+  - A System literal's close line can be glued to the namespace closer (`};}  // namespace engine` in `HeightmapTerrain.cpp`) — block-parsing must match `^\s*;\s*}`-style closes and preserve the suffix.
+  - Files don't necessarily include their own header (55 of 70 didn't); the class moved to the header, so each cpp needed `#include "<OwnHeader>.h"` added.
+  - Ninja 1.13 dyndep assertion crash (`Plan::RefreshDyndepDependents`) after dependency-scan failures — recover by deleting `build/` entirely (deleting only `.dd/.ddi` is not enough; `.ninja_log`/`.ninja_deps` still reference the stale edges).
+  - `struct System*` still compiles for class types, but normalize to `System*` in touched files; fwd-decls `struct System;` → `class System;` (Ecs.h, Engine.h, GuiManagerRmlUi.h).
+- **Verified:** `./scripts/build.sh` green (0 errors; warning count unchanged — all remaining warnings are the pre-existing debt, none from the conversion), `./scripts/run.sh play screenshot /tmp/milestone_5e.jpg` exits 0 with a correct full-scene frame (player, water, props, "Wildlands" zone banner, compass, HUD, FPS panel — no regression vs 5c frame).
+
+### Phase 5d status (done 2026-08-21)
+
+- **Warning-debt cleanup pass: 494 → 0 warnings** on a full clean rebuild (baseline was 494 = 464 our-code + 37 third-party headers + 1 linker note). Techniques:
+  - **NSDMI** (non-static data member initializers) added to ~20 structs so partial designated initializers stop warning: `VulkanPipeInfo`, `utils::Thread` (cond/thread; mutex intentionally left), `Input`, `WindowBackendApi` ×4, `VulkanIblSetInfo`/`VulkanAzgaarPropsData`/`VulkanWeatherData`, `VulkanAddressBuffer`, `VulkanImage` (+`views`), `PendingTileUpload`/`PendingGlobalUpload` (+`ranges`), `Entity`, `HeightmapTile`, `PropsTileState`, `IblFacePushConstants`, `WeatherSimPushConstants`, `FinalPushConstants`, `ImageArrayData`, `VulkanIblData.pad_ibl2`.
+  - Bulk `Type{0}` → `Type{}` for aggregates (VulkanImage/Buffer/Pipe/Profile/Desc, SettRoadHash/Grid, PropGpuTile, HeightmapGpuTile, PropGpuGlobal, Ffx* ctx).
+  - Vulkan C-struct designated initializers completed in declaration order (`.pNext` position is struct-specific; SDK 1.4.313's `VkMemoryBarrier2` has only 6 fields and `VkImageViewCreateInfo` has no `.views` — checked against `vulkan_core.h`, not newer SDK docs). `VkSamplerCreateInfo` converted to zero-init + individual assignment (18 fields; preserves `samplerType=0` behavior).
+  - C99 compound literals / cglm macro constants replaced with non-const `static vec3` (cglm takes `float*`): `CameraSystem.cpp`, `FlyingCamera.cpp`, `TransformSystem.cpp` (`GLM_FORWARD`).
+  - Sign-compare: dropped `static_cast<i32>(…size())` in unsigned-loop bounds across ~15 files; `while(!v.empty())` rewrites; `u64 >= size()` compares in SceneSystem.
+  - Dead code: LuaSystem param names, MeshSystem `initMesh/destroyMesh`, GLFW `showCursorDelayed`, SceneSystem `culledCount` + mesh/skin scaffolding, ContactShadow `temporalAAActive`, TransformSystem `initTransform`, CullingPass `totalDraws`.
+  - align-mismatch: weather `seedData` → `alignas(16) std::unique_ptr<vec4[]>` + `static_cast<vec4*>(__builtin_assume_aligned(ptr, 16))` (clang's builtin returns `void*` for array-pointer types).
+- **Third-party exceptions (suppressed, not fixed upstream):**
+  - cglm `types-struct.h` `-Wgnu-anonymous-struct` → pragma around the include in `PhysicsSystem.cpp`.
+  - FSR `ffx_types.h` missing-field-initializers → pragma around the FidelityFX includes in `VulkanFsrPass.cpp` (also removed a duplicate `#include "VulkanFsrPass.h"` there).
+  - openexr `EXR_DECODE_PIPELINE_INITIALIZER` (partial positional macro) → pragma around the one use in `ExrLoader.cpp`.
+  - X11 nested anonymous types → pragma for `-Wnested-anon-types` in `X11Backend.h` (naming the inner structs is a hard error: "types cannot be declared in an anonymous union").
+  - `loslib.c` tmpnam linker note → recompiled `loslib.c` with `-DLUA_USE_POSIX` and swapped the object into `cpp-thirdparty/lua/git/build-linux/liblua.a` (now uses `mkstemp64`).
+- **Learned gotchas (new):**
+  - Bulk regex over `for` loops is treacherous — two buggy passes corrupted ~40 loops (extra `)` / dangling cast); repaired via targeted string fixes + a paren-balance scan.
+  - Out-of-order designated initializers compile in GNU mode but hide missing-field cascades one at a time; fix ordering + completeness together.
+  - VolK defines `VkImageLayout`/`VkImageViewType`/`VkSampleCountFlagBits` as C++ enums → NSDMIs must use enum constants, not `= 0`.
+- **Verified:** `ninja -C build` full rebuild **0 warnings / 0 errors**; `./scripts/build.sh` pipeline green (shaders + assets); `./scripts/run.sh play log 5000` clean boot/shutdown (no validation errors); `/tmp/milestone_5d.jpg` healthy frame (rendering matches prior milestones modulo normal per-run camera/player variance — 5c/5e/5d land in different cells); all 5 standalone tool builders (`jolt-shape-builder`, `navmesh-builder`, `navmesh-tester`, `terrain-chunker`, `vegetation-builder`) compile with 0 warnings.
+
+---
+
+## Step 0 — Green baseline (do first, before any edits)
+
+1. `./scripts/build.sh` → must **compile + link with 0 errors**.
+2. Record the warning baseline. **Reality:** the repo currently links clean (0 errors) but carries _pre-existing_ C-extension warning debt (C99 compound literals in `Settings.cpp`/`Sqlite.cpp`, missing-designated-field-initializer in `FutureTask.cpp`/`DataManager.cpp`, unused vars). It is **not** zero-warning today.
+3. Optional smoke run: `./scripts/run.sh play log 5000` to confirm the game boots before we touch anything.
+
+### Per-phase gate (revised)
+
+Because of the existing debt, the gate for Phases 1–4 is: **no new errors, no new warnings, and actively reduce C-extension debt in the modules being touched.** "Zero warnings across the whole tree" is the end-state goal reached in **Phase 5d**, not an immediate per-module requirement.
+
+---
+
+## Target C++ idiom (the consistency anchor)
+
+Apply these rules uniformly. This section is the reference every module is converted against.
+
+### Types & declarations
+
+- `typedef struct X { … } X;` → `struct X { … };` (drop the typedef alias; use the bare name).
+- POD data structs → `struct` with **public** members (components, UBOs, config).
+- Behavy objects (systems, managers, passes) → `class` with **private** members + public methods.
+- Enums: prefer `enum class X { … };`; keep unscoped only where interop/flag-combos need it.
+- Replace `NULL` → `nullptr`; `char showStats;` booleans → `bool`.
+- Fixed-width aliases (`u32/i32/u64`) stay (they're in `Utils.h`); they're fine in C++.
+
+### Memory & ownership
+
+- Own resources with **RAII**. No manual `malloc/free` pairs for owned objects.
+  - Unique ownership → `std::unique_ptr<T>`.
+  - Shared ownership → `std::shared_ptr<T>` (sparingly).
+  - Non-owning → raw pointer or `std::reference_wrapper`.
+- Containers own their elements: `std::vector<T>`, `std::vector<std::unique_ptr<T>>`.
+- Custom **buddy allocator** (`memoryAlloc/Free/Realloc`): retire in favor of the standard heap once containers move to `std::vector`. Handle the `memoryInit(ALLOCATOR_*)` call site at startup (see Phase 2). If a perf regression appears, re-introduce a `std::allocator`-based pool behind `std::vector` rather than global alloc functions.
+
+### Containers (stb_ds → std)
+
+Provide a **compatibility shim** in `c-utils/container/Array.h` so the bulk of existing call sites compile unchanged during transition, then replace call sites with native STL as each module is touched:
+
+| Old (stb_ds macro)        | Target                                                  |
+| ------------------------- | ------------------------------------------------------- |
+| `Array(T)` = `T*`         | `std::vector<T>`                                        |
+| `arrayPut(a, v)`          | `a.push_back(v)` / `a.emplace_back(v)`                  |
+| `arraySize(a)`            | `static_cast<i32>(a.size())`                            |
+| `arrayLast(a)`            | `a.back()`                                              |
+| `arrayPop(a)`             | `a.pop_back()`                                          |
+| `arrayDeleteSlow(a,i)`    | `a.erase(a.begin()+i)`                                  |
+| `arrayDeleteSwap(a,i)`    | swap-with-last + `pop_back()`                           |
+| `arraySetSizeZeroed(a,n)` | `a.resize(n); std::fill(...)`                           |
+| `arrayFree(a)`            | no-op (vector owns memory)                              |
+| `foreach(item, a)`        | `for (auto& item : a)` (range-for)                      |
+| `foreachptr(item, a)`     | `for (auto* item : a)`                                  |
+| `Map(K,V)` (stb_ds hash)  | `std::unordered_map<K,V>` (or `std::map` where ordered) |
+
+The shim keeps `arrayPut/arraySize/foreach` as thin wrappers over `std::vector` so untouched files still build; migrated files use native STL. Remove the shim once no call sites remain.
+
+**Sequencing reality (important):** `Array(T)`/`Map(K,V)`/`StrMap(T)` are a _global contract_ — they appear in public headers consumed across modules (`DataManager.h`, `String.h`, `Ecs.h`). Flipping them breaks every consumer at once, so it is **not** bottom-up-safe. Therefore:
+
+- **Phases 1–4 keep the stb_ds container macros and `memoryAlloc` intact.** Each module's idiom conversion migrates only _module-internal_ container usage that does not cross a public-header boundary; public container APIs stay stb_ds until the flip.
+- **The container flip + allocator retirement happen in Phase 5** (cross-cutting), where the macro definitions change and all fallout (incl. public-header signatures + every consumer) is fixed together, then stb_ds is removed.
+
+`SparseSet` (ECS SoA storage): **keep the algorithm**, re-implement internals on `std::vector<u32>`/`std::vector<char>` instead of raw `u32*`/`char*` + manual realloc. Public API (`ssNew/ssInsert/ssContainsValue/…`) stays stable so the ECS layer is untouched until its own phase.
+
+**Gotcha (stb_ds macros + braced-init):** while the stb*ds container macros are still in use, passing a C++ braced-init like `Template{a,b,c}` to a \_function-like* macro such as `arrayPut(arr, Template{a,b,c})` breaks — braces do **not** shield the inner commas from the macro's argument splitter ("too many arguments"). Wrap it: `arrayPut(arr, (Template{a,b,c}))`. (This also replaces the old C99 `((Template){…})` compound literal, which is what triggered `-Wc99-extensions`.)
+
+**More gotchas (learned during Phase 1–2b):**
+
+- **`const_cast` vs `reinterpret_cast` to drop const:** casting a `const T*` to a non-const pointer (e.g. `memoryFree(entity->name)` where `name` is `const char*`) needs `const_cast<char*>(p)` (then implicit `char*`→`void*`). `reinterpret_cast<void*>(constP)` and `static_cast` both **fail** with "casts away qualifiers".
+- **`vec3`/`vec4`/`mat4` are fixed arrays** (`float[3]`/`float[4]`, cglm `types.h`), not structs. Pass them **by name** (they decay to element pointers) into `glm_*` functions — `glm_vec4_copy(dirVec, dst)`, NOT `glm_vec4_copy(&dirVec, dst)` (`&dirVec` is `float(*)[4]`, no matching overload). Named `vec4 v = {…};` replaces the C99 `(vec4){…}` compound literal.
+- **Bulk sed cast conversion is treacherous.** A pattern like `s/(i32)\([A-Za-z_][A-Za-z0-9_]*\)/…/` greedily matches `(i32)floorf` / `(u32)arraySize` as if the operand were a bare identifier, producing `static_cast<i32>(floorf)(args)` — which breaks because `floorf`/`arraySize` are a function/macro that must keep its call parens attached. Prefer targeted literal seds per known case, or restrict the operand class; always build after.
+- **`arraySize` is an stb_ds macro**, not a function: `static_cast<u32>(arraySize(x))` keeps the macro invocation intact (fine); but `static_cast<u32>(arraySize)(x)` (paren detached) leaves `arraySize` unexpanded → "undeclared identifier".
+
+### Functions & parameters
+
+- Pass by **const reference** (`const T&`) for read-only, by value for cheap/copiable, by **non-const reference** for out-params (replace `T* out` + `*out =` pattern).
+- Return by value; avoid `void f(T* out)` where a return is natural.
+- Mark pure/virtual methods appropriately; `override` on every override.
+- `const`-correct member getters; `noexcept` where obvious.
+
+### Systems (function-pointer struct → class)
+
+Today:
+
+```c
+struct System transformSystem = { .name="transform", .added=added, .update=update, … };
+systemAdd(order, &transformSystem);
+```
+
+Target:
+
+```cpp
+class TransformSystem : public System {
+public:
+    void added()  override;
+    void removed() override;
+    void update()  override;
+    void postUpdate() override;
+private:
+    /* member state replaces file-static globals */
+};
+```
+
+- `System` becomes an abstract base with virtual `added/removed/update/postUpdate` (empty defaults) + a `const char* name` and an `order` field.
+- `ecs.systems` becomes `std::vector<std::unique_ptr<System>>` (owned) or `std::vector<System*>` (non-owned, if lifetime is app-scoped). Decide per ownership model in Phase 2.
+- File-static state inside each system `.c` moves into **member variables** of the class.
+
+### Global singletons → owned instances
+
+- `extern Ecs ecs;` and friends become **owned objects** created in `main`/app bootstrap and passed down (composition over ambient globals).
+- Pragmatic ceiling: full constructor-injection through every layer is the largest, riskiest item. Target: eliminate _header-defined_ globals and ad-hoc `extern` state; allow a small set of explicitly-owned engine singletons (one instance, clear owner) where threading DI is disproportionate. Track any that remain in the milestone notes.
+
+### Namespaces (applied LAST, cross-cutting)
+
+Namespaces break every consumer, so they cannot be done bottom-up while keeping per-module green builds. Phases 1–4 keep the **global namespace** and do the idiom work (struct→class, RAII, `std::vector`, references, `nullptr`, virtual systems) so each module still builds. Namespaces are introduced in a dedicated final pass (Phase 5), one module at a time, qualifying references across the whole codebase and building green after each module is namespaced:
+
+- `c-utils` → `utils` (e.g. `utils::container`, `utils::memory`)
+- `c-engine` → `engine` (e.g. `engine::ecs`, `engine::renderer::vulkan`, `engine::gui`)
+- `c-game` → `game` (e.g. `game::azgaar`, `game::player`)
+
+### Style
+
+- Keep existing brace/indent style (Allman-ish, 4-space) to minimize diff noise; only change what the idiom requires.
+- No new compiler warnings; `-pedantic-errors` must stay clean.
+- Prefer `auto` where the type is obvious; range-for over index loops where mutation isn't needed.
+- `std::string`/`std::string_view` replace `char*` buffers in non-hot, non-ABI code (parsing, logging, UI labels). Keep `char*`/fixed buffers where they cross C/third-party APIs (Vulkan, stb, FSR).
+
+---
+
+## Execution phases
+
+### Phase 1 — `c-utils` (~4.5k lines) ✅ done
+
+Foundational; everything depends on it. Order within the module:
+
+1. `container/` — introduce `std::vector`-backed `Array` shim + `Map`→`unordered_map`; re-implement `SparseSet` internals on `std::vector`. **(unlocks everything)**
+2. `memorymanager/` — retire buddy allocator behind the STL heap; keep `memoryInit` as a no-op/compat stub for now.
+3. `string/`, `file/`, `json/`, `logger/`, `settings/` — `std::string`, RAII file handles, RAII.
+4. `thread/`, `futuretask/`, `timer/`, `events/`, `signalcatcher/`, `platform/`, `datamanager/`, `database/`, `image/`, `cfgpath/` — RAII, classes, namespaces.
+
+- **Status:** all `c-utils` modules converted (typedefs→struct/enum, `NULL`→`nullptr`, `char`→`bool`, C-casts→`static_cast`/`reinterpret_cast`/`const_cast`, C99 compound literals removed). **0 c-utils warnings.** stb_ds container macros + `memoryAlloc` kept intact (deferred to Phase 5). `SparseSet`/`SparseSetSimple` internals now on `std::vector`.
+
+- **Gate:** `./scripts/build.sh` green (met).
+
+### Phase 2 — `c-engine` ECS core (bounded, safe subset) ✅ done
+
+- `SparseSet` / `SparseSetSimple` internals → `std::vector` (RAII; public API kept stable, `char`→`bool`). **Done.**
+- `Ecs` core modernized: `struct Ecs` (drop typedef aliases), `bool showStats`, `nullptr`. **Done.**
+- `System` still a fn-ptr struct for now (see Phase 5e below).
+
+- **Gate:** build green (done; milestone run pending).
+
+> **Scoping discovery:** there are **~40** `struct System … = {…}` definitions across _both_ `c-engine` and `c-game`. Converting `System` to a virtual base class breaks all 40 at once (the base-type change is a compile dependency of every system definition), so it is **not** bottom-up-safe. It is grouped with the other cross-cutting atomic flips in **Phase 5e**.
+
+### Phase 2b — `c-engine` ECS systems (safe idiom subset) ✅ done
+
+All 11 `ecs/system/*` modules converted with the safe idiom subset (typedefs→`struct`, `NULL`→`nullptr`, `char`→`bool`, C-casts→`static_cast`/`reinterpret_cast`/`const_cast`, C99 compound literals removed). The `System` fn-ptr struct + stb_ds containers are **kept** (deferred to 5e / 5a). Build green + runtime smoke test passed after this batch.
+
+- Small/medium: `lua`, `mesh`, `sound`, `light`, `transform`, `physics`, `camera`.
+- Large: `heightmap` (HeightmapTerrain/Source/Job typedefs, ~40 numeric casts), `animation` (AnimatorComponent.h ×11 typedefs, AnimationSystem.cpp), `scene` (Scene.h Entity/Scene, SceneParser, SceneSystem), `window` (WindowSystem + X11/GLFW/SDL backends, `WindowBackendApi` ×4).
+
+- **Gate:** build green + `./scripts/run.sh play log 5000` (met — clean boot + shutdown, no errors).
+
+### Phase 3 — `c-engine` renderer + GUI
+
+- `renderer/vulkan/*` (resources, pipeline, passes, swapchain, barriers, scene) — RAII wrappers over Vulkan handles (deferred destruction), classes for passes, `std::vector` for resource arrays. Keep raw `Vk*` at the API boundary; wrap ownership.
+- `renderer/{material,texture,decal,gui}/` — classes + RAII.
+- **Gate:** build green + **milestone run** with screenshot (`./scripts/run.sh play screenshot /tmp/milestone.jpg`) to catch visual regressions.
+
+**Status: ✅ done (safe idiom subset).** Applied across `renderer/vulkan/*` (resources, pipeline, command, swapchain, scene, IBL, EXR loader, all ~30 passes), `renderer/{material,texture,decal}`, `Renderer.{h,cpp}`, and `gui/rmlui`:
+
+- `typedef struct X{…}X` → `struct X{…}` (incl. forward-decl typedefs → plain `struct X;`).
+- All C99 compound literals → C++ aggregate init; builder macros with inline defaults (`vulkanCreateImage`, `vulkanCreateDesc`, `vulkanSubmit`, `vulkanCreatePipe`, `vulkanBeginRender`, `vulkanResourceSetIbl`, `vulkanCopy`, `createTexture`) now use NSDMI on the struct + forward `__VA_ARGS__`. **0 `-Wc99-extensions` warnings remain in the renderer.**
+- `NULL` → `nullptr`; pointer→int casts → `reinterpret_cast`; other C-casts → `static_cast`; `_Atomic T` → `std::atomic<T>` (+`#include <atomic>`); public-API `char` bools → `bool` (`rendererSetVsync`, `rendererIsTAAEnabled`, `rendererIsUpscalerEnabled`, `rendererUploadTexture`, texture/material create paths).
+- **Deferred (documented debt):** third-party `rmlBind` `_Generic` macro in `cpp-thirdparty/rmlui/wrapper/src/crmlui.h` (source of remaining `-Wc11-extensions`); GUI static `char` flags that feed `rmlBind` (left as `char` to avoid breaking the `_Generic` dispatch); `struct System X = {…}` definitions (resolved in Phase 5e when System becomes a virtual class).
+- **Verified:** `./scripts/build.sh` green (0 errors, links); `./scripts/run.sh play screenshot /tmp/milestone.jpg` exits 0 with a correct full-scene frame (no visual regression).
+
+### Phase 4 — `c-game` (~17k) ✅ done
+
+- `game/azgaar/*`, `game/player/*`, `game/enemy/*`, `game/combat/*`, `game/character/*`, GUI systems, menus, navmesh, gameState.
+- Same idiom rules; systems stay fn-ptr structs until 5e; gameplay state converted in place.
+- **Gate:** build green + **final milestone run** + screenshot. **(met)**
+
+**Status: ✅ done (safe idiom subset).** All 80 files converted:
+
+- `typedef struct X{…}X` → `struct X{…}` (incl. anonymous typedefs re-named to their alias, e.g. `enum CameraMode`, `struct StateCallbacks`, `struct VoroPt`); forward-decl typedefs → `struct X;`; `struct X*` prefixes dropped.
+- `NULL` → `nullptr`; all C-casts → `static_cast`/`reinterpret_cast` (pointer-reinterpret sites like cgltf attribute reads use `reinterpret_cast`).
+- C99 compound literals removed: `(T){…}` → `T{…}` / `T{}`; cglm `(vec3){…}`/`GLM_YUP` → file-local `static vec3 Y_UP/X_AXIS` constants (cglm params are non-const).
+- `char` bools → `bool` (Hud pools, TopDown `initPos`, ThirdPerson `tpGhostPanInit`).
+- All 24 `System` initializers normalized to full declaration order with `nullptr`/`0.0` defaults (C++20 forbids skipped/out-of-order designators).
+- Designated-initializer gaps filled (`PropTileRange.variant`, `TopDownOccluderFade.hitThisFrame`, `Thread{}`, `AzgaarCellEvent.packCellIndex`, …); `T{0}` → `T{}` where first member is a subobject.
+- Dead helpers marked `[[maybe_unused]]` (`autoEnter`, `playerLightCreate`, `delHalfNext`, `voronoiCircumcenter`).
+- **rmlui wrapper fix (cpp-thirdparty/rmlui/wrapper/src/crmlui.h):** `rmlBind` `_Generic` macro now C-only; C++ gets inline overloads (same 7 pointer types) — kills the `-Wc11-extensions` at every call site without touching C consumers.
+- **Verified:** `./scripts/build.sh` green with **0 c-game warnings**; `./scripts/run.sh play screenshot /tmp/milestone_p4.jpg` exits 0 with a correct full-scene frame (terrain, water, HUD, compass, zone banner — no visual regression).
+
+**Learned gotchas (new, for the record):**
+
+- Perl replacement-side `$2[` parses as a hash subscript (`%2` element) — always interpolate as `${2}[${3}]`. A bulk cast→postfix fix silently produced `static_cast<T>()` empties; caught via compiler "expected expression" errors and reconstructed from git.
+- `sed 's/,$//'` applied file-wide ate trailing commas from every comma-ending line (multi-line call args) in 20 files; recovered by restoring those files from git and re-running the deterministic pipeline (`/tmp/opencode/pipeline.sh`: typedef → fwd-decl → NULL → casts×2/memberfix×2 → compound-literal strip → System normalize → `struct X*` strip → `(unsigned char)`/`(const T*)` fixes).
+- cglm `vec3` params are non-const `float*`: axis constants must be `static vec3` (not `const`).
+
+### Phase 5 — cross-cutting flip (containers → allocator → namespaces → verify)
+
+Each sub-phase ends green before the next starts.
+
+- **5a — Container flip:** change `Array(T)`→`std::vector<T>`, `Map(K,V)`/`StrMap(T)`→`std::unordered_map`; fix all fallout (public-header signatures + every consumer, `= NULL` inits, `arrayFree`, `if(ptr)` truthiness); remove stb_ds dependency. Build green.
+
+**Status 5a: ✅ done (2026-08-21).** Two-stage flip: (1) transitional std-backed shim in `container/Array.h`+`Map.h` made the whole tree compile, with semantic fixes (`mapGet`/`strmapGet` → find-based miss→zeroed-default matching stb `hmget/shget`; `Animator.boneMap` moved out of the ECS component into a system-side table because SparseSet memcpys component slots; `FlightItem` → `std::array` (atomic member); `Skin.inverseBindMatrices` → flat `std::vector<float>` (libstdc++ can't resize vectors of C-array element types)); (2) all ~700 macro call sites converted to native STL (paren-aware bulk pass + manual mapGet/arrayPop/arrayDeleteSwap sites), shim headers deleted, `Utils.h` includes `<vector>/<unordered_map>/<string>/<cstring>/<cstdlib>/<cstddef>` directly. Notable fallout fixed: `foreachptr` over value vectors → reference range-for (`for (T& x : v)`); deref-arg precedence (`*queue.push_back` → `queue->push_back` / `(*x).method`). stb_ds no longer referenced anywhere. **Gate met:** build green (0 errors; only pre-existing warnings), `./scripts/run.sh play log 5000` clean boot/shutdown, screenshot `/tmp/milestone_5a2.jpg` full-scene correct (terrain, water, props, HUD, compass — no regression vs 5a stage-1 frame).
+- **5b — Retire allocator:** replace raw `memoryAlloc/Free/Realloc` arrays with `std::vector`/`new`/`std::unique_ptr`; drop the buddy allocator (`memoryInit` becomes a no-op or is removed). Build green.
+- **5c — Namespaces:** wrap each module in its namespace (`utils`/`engine`/`game`), qualify references across the codebase, one module at a time. Build green after each.
+
+**Status 5c: ✅ done (2026-08-21).** See "Phase 5c status" above for details + gotchas.
+- **5e — `System` → virtual class (cross-cutting, atomic):** convert the `System` fn-ptr struct to an abstract base with virtual `added/removed/preUpdate/update/postUpdate`; convert all **~40** system definitions (across `c-engine` + `c-game`) to subclasses (free fns → member methods, file-static state → members); `ecs.systems` → owned container; de-globalize `Ecs`. This is one atomic change (the base-type change breaks every system definition at once), so it must land in a single green-ending push. Build green + milestone run.
+
+**Status 5e: ✅ done (2026-08-21).** See "Phase 5e status" above for details. Deviations from the original sketch: (a) actual count was **70** definitions, not ~40; (b) `ecs.systems` kept as non-owning `std::vector<System*>` (instances are app-scoped statics, not heap objects); (c) `Ecs` de-globalization replaced by the documented exception (`extern Ecs ecs` stays, TU-owned, clear init/destroy lifecycle); (d) file-static → member promotion deferred (all statics shared with per-file public APIs; see status section).
+- **5d — Verify + optional `tools`:** convert `tools/*` builders if desired; final full `./scripts/build.sh` + `./scripts/run.sh` + screenshot; confirm zero warnings and identical rendering.
+
+**Status 5d: ✅ done (2026-08-21).** See "Phase 5d status" above: warning-debt cleanup pass took the tree from 494 → **0 warnings**; full pipeline + smoke + screenshot verified; all 5 tool builders compile clean (no conversion needed — they already built against the namespaced headers).
+
+---
+
+## Risk register & mitigations
+
+| Risk                                                    | Mitigation                                                                                                                                    |
+| ------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `std::vector` perf regression in ECS/renderer hot loops | Compat shim lets us keep `std::vector` but back it with a pooled `std::allocator` if profiling shows a regression; measure at milestone runs. |
+| Function-pointer → virtual class changes dispatch/ABI   | Confine to Phase 5e (atomic, all ~40 systems at once); keep `System` interface identical; milestone-run after.                                |
+| Global-singleton removal is large/risky                 | Allow a bounded set of explicitly-owned engine singletons; document leftovers rather than force full DI.                                      |
+| `SparseSet` re-implementation bugs (ECS correctness)    | Keep public API byte-stable; reimplement internals only; milestone run validates entity behavior.                                             |
+| Vulkan handle ownership (RAII) mis-ordering at shutdown | Preserve existing destroy-ordering comments/logic; wrap, don't reorder.                                                                       |
+| Warning-strict build breaks mid-migration               | Build after each module; never leave a phase red.                                                                                             |
+| Designated-initializer reliance (C)                     | Replace with CTAD / constructors / aggregate init as classes are introduced.                                                                  |
+
+## Definition of done
+
+**All criteria met as of 2026-08-21 (Phase 5d).** Details per criterion in the Phase 5d status section.
+
+- All three modules compile with **zero warnings** under `-pedantic-errors`.
+- No `typedef struct X{…}X`, no raw `malloc/free` ownership pairs, no `NULL`, no stb_ds `Array`/`Map` call sites (shim removed).
+- Systems are `System` subclasses; globals replaced by owned instances (documented exceptions allowed).
+- Namespaces applied per module.
+- Game boots and renders identically (screenshot diff vs. pre-migration baseline) at the final milestone.

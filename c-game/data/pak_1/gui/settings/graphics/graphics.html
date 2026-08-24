@@ -1,0 +1,215 @@
+<html>
+
+<head>
+    <link type="text/rcss" href="../../milligram.css" />
+    <link type="text/rcss" href="../settings.css" />
+    <script src="graphics.lua"></script>
+    <script src="../../global.lua"></script>
+
+</head>
+
+<body id="graphicsSettings" onkeydown="graphicsSettingsKeyDown(event)" onload="documentInit(element)">
+    <div class="main">
+        <div class="top">
+            <span>Graphics</span>
+        </div>
+
+        <div class="middle">
+            <div class="buttonContainer" data-model="graphics">
+
+                <button id="first" class="option" autofocus>
+                    <div class="label">FSR3</div>
+                    <div class="widget">
+                        <div class="slider">
+                            <p class="leftarrow" style="pointer-events:auto;" onclick="upscalerPrev()">&#xe806;</p>
+                            <p onclick="upscalerNext()">{{upscalerLabel}}</p>
+                            <p class="rightarrow" style="pointer-events:auto;" onclick="upscalerNext()">&#xe808;</p>
+                        </div>
+                    </div>
+                </button>
+
+                <!-- <div style="padding:4dp 0 8dp 0; color:#bbb; font-size:12dp; line-height:16dp;">
+                    {{upscalePolicyLabel}}
+                </div> -->
+
+
+                <button class="option" id="toggleTaa" onclick="toggleTaa()">
+                    <div class="label">TAA</div>
+                    <div class="widget">
+                        <div class="slider">
+                            <p class="leftarrow">&#xe806;</p>
+                            <p>{{taaLabel}}</p>
+                            <p class="rightarrow">&#xe808;</p>
+                        </div>
+                    </div>
+                </button>
+
+                <!-- <div style="padding:4dp 0 8dp 0; color:#bbb; font-size:12dp; line-height:16dp;">
+                    {{aaPolicyLabel}}
+                </div> -->
+
+                <button class="option">
+                    <div class="label">Sharpening — RCAS ({{format(casStrengthPercent,0)}}%)</div>
+                    <div class="widget">
+                        <div class="slider">
+                            <p class="leftarrow">&#xe806;</p>
+                            <p class="rightarrow">&#xe808;</p>
+                            <input type="range" min="0" max="150" step="1" data-value="casStrengthPercent" style="tab-index:none;" onchange="aaCasStrengthChange()" />
+                        </div>
+                    </div>
+                </button>
+
+                <button class="option" data-class-disabled="renderScaleDisabled">
+                    <div class="label">Resolution Scale ({{format(renderScalePercent,0)}}%)</div>
+                    <div class="widget">
+                        <div class="slider">
+                            <p class="leftarrow">&#xe806;</p>
+                            <p class="rightarrow">&#xe808;</p>
+                            <input type="range" min="50" max="200" step="10" data-value="renderScalePercent" data-class-disabled="renderScaleDisabled" style="tab-index:none;" onchange="renderScaleChange()" />
+                        </div>
+                    </div>
+                </button>
+
+                <button class="option" id="toggleShadows" onclick="toggleShadows()">
+                    <div class="label">Shadows</div>
+                    <div class="widget">
+                        <div class="slider">
+                            <p class="leftarrow">&#xe806;</p>
+                            <p>{{shadowsLabel}}</p>
+                            <p class="rightarrow">&#xe808;</p>
+                        </div>
+                    </div>
+                </button>
+
+                <button class="option" id="toggleContactShadow" onclick="toggleContactShadow()">
+                    <div class="label">Contact Shadows</div>
+                    <div class="widget">
+                        <div class="slider">
+                            <p class="leftarrow">&#xe806;</p>
+                            <p>{{contactShadowLabel}}</p>
+                            <p class="rightarrow">&#xe808;</p>
+                        </div>
+                    </div>
+                </button>
+
+                <button class="option" id="toggleSsr" onclick="toggleSsr()">
+                    <div class="label">Reflections</div>
+                    <div class="widget">
+                        <div class="slider">
+                            <p class="leftarrow">&#xe806;</p>
+                            <p>{{ssrLabel}}</p>
+                            <p class="rightarrow">&#xe808;</p>
+                        </div>
+                    </div>
+                </button>
+
+                <button class="option" id="toggleAo" onclick="toggleAo()">
+                    <div class="label">Ambient Occlusion</div>
+                    <div class="widget">
+                        <div class="slider">
+                            <p class="leftarrow">&#xe806;</p>
+                            <p>{{aoLabel}}</p>
+                            <p class="rightarrow">&#xe808;</p>
+                        </div>
+                    </div>
+                </button>
+
+
+                <button class="option" id="toggleBloom" onclick="toggleBloom()">
+                    <div class="label">Bloom</div>
+                    <div class="widget">
+                        <div class="slider">
+                            <p class="leftarrow">&#xe806;</p>
+                            <p>{{bloomLabel}}</p>
+                            <p class="rightarrow">&#xe808;</p>
+                        </div>
+                    </div>
+                </button>
+
+                <button class="option" id="toggleLens" onclick="toggleLens()">
+                    <div class="label">Lens Effects</div>
+                    <div class="widget">
+                        <div class="slider">
+                            <p class="leftarrow">&#xe806;</p>
+                            <p>{{lensLabel}}</p>
+                            <p class="rightarrow">&#xe808;</p>
+                        </div>
+                    </div>
+                </button>
+
+                <button class="option" data-class-disabled="lensParamsDisabled">
+                    <div class="label">Lens — Film Grain ({{format(lensGrainPercent,0)}}%)</div>
+                    <div class="widget">
+                        <div class="slider">
+                            <p class="leftarrow">&#xe806;</p>
+                            <p class="rightarrow">&#xe808;</p>
+                            <input type="range" min="0" max="100" step="1" data-value="lensGrainPercent" style="tab-index:none;" onchange="lensParamChange()" />
+                        </div>
+                    </div>
+                </button>
+
+                <button class="option" data-class-disabled="lensParamsDisabled">
+                    <div class="label">Lens — Chromatic Aberration ({{format(lensChromAbPercent,0)}}%)</div>
+                    <div class="widget">
+                        <div class="slider">
+                            <p class="leftarrow">&#xe806;</p>
+                            <p class="rightarrow">&#xe808;</p>
+                            <input type="range" min="0" max="100" step="1" data-value="lensChromAbPercent" style="tab-index:none;" onchange="lensParamChange()" />
+                        </div>
+                    </div>
+                </button>
+
+                <button class="option" data-class-disabled="lensParamsDisabled">
+                    <div class="label">Lens — Vignette ({{format(lensVignettePercent,0)}}%)</div>
+                    <div class="widget">
+                        <div class="slider">
+                            <p class="leftarrow">&#xe806;</p>
+                            <p class="rightarrow">&#xe808;</p>
+                            <input type="range" min="0" max="100" step="1" data-value="lensVignettePercent" style="tab-index:none;" onchange="lensParamChange()" />
+                        </div>
+                    </div>
+                </button>
+
+                <button class="option" id="toggleDof" onclick="toggleDof()">
+                    <div class="label">Depth of Field</div>
+                    <div class="widget">
+                        <div class="slider">
+                            <p class="leftarrow">&#xe806;</p>
+                            <p>{{dofLabel}}</p>
+                            <p class="rightarrow">&#xe808;</p>
+                        </div>
+                    </div>
+                </button>
+
+                <button class="option" data-class-disabled="dofParamsDisabled">
+                    <div class="label">DOF — Quality ({{format(dofQuality,0)}})</div>
+                    <div class="widget">
+                        <div class="slider">
+                            <p class="leftarrow">&#xe806;</p>
+                            <p class="rightarrow">&#xe808;</p>
+                            <input type="range" min="1" max="8" step="1" data-value="dofQuality" style="tab-index:none;" onchange="dofParamChange()" />
+                        </div>
+                    </div>
+                </button>
+
+                <button class="option" id="toggleFog" onclick="toggleFog()">
+                    <div class="label">Fog</div>
+                    <div class="widget">
+                        <div class="slider">
+                            <p class="leftarrow">&#xe806;</p>
+                            <p>{{fogLabel}}</p>
+                            <p class="rightarrow">&#xe808;</p>
+                        </div>
+                    </div>
+                </button>
+
+                <div style="flex:1;"></div>
+                <button id="last" onclick="graphicsClose()">
+                    <div>BACK</div>
+                </button>
+            </div>
+        </div>
+    </div>
+</body>
+
+</html>

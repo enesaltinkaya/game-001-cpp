@@ -1,0 +1,279 @@
+#version 460
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_buffer_reference : require
+#extension GL_ARB_shading_language_include : enable
+
+layout(local_size_x = 64) in;
+
+layout(push_constant) uniform PushConstants {
+    uint64_t triangleInstanceBufferAddress;
+    uint64_t indirectBufferAddress;
+    uint64_t culledBufferAddress;
+    uint64_t drawCountBufferAddress;
+    uint64_t transformBufferAddress;
+    uint64_t indexBufferAddress;
+    uint64_t doubleSidedIndirectBufferAddress;
+    uint64_t doubleSidedCulledBufferAddress;
+    uint64_t doubleSidedDrawCountBufferAddress;
+    uint64_t transparentIndirectBufferAddress;
+    uint64_t transparentCulledBufferAddress;
+    uint64_t transparentDrawCountBufferAddress;
+    uint64_t visibilityBufferAddress;
+    uint64_t jointMatrixBufferAddress;
+    uint64_t entitySkinMapBufferAddress;
+    uint64_t prevJointMatrixBufferAddress;
+    uint maxTriangleInstances;
+    uint hizTextureIndex;
+};
+
+#include "../../includes/utils.shader"
+#include "../../includes/globalset.shader"
+#include "../../includes/skinning.shader"
+
+layout(buffer_reference, std430) buffer VisibilityBuffer {
+    uint flags[];
+};
+
+TransformBufferRef transformBuffer = TransformBufferRef(transformBufferAddress);
+
+// Per-instance triangle primitive data
+struct GpuTriangleInstance {
+    uint indexOffset;
+    uint indexCount;
+    uint entity;
+    uint materialId;
+    uint attributeMask;
+    uint attributeStride;
+    uint _pad0;
+    uint _pad1;
+    vec4 boundingSphere;
+};
+
+struct DrawIndexedCommand {
+    uint indexCount;
+    uint instanceCount;
+    uint firstIndex;
+    int vertexOffset;
+    uint firstInstance;
+};
+
+layout(buffer_reference, std430) buffer TriangleInstanceBuffer {
+    GpuTriangleInstance instances[];
+};
+
+layout(buffer_reference, std430) buffer CulledBuffer {
+    uint culledIndices[];
+};
+
+layout(buffer_reference, std430) buffer IndirectBuffer {
+    DrawIndexedCommand commands[];
+};
+
+layout(buffer_reference, std430) buffer DrawCountBuffer {
+    uint count;
+};
+
+bool frustumCull(vec3 worldCenter, float worldRadius) {
+    vec4 planes[6] = sceneBuffer.cameras[0].frustumPlanes;
+
+    for (int i = 0; i < 6; i++) {
+        if (dot(planes[i].xyz, worldCenter) + planes[i].w < -worldRadius) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool isInAnyShadowCascade(vec3 worldCenter, float worldRadius) {
+    for (int c = 0; c < int(sceneBuffer.shadow.cascadeCount); c++) {
+        mat4 svp = sceneBuffer.shadow.shadowViewProjection[c];
+        vec4 clip = svp * vec4(worldCenter, 1.0);
+
+        float rx = worldRadius * length(vec3(svp[0][0], svp[1][0], svp[2][0]));
+        float ry = worldRadius * length(vec3(svp[0][1], svp[1][1], svp[2][1]));
+        float rz = worldRadius * length(vec3(svp[0][2], svp[1][2], svp[2][2]));
+
+        // Use generous bounds (±1.5 XY, [-0.5,1.5] Z) to avoid
+        // falsely rejecting shadow casters near cascade boundaries.
+        if (clip.x + rx >= -1.5 && clip.x - rx <= 1.5 &&
+            clip.y + ry >= -1.5 && clip.y - ry <= 1.5 &&
+            clip.z + rz >= -0.5 && clip.z - rz <= 1.5) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool hizCull(vec3 worldCenter, float worldRadius) {
+    if (hizTextureIndex == 0xFFFFFFFFu) {
+        return false;
+    }
+
+    mat4 viewProj = sceneBuffer.cameras[0].prevViewProjection;
+
+    vec3 boundsMin = worldCenter - vec3(worldRadius);
+    vec3 boundsMax = worldCenter + vec3(worldRadius);
+
+    vec4 corners[8] = {vec4(boundsMin.x, boundsMin.y, boundsMin.z, 1.0),
+                       vec4(boundsMax.x, boundsMin.y, boundsMin.z, 1.0),
+                       vec4(boundsMin.x, boundsMax.y, boundsMin.z, 1.0),
+                       vec4(boundsMax.x, boundsMax.y, boundsMin.z, 1.0),
+                       vec4(boundsMin.x, boundsMin.y, boundsMax.z, 1.0),
+                       vec4(boundsMax.x, boundsMin.y, boundsMax.z, 1.0),
+                       vec4(boundsMin.x, boundsMax.y, boundsMax.z, 1.0),
+                       vec4(boundsMax.x, boundsMax.y, boundsMax.z, 1.0)};
+
+    vec2 minXY          = vec2(1.0);
+    vec2 maxXY          = vec2(-1.0);
+    float nearestZ      = 0.0;
+    bool crossNearPlane = false;
+
+    for (int i = 0; i < 8; i++) {
+        vec4 clip = viewProj * corners[i];
+        if (clip.w <= 0.0) {
+            crossNearPlane = true;
+            break;
+        }
+
+        vec3 ndc = clip.xyz / clip.w;
+        minXY    = min(minXY, ndc.xy);
+        maxXY    = max(maxXY, ndc.xy);
+        nearestZ = max(nearestZ, ndc.z);
+    }
+
+    if (crossNearPlane) {
+        return false;
+    }
+
+    // If projected outside previous frame's view, skip HiZ (not reliably testable)
+    if (minXY.x > 1.0 || maxXY.x < -1.0 || minXY.y > 1.0 || maxXY.y < -1.0) {
+        return false;
+    }
+
+    vec2 uvMin = vec2(minXY.x * 0.5 + 0.5, maxXY.y * -0.5 + 0.5);
+    vec2 uvMax = vec2(maxXY.x * 0.5 + 0.5, minXY.y * -0.5 + 0.5);
+
+    uvMin = clamp(uvMin, 0.0, 1.0);
+    uvMax = clamp(uvMax, 0.0, 1.0);
+
+    vec2 size      = (uvMax - uvMin) * sceneBuffer.cameras[0].viewport;
+    float mipLevel = ceil(log2(max(max(size.x, size.y), 1.0))) + 1.0;
+
+    float d0 = textureLod(sampler2D(textures[hizTextureIndex],
+                                     samplers[SAMPLER_NEAREST]),
+                          vec2(uvMin.x, uvMin.y),
+                          mipLevel)
+                   .r;
+    float d1 = textureLod(sampler2D(textures[hizTextureIndex],
+                                     samplers[SAMPLER_NEAREST]),
+                          vec2(uvMax.x, uvMin.y),
+                          mipLevel)
+                   .r;
+    float d2 = textureLod(sampler2D(textures[hizTextureIndex],
+                                     samplers[SAMPLER_NEAREST]),
+                          vec2(uvMin.x, uvMax.y),
+                          mipLevel)
+                   .r;
+    float d3 = textureLod(sampler2D(textures[hizTextureIndex],
+                                     samplers[SAMPLER_NEAREST]),
+                          vec2(uvMax.x, uvMax.y),
+                          mipLevel)
+                   .r;
+
+    float minHiZ = min(min(d0, d1), min(d2, d3));
+
+    return nearestZ < minHiZ;
+}
+
+void main() {
+    uint instanceIndex = gl_GlobalInvocationID.x;
+    if (instanceIndex >= maxTriangleInstances) return;
+
+    TriangleInstanceBuffer instBuf =
+        TriangleInstanceBuffer(triangleInstanceBufferAddress);
+    GpuTriangleInstance inst = instBuf.instances[instanceIndex];
+
+    // Determine world-space bounding sphere.
+    // For skinned meshes the vertex shader uses joint matrices (which already
+    // contain the armature world transform) instead of the entity transform,
+    // so the culling must match: transform the bind-pose bounding sphere
+    // through the root joint matrix.
+    bool isSkinned = (inst.attributeMask & (1 << 6)) != 0;
+    uint skinOffset = isSkinned ? entitySkinMap.offsets[inst.entity] : 0xFFFFFFFF;
+
+    vec3 worldCenter;
+    float worldRadius;
+    if (isSkinned && skinOffset != 0xFFFFFFFF) {
+        mat4 rootJoint = jointMatrixBuffer.matrices[skinOffset];
+        worldCenter = (rootJoint * vec4(inst.boundingSphere.xyz, 1.0)).xyz;
+        // Scale radius by the maximum axis scale of the root joint matrix
+        float sx = length(rootJoint[0].xyz);
+        float sy = length(rootJoint[1].xyz);
+        float sz = length(rootJoint[2].xyz);
+        worldRadius = inst.boundingSphere.w * max(sx, max(sy, sz));
+    } else {
+        Transform transform = transformBuffer.transforms[inst.entity];
+        worldCenter = transformVertex(inst.boundingSphere.xyz,
+                                       transform.pos.xyz,
+                                       transform.rot,
+                                       vec3(transform.pos.w));
+        worldRadius = inst.boundingSphere.w * abs(transform.pos.w);
+    }
+
+    VisibilityBuffer visBuf = VisibilityBuffer(visibilityBufferAddress);
+
+    if (frustumCull(worldCenter, worldRadius)) {
+        if (!isInAnyShadowCascade(worldCenter, worldRadius)) {
+            visBuf.flags[instanceIndex] = 0u;  // frustum culled
+            return;
+        }
+    }
+
+    // Skip HiZ occlusion culling for shadow casters: the shadow pass runs
+    // before Phase 2, so deferred triangles would be missing from shadow maps.
+    bool needsShadow = isInAnyShadowCascade(worldCenter, worldRadius);
+
+    if (!needsShadow && hizCull(worldCenter, worldRadius)) {
+        visBuf.flags[instanceIndex] = 2u;  // occlusion rejected — retry in Phase 2
+        return;
+    }
+
+    visBuf.flags[instanceIndex] = 1u;  // visible
+
+    // Classify via material feature mask: transparent, double-sided opaque, or single-sided opaque
+    Material material = materialBuffer.materials[inst.materialId];
+    bool isTransparent = (material.featureMask & (1u << MAT_ALPHA_BLEND)) != 0u;
+    bool isDoubleSided = (material.featureMask & (1u << MAT_IS_DOUBLE_SIDED)) != 0u;
+
+    uint64_t targetIndirectAddr;
+    uint64_t targetCulledAddr;
+    uint64_t targetDrawCountAddr;
+
+    if (isTransparent) {
+        targetIndirectAddr  = transparentIndirectBufferAddress;
+        targetCulledAddr    = transparentCulledBufferAddress;
+        targetDrawCountAddr = transparentDrawCountBufferAddress;
+    } else if (isDoubleSided) {
+        targetIndirectAddr  = doubleSidedIndirectBufferAddress;
+        targetCulledAddr    = doubleSidedCulledBufferAddress;
+        targetDrawCountAddr = doubleSidedDrawCountBufferAddress;
+    } else {
+        targetIndirectAddr  = indirectBufferAddress;
+        targetCulledAddr    = culledBufferAddress;
+        targetDrawCountAddr = drawCountBufferAddress;
+    }
+
+    uint visibleIndex =
+        atomicAdd(DrawCountBuffer(targetDrawCountAddr).count, 1);
+
+    CulledBuffer culledBuf                = CulledBuffer(targetCulledAddr);
+    culledBuf.culledIndices[visibleIndex] = instanceIndex;
+
+    IndirectBuffer indirectBuf = IndirectBuffer(targetIndirectAddr);
+    indirectBuf.commands[visibleIndex].indexCount    = inst.indexCount;
+    indirectBuf.commands[visibleIndex].instanceCount = 1;
+    indirectBuf.commands[visibleIndex].firstIndex    = inst.indexOffset;
+    indirectBuf.commands[visibleIndex].vertexOffset  = 0;
+    indirectBuf.commands[visibleIndex].firstInstance = 0;
+}

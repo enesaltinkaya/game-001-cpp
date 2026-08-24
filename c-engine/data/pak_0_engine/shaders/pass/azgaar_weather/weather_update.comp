@@ -1,0 +1,218 @@
+#version 460
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_nonuniform_qualifier : require
+#extension GL_ARB_shading_language_include : enable
+
+// ── Weather particle simulation (plans/azgaar-weather-gpu-particles.md) ──
+// Integrates the persistent device-local particle buffer in place: each
+// thread owns particles[gl_GlobalInvocationID.x] only, so no atomics, no
+// ping-pong, no compaction.  Per particle per frame:
+//
+//   1. wrap into the camera-following box (torus domain, D3),
+//   2. analytic velocity: terminal fall + wind + seeded turbulence (D2),
+//   3. project against THIS frame's scene depth: inside opaque geometry
+//      (terrain / canopies / roofs) → respawn in the box top band with a
+//      type rolled from WeatherData.types and a fresh density roulette
+//      seed (D4/D5).
+//
+// Velocity is analytic (no stored state): a snowflake spawned before a warm
+// front keeps falling as snow until it dies, which is what makes type
+// cross-fades trivial.
+
+layout(local_size_x = 64) in;
+
+layout(push_constant) uniform Push {
+    uint64_t particleAddress;  // GpuWeatherParticle[]
+    uint depthIndex;           // scene depth image in the bindless sampled pool
+    uint maxParticles;
+    uint _pad;
+} pc;
+
+#include "../../includes/utils.shader"
+#include "../../includes/globalset.shader"
+
+// 16 B, std430-clean (vec4 array).  w packs the per-particle metadata:
+//   bits  0..7  spawn type (WEATHER_TYPE_*)
+//   bits  8..30 per-particle RNG seed
+//   bit  31     density-roulette "disabled" flag (vertex collapses to 0 size)
+struct GpuWeatherParticle {
+    vec4 posSeed;  // xyz = world position
+};
+
+layout(buffer_reference, std430) buffer ParticleBuffer {
+    GpuWeatherParticle particles[];
+};
+
+ParticleBuffer particles = ParticleBuffer(pc.particleAddress);
+
+#define WEATHER_TYPE_SNOW    0u
+#define WEATHER_TYPE_RAIN    1u
+#define WEATHER_TYPE_DUST    2u
+#define WEATHER_TYPE_LEAVES  3u
+
+#define META_TYPE_MASK     0xFFu
+#define META_SEED_SHIFT    8u
+#define META_SEED_MASK     0x7FFFFFu
+#define META_DISABLED_BIT  0x80000000u
+
+// ── Stateless RNG (pcg1d) ─────────────────────────────────────────────
+// Deterministic per (seed, frame): nothing persists across frames.
+uint pcg1d(uint v) {
+    uint state = v * 747796405u + 2891336453u;
+    uint word  = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
+    return (word >> 22u) ^ word;
+}
+
+float rnd(inout uint state) {
+    state = pcg1d(state);
+    return float(state >> 8) * (1.0 / 16777216.0);  // 24-bit mantissa-safe
+}
+
+// ── Per-type behaviour ────────────────────────────────────────────────
+// Terminal fall speeds (m/s) from the plan's parameter table; the seed
+// jitters each particle within its band.
+float fallSpeed(uint type, uint seed) {
+    float r = rnd(seed);
+    if (type == WEATHER_TYPE_SNOW)   return mix(1.2, 2.0, r);
+    if (type == WEATHER_TYPE_RAIN)   return mix(9.0, 11.0, r);
+    if (type == WEATHER_TYPE_DUST)   return mix(0.3, 0.8, r);
+    if (type == WEATHER_TYPE_LEAVES) return mix(0.8, 1.5, r);
+    return 1.0;
+}
+
+// Seeded turbulence amplitude (m/s) before WeatherData.wind.w scaling:
+// snow sways strongly, rain barely (fast droplets), leaves flutter.
+float turbulenceAmp(uint type) {
+    if (type == WEATHER_TYPE_SNOW)   return 0.9;
+    if (type == WEATHER_TYPE_RAIN)   return 0.12;
+    if (type == WEATHER_TYPE_DUST)   return 0.35;
+    if (type == WEATHER_TYPE_LEAVES) return 1.1;
+    return 0.0;
+}
+
+// Seeded horizontal sway / flutter drifting through snoise.  The field is
+// anchored to the CAMERA-relative position, so the pattern is world-stable
+// as the camera moves (the wrap keeps `rel` continuous for stationary
+// particles) and every particle de-synchronises via its seed phase.
+vec3 turbulence(vec3 rel, uint seed, float t) {
+    float ph = float(seed) * 0.6180339887;
+    vec3 p = rel * 0.08 + vec3(ph, -t * 0.35, ph * 0.37);
+    return vec3(
+        snoise(p),
+        snoise(p.yzx * 0.7 + vec3(t * 0.11, 0.0, 0.0)) * 0.35,
+        snoise(p.zxy + vec3(0.0, ph, t * 0.07))
+    );
+}
+
+// Roll a spawn type from the (CPU-normalized) WeatherData.types weights.
+// When the weights sum to < 1 the roll falls through and the particle KEEPS
+// its old type — exactly the cross-fade-out case (old-type particles finish
+// falling as their spawn type, D2).
+uint rollType(float r, uint fallback) {
+    float c = sceneBuffer.weather.types.x;
+    if (r < c) return WEATHER_TYPE_SNOW;
+    c += sceneBuffer.weather.types.y;
+    if (r < c) return WEATHER_TYPE_RAIN;
+    c += sceneBuffer.weather.types.z;
+    if (r < c) return WEATHER_TYPE_DUST;
+    c += sceneBuffer.weather.types.w;
+    if (r < c) return WEATHER_TYPE_LEAVES;
+    return fallback;
+}
+
+// Respawn position: precipitating types re-enter spread through the UPPER
+// COLUMN (0.25–1.0 of the box half-height), not a thin top band — a narrow
+// band re-injects the population as a synchronized sheet that falls and
+// empties in visible waves ("bunch → stop → bunch").  A wide injection
+// band keeps the phase distribution flat, so the field reads as continuous
+// snowfall.  Dust spawns in a FIXED metre band around the camera (±2 m) —
+// the camera sits ~1.7 m above the ground, so a fraction of the (flattened)
+// box half-height would land below the terrain and the depth kill would
+// wipe every spawn within a frame.
+vec3 respawnRel(vec3 half3, uint type, float r0, float r1, float r2) {
+    float y = (type == WEATHER_TYPE_DUST)
+                  ? mix(-2.0, 2.0, r0)
+                  : mix(0.25, 1.0, r0) * half3.y;
+    return vec3(mix(-1.0, 1.0, r1) * half3.x,
+                y,
+                mix(-1.0, 1.0, r2) * half3.z);
+}
+
+void main() {
+    uint i = gl_GlobalInvocationID.x;
+    if (i >= pc.maxParticles) return;
+
+    GpuWeatherParticle p = particles.particles[i];
+    uint meta    = floatBitsToUint(p.posSeed.w);
+    uint type    = meta & META_TYPE_MASK;
+    uint seed    = (meta >> META_SEED_SHIFT) & META_SEED_MASK;
+    bool killed  = false;
+
+    float dt = clamp(float(sceneBuffer.time - sceneBuffer.prevTime) * 1e-3, 0.0, 0.05);
+    float t  = float(sceneBuffer.time) * 1e-3;
+    vec3  cam = sceneBuffer.cameras[0].position.xyz;
+
+    // D3: wrap into the camera-following box.  mod() keeps relative offsets,
+    // so the field looks world-stationary while the camera moves through it.
+    vec3 half3 = vec3(sceneBuffer.weather.params.x, sceneBuffer.weather.params.y, sceneBuffer.weather.params.x);
+    vec3 rel = mod(p.posSeed.xyz - cam + half3, 2.0 * half3) - half3;
+
+    // D2: analytic velocity = terminal fall + wind advection + turbulence.
+    vec3 wind = vec3(sceneBuffer.weather.wind.xy * sceneBuffer.weather.wind.z, 0.0);
+    vec3 v = vec3(0.0, -fallSpeed(type, seed) * max(sceneBuffer.weather.look.y, 0.0), 0.0)
+           + wind
+           + turbulence(rel, seed, t) * (turbulenceAmp(type) * sceneBuffer.weather.wind.w);
+    rel += v * dt;
+
+    vec3 pos = cam + rel;
+
+    // D4: ground collision against this frame's scene depth.  The water pass
+    // transitioned the depth image to shader-read before this dispatch.
+    vec4 clip = sceneBuffer.cameras[0].viewProjection * vec4(pos, 1.0);
+    if (clip.w > 1e-4) {
+        // NDC → texture uv.  The engine renders with a Y-flipped viewport
+        // (negative height), so NDC +y (screen top) is texture row 0 — the
+        // same 0.5 - y*0.5 mapping the HiZ culling shader uses.  A plain
+        // y*0.5+0.5 would sample the mirrored row and randomly kill sky
+        // particles against near ground.
+        vec2 ndc = clip.xy / clip.w;
+        vec2 uv  = vec2(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
+        if (uv.x >= 0.0 && uv.x < 1.0 && uv.y >= 0.0 && uv.y < 1.0) {
+            float d = textureLod(sampler2D(textures[pc.depthIndex],
+                                            samplers[SAMPLER_NEAREST]),
+                                 uv, 0.0).r;
+            float nearZ  = sceneBuffer.cameras[0].zNear;
+            float farZ   = sceneBuffer.cameras[0].zFar;
+            float sceneZ = (nearZ * farZ) / max(nearZ + (farZ - nearZ) * d, 1e-7);
+            // clip.w == positive view distance (RH projection): behind the
+            // stored opaque surface by > 5 cm → inside geometry → die.
+            if (clip.w > sceneZ + 0.05) killed = true;
+        }
+    }
+
+    if (killed) {
+        // D4/D5: respawn.  Fresh RNG state per (particle, frame), new type
+        // from the current weights, position in the type's entry band, and
+        // the density roulette (bit 31) against WeatherData.params.z.
+        uint state = seed ^ (sceneBuffer.cameras[0].frameIndex * 0x9E3779B9u)
+                   ^ (i * 747796405u);
+        float r0 = rnd(state);
+        float r1 = rnd(state);
+        float r2 = rnd(state);
+        float r3 = rnd(state);
+        float r4 = rnd(state);
+
+        type = rollType(r0, type);
+        seed = state & META_SEED_MASK;
+        pos = cam + respawnRel(half3, type, r1, r2, r3);
+
+        meta = type | (seed << META_SEED_SHIFT);
+        if (r4 >= sceneBuffer.weather.params.z) meta |= META_DISABLED_BIT;
+        p.posSeed = vec4(pos, uintBitsToFloat(meta));
+    } else {
+        p.posSeed = vec4(pos, p.posSeed.w);  // position only; meta unchanged
+    }
+
+    particles.particles[i] = p;
+}

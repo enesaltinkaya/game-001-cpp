@@ -1,0 +1,96 @@
+#version 460
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_nonuniform_qualifier : require
+#extension GL_ARB_shading_language_include : enable
+
+// Contact Shadow — edge-aware (depth+normal weighted) spatial denoise.
+
+#include "../../includes/utils.shader"
+#include "../../includes/globalset.shader"
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(push_constant) uniform PushConstants {
+    uint  inputIndex;
+    uint  depthIndex;
+    uint  normalIndex;
+    uint  outputIndex;
+    uint  width;
+    uint  height;
+    float nearZ;
+    float farZ;
+} pc;
+
+float linearizeDepth(float d) {
+    return (pc.nearZ * pc.farZ) / max(pc.nearZ + (pc.farZ - pc.nearZ) * d, 1e-7);
+}
+
+vec3 loadNormal(ivec2 coord) {
+    vec2 nxy = texelFetch(sampler2D(textures[nonuniformEXT(pc.normalIndex)],
+                                    samplers[SAMPLER_NEAREST]),
+                          coord, 0).rg;
+    return vec3(nxy, sqrt(max(1.0 - dot(nxy, nxy), 0.0)));
+}
+
+void main() {
+    ivec2 coord = ivec2(gl_GlobalInvocationID.xy);
+    if (coord.x >= int(pc.width) || coord.y >= int(pc.height)) return;
+
+    float centerVal = texelFetch(
+        sampler2D(textures[nonuniformEXT(pc.inputIndex)], samplers[SAMPLER_NEAREST]),
+        coord, 0).r;
+
+    float centerDepth = texelFetch(
+        sampler2D(textures[nonuniformEXT(pc.depthIndex)], samplers[SAMPLER_NEAREST]),
+        coord, 0).r;
+
+    /* Sky: pass through */
+    if (centerDepth == 0.0) {
+        imageStore(storageImages[nonuniformEXT(pc.outputIndex)], coord, vec4(1.0));
+        return;
+    }
+
+    float centerLinZ   = linearizeDepth(centerDepth);
+    vec3  centerNormal = loadNormal(coord);
+
+    float sum  = centerVal;
+    float wSum = 1.0;
+
+    const int RADIUS = 2;
+
+    for (int y = -RADIUS; y <= RADIUS; y++) {
+        for (int x = -RADIUS; x <= RADIUS; x++) {
+            if (x == 0 && y == 0) continue;
+
+            ivec2 sampleCoord = clamp(coord + ivec2(x, y),
+                                      ivec2(0), ivec2(pc.width - 1, pc.height - 1));
+
+            float sampleVal = texelFetch(
+                sampler2D(textures[nonuniformEXT(pc.inputIndex)], samplers[SAMPLER_NEAREST]),
+                sampleCoord, 0).r;
+
+            float sampleDepth = texelFetch(
+                sampler2D(textures[nonuniformEXT(pc.depthIndex)], samplers[SAMPLER_NEAREST]),
+                sampleCoord, 0).r;
+
+            if (sampleDepth == 0.0) continue;
+
+            float sampleLinZ   = linearizeDepth(sampleDepth);
+            vec3  sampleNormal = loadNormal(sampleCoord);
+
+            float relDepthDiff = abs(centerLinZ - sampleLinZ) / max(max(centerLinZ, sampleLinZ), 1e-4);
+            float wDepth  = exp(-relDepthDiff * relDepthDiff / (0.02 * 0.02));
+            float wNormal = pow(max(dot(centerNormal, sampleNormal), 0.0), 32.0);
+
+            float dist2 = float(x * x + y * y);
+            float w = exp(-dist2 / 4.0) * wDepth * wNormal;
+
+            sum  += sampleVal * w;
+            wSum += w;
+        }
+    }
+
+    float result = sum / wSum;
+    imageStore(storageImages[nonuniformEXT(pc.outputIndex)], coord, vec4(result, 0.0, 0.0, 1.0));
+}

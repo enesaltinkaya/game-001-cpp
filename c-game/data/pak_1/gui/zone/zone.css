@@ -1,0 +1,38 @@
+body {
+  z-index: 10;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(0, 0, 0, 0);
+  font-family: "Sometype Mono";
+  pointer-events: none;
+}
+
+/* ── Zone banner ─────────────────────────────────── */
+
+#zone-banner {
+  position: absolute;
+  top: 110dp;
+  left: 0;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  pointer-events: none;
+}
+
+#zone-text {
+  font-size: 40dp;
+  letter-spacing: 2dp;
+  color: rgba(255, 238, 196, 255);
+  font-effect: glow(3px black);
+  pointer-events: none;
+}
+
+#zone-sub {
+  font-size: 15dp;
+  letter-spacing: 1dp;
+  color: rgba(210, 210, 210, 255);
+  font-effect: glow(2px black);
+  margin-top: 4dp;
+  pointer-events: none;
+}

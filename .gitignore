@@ -1,0 +1,66 @@
+# build output
+build/
+build-tsan
+
+# compiled tools
+tools/meshlet-builder
+
+# shader/pak/blender change-detection cache
+scripts/.tmp/
+
+# backup files
+*.bak
+
+# python cache
+__pycache__/
+*.pyc
+
+# editor
+*.swp
+*.swo
+
+build
+cmake-build-debug-coverage
+debug
+release
+.history
+*.log
+vgcore*
+.cache
+gltf_json.txt
+profileData
+gmon.out
+output.png
+prof.jpg
+cmake-build-debug
+perf.data
+perf.data.old
+perf.txt
+.tmp
+src.bak
+gltf-json.json
+terrain-json.txt
+dae-xml.txt
+.VSCodeCounter
+
+*.pak
+
+data_temp
+gltf-json-debug
+build-linux*
+build-win*
+out
+.aider*
+.serena
+*screenshot*
+!screenshot.md
+
+models/
+*.dat
+*.spv.debug
+*.spv.release
+tools/terrain-chunker/terrain-chunker
+
+# plan images
+.sisyphus/**/*.jpg
+.sisyphus/**/*.png

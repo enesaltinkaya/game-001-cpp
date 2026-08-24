@@ -1,0 +1,110 @@
+#version 460
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_nonuniform_qualifier : require
+#extension GL_ARB_shading_language_include : enable
+
+#include "../../includes/utils.shader"
+#include "../../includes/globalset.shader"
+
+#define DECAL_FLAG_GROUND_ONLY 1u
+#define DECAL_FLAG_EMISSIVE    2u
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+struct DecalGpu {
+    mat4 invModel;
+    vec4 color;
+    vec4 params0; // opacity, normalThreshold, edgeFeather, time
+    vec4 params1; // uvScale.xy, flags, textureId
+};
+
+layout(buffer_reference, std430) buffer DecalBufferRef {
+    DecalGpu decals[];
+};
+
+layout(push_constant) uniform PushConstants {
+    uint64_t decalsAddress;
+    uint decalCount;
+    uint sceneColorIndex;
+    uint depthIndex;
+    uint normalsIndex;
+    uint outputIndex;
+    uint width;
+    uint height;
+} pc;
+
+vec4 proceduralCircle(vec2 uv) {
+    vec2 p = uv * 2.0 - 1.0;
+    float r = length(p);
+    float ring = 1.0 - smoothstep(0.88, 0.98, r);
+    float inner = smoothstep(0.55, 0.62, r);
+    float a = ring * mix(0.22, 1.0, inner);
+    return vec4(1.0, 1.0, 1.0, a);
+}
+
+vec4 proceduralRoad(vec2 uv, vec2 uvScale) {
+    float x = abs(uv.x * 2.0 - 1.0);
+    float edge = 1.0 - smoothstep(0.62, 1.0, x);
+    float stripe = fract(uv.y * uvScale.y);
+    float grain = fract(sin(dot(floor(vec2(uv.x * 19.0, uv.y * uvScale.y * 7.0)), vec2(12.9898, 78.233))) * 43758.5453);
+    float broken = mix(0.82, 1.0, grain) * (0.92 + 0.08 * sin(stripe * 6.28318));
+    return vec4(1.0, 1.0, 1.0, edge * broken);
+}
+
+void main() {
+    ivec2 coord = ivec2(gl_GlobalInvocationID.xy);
+    if (coord.x >= int(pc.width) || coord.y >= int(pc.height)) return;
+
+    vec2 uv = (vec2(coord) + 0.5) / vec2(pc.width, pc.height);
+    float depth = texelFetch(sampler2D(textures[nonuniformEXT(pc.depthIndex)], samplers[SAMPLER_NEAREST]), coord, 0).r;
+    if (depth == 0.0) return;
+
+    vec2 unjitteredUv = uv + vec2(sceneBuffer.cameras[0].jitterX, sceneBuffer.cameras[0].jitterY);
+    vec2 ndc = vec2(unjitteredUv.x * 2.0 - 1.0, 1.0 - unjitteredUv.y * 2.0);
+    vec4 worldH = sceneBuffer.cameras[0].invViewProjectionNoJitter * vec4(ndc, depth, 1.0);
+    vec3 worldPos = worldH.xyz / worldH.w;
+
+    vec3 worldN = vec3(0.0, 1.0, 0.0);
+    if (pc.normalsIndex != 0xffffffffu) {
+        vec2 enc = texelFetch(sampler2D(textures[nonuniformEXT(pc.normalsIndex)], samplers[SAMPLER_NEAREST]), coord, 0).rg;
+        worldN = OctDecode(enc);
+    }
+
+    vec4 outCol = imageLoad(storageImages[nonuniformEXT(pc.outputIndex)], coord);
+    DecalBufferRef decalBuffer = DecalBufferRef(pc.decalsAddress);
+
+    for (uint i = 0; i < pc.decalCount; ++i) {
+        DecalGpu d = decalBuffer.decals[i];
+        vec3 local = (d.invModel * vec4(worldPos, 1.0)).xyz;
+        vec3 a = abs(local);
+        if (any(greaterThan(a, vec3(1.0)))) continue;
+
+        uint flags = uint(d.params1.z + 0.5);
+        if ((flags & DECAL_FLAG_GROUND_ONLY) != 0u && worldN.y < d.params0.y) continue;
+
+        vec2 duv = local.xz * 0.5 + 0.5;
+        vec4 texel;
+        if (d.params1.w > 4000000000.0) {
+            texel = d.params1.y > 1.5 ? proceduralRoad(duv, d.params1.xy) : proceduralCircle(duv);
+        } else {
+            uint textureId = uint(d.params1.w + 0.5);
+            texel = texture(sampler2D(textures[nonuniformEXT(textureId)], samplers[SAMPLER_LINEAR]), duv * d.params1.xy);
+        }
+
+        float distToEdge = min(min(1.0 - a.x, 1.0 - a.y), 1.0 - a.z);
+        float feather = max(d.params0.z, 0.0001);
+        float edge = smoothstep(0.0, feather, distToEdge);
+        float alpha = clamp(texel.a * d.params0.x * d.color.a * edge, 0.0, 1.0);
+        if (alpha <= 0.0001) continue;
+
+        vec3 decalRgb = texel.rgb * d.color.rgb;
+        if ((flags & DECAL_FLAG_EMISSIVE) != 0u) {
+            outCol.rgb += decalRgb * alpha;
+        } else {
+            outCol.rgb = mix(outCol.rgb, decalRgb, alpha);
+        }
+    }
+
+    imageStore(storageImages[nonuniformEXT(pc.outputIndex)], coord, outCol);
+}

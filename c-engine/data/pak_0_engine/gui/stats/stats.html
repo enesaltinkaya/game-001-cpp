@@ -1,0 +1,176 @@
+<html>
+
+<head>
+  <link type="text/rcss" href="../milligram.css" />
+  <link type="text/rcss" href="stats.css" />
+</head>
+
+<body id="stats">
+  <div class="container" data-model="stats">
+    <div class="row">
+
+      <div class="column align">
+        <div style="color:yellow;font-weight: bold;">TIMER</div>
+        <div style="min-height: 1dp;border-bottom: 1dp;margin-top:2dp;margin-bottom:3dp;"></div>
+
+        <div class="row">
+          <div class="column">fps</div>
+          <div class="column">{{format(fps,2)}}</div>
+        </div>
+        <div class="row">
+          <div class="column">elapsedFull</div>
+          <div class="column">{{format(elapsedFull/1000000,2)}}</div>
+        </div>
+        <div class="row">
+          <div class="column">elapsed</div>
+          <div class="column">{{format(elapsed/1000000,2)}}</div>
+        </div>
+        <div style="min-height: 10dp;"></div>
+        <div class="row">
+          <div class="column">ups</div>
+          <div class="column">{{format(ups,2)}}</div>
+        </div>
+        <div class="row">
+          <div class="column">dt</div>
+          <div class="column">{{format(dt,4)}}</div>
+        </div>
+        <div style="min-height: 10dp;"></div>
+        <div class="row">
+          <div class="column">time</div>
+          <div class="column">{{format(time/1000000000,0)}}</div>
+        </div>
+        <div class="row">
+          <div class="column">frame</div>
+          <div class="column">{{frame}}</div>
+        </div>
+        <div style="min-height: 10dp;"></div>
+
+        <div style="color:yellow;font-weight: bold;">RENDERER</div>
+        <div style="min-height: 1dp;border-bottom: 1dp;margin-top:2dp;margin-bottom:3dp;"></div>
+
+        <div class="row">
+          <div class="column">renderer</div>
+          <div class="column">{{isVulkan ? 'Vulkan' : 'OpenGL'}}</div>
+        </div>
+        <div class="row">
+          <div class="column">drawCalls</div>
+          <div class="column">{{drawCalls}}</div>
+        </div>
+        <div class="row">
+          <div class="column">instanceCount</div>
+          <div class="column">{{instanceCount}}</div>
+        </div>
+        <div class="row">
+          <div class="column">triangleCount</div>
+          <div class="column">{{triangleCount}}</div>
+        </div>
+        <div class="row">
+          <div class="column">vsync</div>
+          <div class="column">{{vsync?'yes':'no'}}</div>
+        </div>
+        <div class="row">
+          <div class="column">fpsLimit</div>
+          <div class="column">{{fpsLimit}}</div>
+        </div>
+        <div class="row">
+          <div class="column">swapchainImages</div>
+          <div class="column">{{swapchainImages}}</div>
+        </div>
+        <div class="row">
+          <div class="column">framesInFlight</div>
+          <div class="column">{{framesInFlight}}</div>
+        </div>
+
+
+        <div style="min-height: 10dp;"></div>
+
+        <div style="color:yellow;font-weight: bold;">SETTINGS</div>
+        <div style="min-height: 1dp;border-bottom: 1dp;margin-top:2dp;margin-bottom:3dp;"></div>
+
+        <div class="row">
+          <div class="column">windowScale</div>
+          <div class="column">{{format(windowScale,2)}}</div>
+        </div>
+        <div class="row">
+          <div class="column">uiScale</div>
+          <div class="column">{{format(uiScale,2)}}</div>
+        </div>
+        <div class="row">
+          <div class="column">width</div>
+          <div class="column">{{width}}</div>
+        </div>
+        <div class="row">
+          <div class="column">height</div>
+          <div class="column">{{height}}</div>
+        </div>
+
+        <div style="min-height: 10dp;"></div>
+        <div class="row">
+          <div class="column">heap</div>
+          <div class="column">{{heap}}mb</div>
+        </div>
+        <div class="row">
+          <div class="column">gpu</div>
+          <div class="column">{{gpuName}}</div>
+        </div>
+
+      </div>
+
+
+      <div class="column align" style="margin-left: 20dp;">
+        <div style="color:yellow;font-weight: bold;">CPU</div>
+        <div style="min-height: 1dp;border-bottom: 1dp;margin-top:2dp;margin-bottom:3dp;"></div>
+
+        <div class="row" data-for="it,it_index:systems">
+          <div class="column">{{systemInfo(it_index, 0, it)}}</div>
+          <div class="column">{{systemInfo(it_index, 1, it)}}</div>
+        </div>
+
+        <div style="min-height: 10dp;"></div>
+        <div class="row">
+          <div class="column">swapchain</div>
+          <div class="column">{{format(swapchainElapsed,2)}}</div>
+        </div>
+
+        <div style="min-height: 10dp;"></div>
+        <div class="row" style="font-size: 13dp; color: #008b74;font-weight: bold;">
+          <div class="column">cpu</div>
+          <div class="column">{{format(ecsCpu / 1000000,2)}}</div>
+        </div>
+        <div class="row" style="font-size: 13dp; color: #008b74;font-weight: bold;">
+          <div class="column">{{debugReleaseText}}</div>
+        </div>
+      </div>
+
+      <div class="column align" style="margin-left: 20dp;">
+        <div style="color:yellow;font-weight: bold;">GPU</div>
+        <div style="min-height: 1dp;border-bottom: 1dp;margin-top:2dp;margin-bottom:3dp;"></div>
+
+        <div class="row" style="font-weight: bold;margin-bottom: 2dp;">
+          <div class="column">pass</div>
+          <div class="column" style="text-align: center;">gpu</div>
+          <div class="column column-20" style="text-align: right;">cpu</div>
+        </div>
+
+        <div class="row" data-for="it,it_index:passes">
+          <div class="column">{{passInfo(it_index, 0, it)}}</div>
+          <div class="column" style="color:green; text-align: center;">{{passInfo(it_index, 2, it)}}</div>
+          <div class="column column-20">{{passInfo(it_index, 1, it)}}</div>
+        </div>
+
+        <div style="min-height: 10dp;"></div>
+        <div class="row" style="font-size: 13dp; color: #008b74;font-weight: bold;">
+          <div class="column">gpu</div>
+          <div class="column" style="color:green;">{{format(totalGpuTime, 2)}}</div>
+        </div>
+        <div class="row" style="font-size: 13dp; color: #008b74;font-weight: bold;">
+          <div class="column">gpu (overall)</div>
+          <div class="column" style="color:green;">{{format(overallRendererGpu / 1000000,2)}}</div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</body>
+
+</html>

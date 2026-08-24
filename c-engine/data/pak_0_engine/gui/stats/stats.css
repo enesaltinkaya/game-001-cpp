@@ -1,0 +1,26 @@
+html,
+html *,
+body,
+body * {
+  pointer-events: none;
+}
+
+body {
+  height: 100%;
+  top: 0;
+  left: 0;
+  font-family: "Jetbrains Mono";
+  font-size: 11dp;
+  font-weight: 300;
+  width: 720dp;
+  background-color: rgba(30, 30, 30, 250);
+  transition: all 0.25s cubic-out;
+  color: white;
+  padding: 1rem;
+  z-index: 25;
+}
+
+.align .column:nth-child(2),
+.align .column:nth-child(3) {
+  text-align: right;
+}

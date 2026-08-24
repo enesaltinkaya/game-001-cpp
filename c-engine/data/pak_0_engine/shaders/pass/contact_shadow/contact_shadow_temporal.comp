@@ -1,0 +1,196 @@
+#version 460
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_nonuniform_qualifier : require
+#extension GL_ARB_shading_language_include : enable
+
+// Contact Shadow — temporal accumulation with variance clipping.
+
+#include "../../includes/globalset.shader"
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(push_constant) uniform PushConstants {
+    uint  currentIndex;
+    uint  historyIndex;
+    uint  velocityIndex;
+    uint  depthIndex;
+    uint  normalIndex;
+    uint  outputIndex;
+    uint  width;
+    uint  height;
+    uint  historyValid;
+    float jitterDeltaX;
+    float jitterDeltaY;
+} pc;
+
+float linearizeDepth(float d) {
+    float N = sceneBuffer.cameras[0].zNear;
+    float F = sceneBuffer.cameras[0].zFar;
+    return (2.0 * N * F) / max((F - N) * d + N + F, 1e-7);
+}
+
+vec3 loadNormal(ivec2 coord) {
+    vec2 nxy = texelFetch(sampler2D(textures[nonuniformEXT(pc.normalIndex)],
+                                    samplers[SAMPLER_NEAREST]),
+                          coord, 0).rg;
+    return vec3(nxy, sqrt(max(1.0 - dot(nxy, nxy), 0.0)));
+}
+
+void main() {
+    ivec2 coord = ivec2(gl_GlobalInvocationID.xy);
+    if (coord.x >= int(pc.width) || coord.y >= int(pc.height)) return;
+
+    float current = texelFetch(sampler2D(textures[nonuniformEXT(pc.currentIndex)],
+                                         samplers[SAMPLER_NEAREST]),
+                               coord, 0).r;
+
+    float centerDepth = texelFetch(sampler2D(textures[nonuniformEXT(pc.depthIndex)],
+                                             samplers[SAMPLER_NEAREST]),
+                                   coord, 0).r;
+    if (centerDepth == 0.0 || pc.historyValid == 0u) {
+        imageStore(storageImages[nonuniformEXT(pc.outputIndex)], coord, vec4(current, 0.0, 0.0, 1.0));
+        return;
+    }
+
+    vec3  centerNormal = loadNormal(coord);
+    float centerLinZ   = linearizeDepth(centerDepth);
+
+    /* Closest-depth velocity dilation (3×3). */
+    float bestDepth = 0.0;
+    ivec2 bestOff   = ivec2(0);
+    for (int y = -1; y <= 1; ++y) {
+        for (int x = -1; x <= 1; ++x) {
+            ivec2 sc = clamp(coord + ivec2(x, y),
+                             ivec2(0), ivec2(int(pc.width) - 1, int(pc.height) - 1));
+            float d = texelFetch(sampler2D(textures[nonuniformEXT(pc.depthIndex)],
+                                           samplers[SAMPLER_NEAREST]),
+                                 sc, 0).r;
+            if (d > bestDepth) {
+                bestDepth = d;
+                bestOff   = ivec2(x, y);
+            }
+        }
+    }
+
+    ivec2 velCoord = clamp(coord + bestOff,
+                           ivec2(0), ivec2(int(pc.width) - 1, int(pc.height) - 1));
+    vec2 velocity = texelFetch(sampler2D(textures[nonuniformEXT(pc.velocityIndex)],
+                                         samplers[SAMPLER_NEAREST]),
+                               velCoord, 0).rg;
+
+    vec2 size = vec2(pc.width, pc.height);
+    vec2 uv = (vec2(coord) + 0.5) / size;
+    vec2 historyUV = uv - velocity / size +
+                     vec2(pc.jitterDeltaX, pc.jitterDeltaY);
+
+    if (historyUV.x < 0.0 || historyUV.x > 1.0 || historyUV.y < 0.0 || historyUV.y > 1.0) {
+        imageStore(storageImages[nonuniformEXT(pc.outputIndex)], coord, vec4(current, 0.0, 0.0, 1.0));
+        return;
+    }
+
+    ivec2 historyCoord = clamp(ivec2(historyUV * size),
+                               ivec2(0), ivec2(int(pc.width) - 1, int(pc.height) - 1));
+
+    float historyDepth = texelFetch(sampler2D(textures[nonuniformEXT(pc.depthIndex)],
+                                              samplers[SAMPLER_NEAREST]),
+                                    historyCoord, 0).r;
+    if (historyDepth == 0.0) {
+        imageStore(storageImages[nonuniformEXT(pc.outputIndex)], coord, vec4(current, 0.0, 0.0, 1.0));
+        return;
+    }
+
+    vec3  historyNormal = loadNormal(historyCoord);
+    float historyLinZ   = linearizeDepth(historyDepth);
+    float relDepthDiff  = abs(centerLinZ - historyLinZ) / max(max(centerLinZ, historyLinZ), 1e-4);
+    float normalMatch   = dot(centerNormal, historyNormal);
+
+    float history = texture(sampler2D(textures[nonuniformEXT(pc.historyIndex)],
+                                      samplers[SAMPLER_CLAMP_LINEAR]),
+                            historyUV).r;
+
+    /* Neighbourhood variance clamp (3×3). */
+    float valMin   = current;
+    float valMax   = current;
+    float valSum   = current;
+    float valSqSum = current * current;
+    for (int y = -1; y <= 1; ++y) {
+        for (int x = -1; x <= 1; ++x) {
+            if (x == 0 && y == 0) continue;
+            ivec2 sc = clamp(coord + ivec2(x, y),
+                             ivec2(0), ivec2(int(pc.width) - 1, int(pc.height) - 1));
+            float sv = texelFetch(sampler2D(textures[nonuniformEXT(pc.currentIndex)],
+                                            samplers[SAMPLER_NEAREST]),
+                                  sc, 0).r;
+            valMin    = min(valMin, sv);
+            valMax    = max(valMax, sv);
+            valSum   += sv;
+            valSqSum += sv * sv;
+        }
+    }
+
+    float speed = length(velocity);
+
+    /* ── Thin-geometry detection (depth gradient). */
+    float depthGrad = 0.0;
+    for (int y = -1; y <= 1; ++y) {
+        for (int x = -1; x <= 1; ++x) {
+            if (x == 0 && y == 0) continue;
+            ivec2 sc = clamp(coord + ivec2(x, y),
+                             ivec2(0), ivec2(int(pc.width) - 1, int(pc.height) - 1));
+            float sd = texelFetch(sampler2D(textures[nonuniformEXT(pc.depthIndex)],
+                                            samplers[SAMPLER_NEAREST]),
+                                  sc, 0).r;
+            if (sd > 0.0) {
+                float sLinZ = linearizeDepth(sd);
+                depthGrad += abs(centerLinZ - sLinZ);
+            }
+        }
+    }
+    depthGrad /= 8.0;
+    float isThinGeometry = smoothstep(0.02, 0.1, depthGrad / max(centerLinZ, 1e-4));
+
+    /* ── Edge pixel detection (alpha-cutout boundary). */
+    float edgeWeight = 0.0;
+    for (int y = -1; y <= 1; ++y) {
+        for (int x = -1; x <= 1; ++x) {
+            if (x == 0 && y == 0) continue;
+            ivec2 sc = clamp(coord + ivec2(x, y),
+                             ivec2(0), ivec2(int(pc.width) - 1, int(pc.height) - 1));
+            float sd = texelFetch(sampler2D(textures[nonuniformEXT(pc.depthIndex)],
+                                            samplers[SAMPLER_NEAREST]),
+                                  sc, 0).r;
+            if (sd == 0.0) {
+                edgeWeight += 1.0;
+            }
+        }
+    }
+    /* Only treat as edge if: (a) clear edge signal AND (b) thin geometry.
+     * Prevents false positives on horizon lines or terrain boundaries. */
+    float isEdge = smoothstep(0.0, 0.5, edgeWeight / 8.0) * smoothstep(0.3, 0.8, isThinGeometry);
+
+    float valMean     = valSum / 9.0;
+    float valVariance = max(valSqSum / 9.0 - valMean * valMean, 0.0);
+    float valSigma    = sqrt(valVariance);
+    float gamma       = mix(1.0, 2.5, smoothstep(0.5, 4.0, speed));
+    float varMin      = max(valMean - gamma * valSigma, valMin);
+    float varMax      = min(valMean + gamma * valSigma, valMax);
+
+    history = clamp(history, varMin, varMax);
+
+    float disocclusion = smoothstep(0.01, 0.06, relDepthDiff) +
+                         (1.0 - smoothstep(0.80, 0.95, normalMatch));
+    disocclusion = clamp(disocclusion, 0.0, 1.0);
+    /* Reduce disocclusion for thin geometry and edge pixels. */
+    disocclusion *= mix(1.0, 0.3, isThinGeometry);
+    disocclusion *= mix(1.0, 0.1, isEdge);
+
+    /* Use aggressive blending for thin/edge geometry to suppress shimmer. */
+    float baseBlend = mix(0.03, 0.015, isThinGeometry);
+    float velocityWeight = smoothstep(0.5, 4.0, speed) * 0.12;
+    float blend = max(baseBlend, disocclusion + velocityWeight);
+    blend = min(blend, 0.15);  /* hard cap */
+
+    float result = mix(history, current, clamp(blend, 0.0, 1.0));
+    imageStore(storageImages[nonuniformEXT(pc.outputIndex)], coord, vec4(clamp(result, 0.0, 1.0), 0.0, 0.0, 1.0));
+}

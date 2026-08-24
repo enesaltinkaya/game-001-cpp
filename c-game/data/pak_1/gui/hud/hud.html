@@ -1,0 +1,124 @@
+<html>
+
+<head>
+  <link type="text/rcss" href="hud.css" />
+</head>
+
+<body>
+  <div data-model="hud">
+    <div id="stats">
+      <div id="level-label">LVL {{ level }}</div>
+      <div id="hp-container">
+        <div id="hp-fill" data-style-width="(hpPercent * 100 + '%')"></div>
+      </div>
+      <div id="hp-text">{{ hp }} / {{ maxHp }}</div>
+      <div id="mana-container">
+        <div id="mana-fill" data-style-width="(manaPercent * 100 + '%')"></div>
+      </div>
+      <div id="mana-text">{{ mana }} / {{ maxMana }}</div>
+      <div id="xp-container">
+        <div id="xp-fill" data-style-width="(xpPercent * 100 + '%')"></div>
+      </div>
+
+      <div id="xp-container">
+        <div id="xp-fill" data-style-width="(xpPercent * 100 + '%')"></div>
+      </div>
+    </div>
+
+    <div id="damage-numbers">
+      <div class="dmg-num" id="dmg0" data-style-left="(dmg0X + 'px')" data-style-top="(dmg0Y + 'px')" data-style-opacity="dmg0Alpha" data-style-color="dmg0Color">{{ dmg0Text }}</div>
+      <div class="dmg-num" id="dmg1" data-style-left="(dmg1X + 'px')" data-style-top="(dmg1Y + 'px')" data-style-opacity="dmg1Alpha" data-style-color="dmg1Color">{{ dmg1Text }}</div>
+      <div class="dmg-num" id="dmg2" data-style-left="(dmg2X + 'px')" data-style-top="(dmg2Y + 'px')" data-style-opacity="dmg2Alpha" data-style-color="dmg2Color">{{ dmg2Text }}</div>
+      <div class="dmg-num" id="dmg3" data-style-left="(dmg3X + 'px')" data-style-top="(dmg3Y + 'px')" data-style-opacity="dmg3Alpha" data-style-color="dmg3Color">{{ dmg3Text }}</div>
+      <div class="dmg-num" id="dmg4" data-style-left="(dmg4X + 'px')" data-style-top="(dmg4Y + 'px')" data-style-opacity="dmg4Alpha" data-style-color="dmg4Color">{{ dmg4Text }}</div>
+      <div class="dmg-num" id="dmg5" data-style-left="(dmg5X + 'px')" data-style-top="(dmg5Y + 'px')" data-style-opacity="dmg5Alpha" data-style-color="dmg5Color">{{ dmg5Text }}</div>
+      <div class="dmg-num" id="dmg6" data-style-left="(dmg6X + 'px')" data-style-top="(dmg6Y + 'px')" data-style-opacity="dmg6Alpha" data-style-color="dmg6Color">{{ dmg6Text }}</div>
+      <div class="dmg-num" id="dmg7" data-style-left="(dmg7X + 'px')" data-style-top="(dmg7Y + 'px')" data-style-opacity="dmg7Alpha" data-style-color="dmg7Color">{{ dmg7Text }}</div>
+    </div>
+
+    <div id="enemy-health-bars">
+      <div class="ehp-wrap" id="ehp0" data-style-left="(ehp0X + 'px')" data-style-top="(ehp0Y + 'px')" data-style-opacity="ehp0Alpha">
+        <div class="ehp-bg">
+          <div class="ehp-fill" id="ehp0fill" data-style-width="(ehp0Percent * 100 + '%')"></div>
+        </div>
+      </div>
+      <div class="ehp-wrap" id="ehp1" data-style-left="(ehp1X + 'px')" data-style-top="(ehp1Y + 'px')" data-style-opacity="ehp1Alpha">
+        <div class="ehp-bg">
+          <div class="ehp-fill" id="ehp1fill" data-style-width="(ehp1Percent * 100 + '%')"></div>
+        </div>
+      </div>
+      <div class="ehp-wrap" id="ehp2" data-style-left="(ehp2X + 'px')" data-style-top="(ehp2Y + 'px')" data-style-opacity="ehp2Alpha">
+        <div class="ehp-bg">
+          <div class="ehp-fill" id="ehp2fill" data-style-width="(ehp2Percent * 100 + '%')"></div>
+        </div>
+      </div>
+      <div class="ehp-wrap" id="ehp3" data-style-left="(ehp3X + 'px')" data-style-top="(ehp3Y + 'px')" data-style-opacity="ehp3Alpha">
+        <div class="ehp-bg">
+          <div class="ehp-fill" id="ehp3fill" data-style-width="(ehp3Percent * 100 + '%')"></div>
+        </div>
+      </div>
+      <div class="ehp-wrap" id="ehp4" data-style-left="(ehp4X + 'px')" data-style-top="(ehp4Y + 'px')" data-style-opacity="ehp4Alpha">
+        <div class="ehp-bg">
+          <div class="ehp-fill" id="ehp4fill" data-style-width="(ehp4Percent * 100 + '%')"></div>
+        </div>
+      </div>
+      <div class="ehp-wrap" id="ehp5" data-style-left="(ehp5X + 'px')" data-style-top="(ehp5Y + 'px')" data-style-opacity="ehp5Alpha">
+        <div class="ehp-bg">
+          <div class="ehp-fill" id="ehp5fill" data-style-width="(ehp5Percent * 100 + '%')"></div>
+        </div>
+      </div>
+      <div class="ehp-wrap" id="ehp6" data-style-left="(ehp6X + 'px')" data-style-top="(ehp6Y + 'px')" data-style-opacity="ehp6Alpha">
+        <div class="ehp-bg">
+          <div class="ehp-fill" id="ehp6fill" data-style-width="(ehp6Percent * 100 + '%')"></div>
+        </div>
+      </div>
+      <div class="ehp-wrap" id="ehp7" data-style-left="(ehp7X + 'px')" data-style-top="(ehp7Y + 'px')" data-style-opacity="ehp7Alpha">
+        <div class="ehp-bg">
+          <div class="ehp-fill" id="ehp7fill" data-style-width="(ehp7Percent * 100 + '%')"></div>
+        </div>
+      </div>
+      <div class="ehp-wrap" id="ehp8" data-style-left="(ehp8X + 'px')" data-style-top="(ehp8Y + 'px')" data-style-opacity="ehp8Alpha">
+        <div class="ehp-bg">
+          <div class="ehp-fill" id="ehp8fill" data-style-width="(ehp8Percent * 100 + '%')"></div>
+        </div>
+      </div>
+      <div class="ehp-wrap" id="ehp9" data-style-left="(ehp9X + 'px')" data-style-top="(ehp9Y + 'px')" data-style-opacity="ehp9Alpha">
+        <div class="ehp-bg">
+          <div class="ehp-fill" id="ehp9fill" data-style-width="(ehp9Percent * 100 + '%')"></div>
+        </div>
+      </div>
+      <div class="ehp-wrap" id="ehp10" data-style-left="(ehp10X + 'px')" data-style-top="(ehp10Y + 'px')" data-style-opacity="ehp10Alpha">
+        <div class="ehp-bg">
+          <div class="ehp-fill" id="ehp10fill" data-style-width="(ehp10Percent * 100 + '%')"></div>
+        </div>
+      </div>
+      <div class="ehp-wrap" id="ehp11" data-style-left="(ehp11X + 'px')" data-style-top="(ehp11Y + 'px')" data-style-opacity="ehp11Alpha">
+        <div class="ehp-bg">
+          <div class="ehp-fill" id="ehp11fill" data-style-width="(ehp11Percent * 100 + '%')"></div>
+        </div>
+      </div>
+      <div class="ehp-wrap" id="ehp12" data-style-left="(ehp12X + 'px')" data-style-top="(ehp12Y + 'px')" data-style-opacity="ehp12Alpha">
+        <div class="ehp-bg">
+          <div class="ehp-fill" id="ehp12fill" data-style-width="(ehp12Percent * 100 + '%')"></div>
+        </div>
+      </div>
+      <div class="ehp-wrap" id="ehp13" data-style-left="(ehp13X + 'px')" data-style-top="(ehp13Y + 'px')" data-style-opacity="ehp13Alpha">
+        <div class="ehp-bg">
+          <div class="ehp-fill" id="ehp13fill" data-style-width="(ehp13Percent * 100 + '%')"></div>
+        </div>
+      </div>
+      <div class="ehp-wrap" id="ehp14" data-style-left="(ehp14X + 'px')" data-style-top="(ehp14Y + 'px')" data-style-opacity="ehp14Alpha">
+        <div class="ehp-bg">
+          <div class="ehp-fill" id="ehp14fill" data-style-width="(ehp14Percent * 100 + '%')"></div>
+        </div>
+      </div>
+      <div class="ehp-wrap" id="ehp15" data-style-left="(ehp15X + 'px')" data-style-top="(ehp15Y + 'px')" data-style-opacity="ehp15Alpha">
+        <div class="ehp-bg">
+          <div class="ehp-fill" id="ehp15fill" data-style-width="(ehp15Percent * 100 + '%')"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+
+</html>

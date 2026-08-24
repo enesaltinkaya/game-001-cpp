@@ -1,0 +1,195 @@
+#version 460
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_nonuniform_qualifier : require
+#extension GL_ARB_shading_language_include : enable
+
+#include "../../includes/utils.shader"
+#include "../../includes/globalset.shader"
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(push_constant) uniform PushConstants {
+    uint sceneColorIndex;
+    uint ssrColorIndex;
+    uint depthIndex;
+    uint normalsIndex;
+    uint materialIndex;
+    uint outputImageIndex;
+    uint volumetricColorIndex;
+    uint weatherMaskIndex;   // 0xFFFFFFFF = no weather pass / no mask
+    uint aoIndex;            // 0xFFFFFFFF = AO disabled / no output
+    uint width;
+    uint height;
+} pc;
+
+void main() {
+    ivec2 coord = ivec2(gl_GlobalInvocationID.xy);
+    if (coord.x >= int(pc.width) || coord.y >= int(pc.height)) return;
+
+    vec2 uv = (vec2(coord) + 0.5) / vec2(pc.width, pc.height);
+
+    // ── 1. Sample SceneColor ─────────────────────────────────────────────
+    vec3 sceneCol = texture(
+        sampler2D(textures[nonuniformEXT(pc.sceneColorIndex)], samplers[SAMPLER_CLAMP_LINEAR]),
+        uv).rgb;
+
+    // ── 2. Sample depth ──────────────────────────────────────────────────
+    float depth = texelFetch(
+        sampler2D(textures[nonuniformEXT(pc.depthIndex)], samplers[SAMPLER_NEAREST]),
+        coord, 0).r;
+
+    bool isSky = (depth == 0.0);
+
+    // Camera submersion: 1 below the water surface, fading to 0 over a small
+    // band above it so the effect doesn't pop as waves undulate.
+    float waterSurfaceY = sceneBuffer.water.surfaceY.x;
+    float underwater = 1.0 - smoothstep(waterSurfaceY, waterSurfaceY + 1.0,
+                                        sceneBuffer.cameras[0].position.y);
+
+    // ── 3. Geometry path (material, normals, SSR, reflections) ───────────
+    vec3 composite = sceneCol;
+    vec3 worldPos  = vec3(0.0);  // valid for non-sky, used by screen-space fog
+    if (!isSky) {
+        vec4 matSample = texelFetch(
+            sampler2D(textures[nonuniformEXT(pc.materialIndex)], samplers[SAMPLER_NEAREST]),
+            coord, 0);
+        float roughness = matSample.r;
+        float metallic  = matSample.g;
+
+        vec2 normEnc = texelFetch(
+            sampler2D(textures[nonuniformEXT(pc.normalsIndex)], samplers[SAMPLER_NEAREST]),
+            coord, 0).rg;
+        vec3 worldN = OctDecode(normEnc);
+
+        vec3 F0 = mix(vec3(0.04), vec3(1.0), metallic);
+
+        // ── 4. Reconstruct world position ────────────────────────────────
+        vec2 unjitteredUv = uv + vec2(sceneBuffer.cameras[0].jitterX,
+                                        sceneBuffer.cameras[0].jitterY);
+        vec2 ndc    = vec2(unjitteredUv.x * 2.0 - 1.0, 1.0 - unjitteredUv.y * 2.0);
+        vec4 worldH = sceneBuffer.cameras[0].invViewProjectionNoJitter * vec4(ndc, depth, 1.0);
+        worldPos = worldH.xyz / worldH.w;
+
+        vec3 V      = normalize(sceneBuffer.cameras[0].position.xyz - worldPos);
+        float NdotV = max(dot(worldN, V), 0.0);
+
+        // ── 5. Sample SSR (nearest to avoid silhouette bleed) ────────────
+        vec3 ssrColor = vec3(0.0);
+        float ssrConfidence = 0.0;
+        {
+            ivec2 ssrSize = textureSize(
+                sampler2D(textures[nonuniformEXT(pc.ssrColorIndex)], samplers[SAMPLER_CLAMP_NEAREST]),
+                0);
+            ivec2 ssrCoord = clamp(ivec2(uv * vec2(ssrSize)), ivec2(0), ssrSize - ivec2(1));
+            vec4 ssrSample = texelFetch(
+                sampler2D(textures[nonuniformEXT(pc.ssrColorIndex)], samplers[SAMPLER_CLAMP_NEAREST]),
+                ssrCoord,
+                0);
+            ssrColor    = ssrSample.rgb;
+            ssrConfidence = ssrSample.a;
+        }
+
+        // ── 6. Reflection blend weight ───────────────────────────────────
+        vec3 F_max = max(vec3(1.0 - roughness), F0);
+        vec3 fresnel = F0 + (F_max - F0) * pow(1.0 - NdotV, 5.0);
+
+        float wetness = 1.0 - smoothstep(0.05, 0.25, roughness);
+        float wetMinRefl = wetness * 0.45;
+        fresnel = max(fresnel, vec3(wetMinRefl));
+
+        float roughFade = 1.0 - smoothstep(0.06, 0.25, roughness);
+
+        vec3 reflColor = ssrColor;
+        float reflConfidence = ssrConfidence;
+        float reflRoughFade = roughFade;
+
+        vec3 reflBlend = fresnel * reflConfidence * reflRoughFade;
+
+        // ── 7. Base composite (direct lighting + reflections) ────────────
+        composite = sceneCol * (1.0 - reflBlend) + reflBlend * reflColor;
+
+        // ── 7b. Ambient occlusion (CACAO) ───────────────────────────────
+        // Applied before fog (step 8) so fogged geometry fades to the fog
+        // colour instead of staying dark.  0 = fully occluded, 1 = open.
+        if (pc.aoIndex != 0xFFFFFFFFu) {
+            float aoFactor = texelFetch(
+                sampler2D(textures[nonuniformEXT(pc.aoIndex)],
+                          samplers[SAMPLER_CLAMP_NEAREST]),
+                coord, 0).r;
+            composite *= aoFactor;
+        }
+    }
+
+    // ── 8. Fog (geometry only — skybox is the backdrop) ─────────────────
+    if (sceneBuffer.fog.fogType != 0 && !isSky && underwater < 0.5) {
+        float dist = length(worldPos - sceneBuffer.cameras[0].position.xyz);
+        float fogFactor = calculateFogFactor(
+            sceneBuffer.fog.fogStartDistance,
+            sceneBuffer.fog.fogType,
+            sceneBuffer.fog.fogDensity,
+            dist
+        );
+
+        // Height modulation
+        if (sceneBuffer.fog.fogHeightEnabled != 0) {
+            float h = worldPos.y - sceneBuffer.fog.fogHeightBase;
+            float heightFactor = exp(-max(h, 0.0) * sceneBuffer.fog.fogHeightFalloff);
+            fogFactor *= mix(1.0, heightFactor, sceneBuffer.fog.fogHeightDensity);
+        }
+
+        fogFactor = clamp(fogFactor, 0.0, 1.0);
+
+        // Weather particles are blended into the scene colour before this
+        // pass and already carry their OWN distance-based fog.  This block
+        // fogs by SCENE depth — the surface BEHIND the particle — so over
+        // far, fully-fogged geometry (fogFactor ≈ 1) it would erase the
+        // particle entirely: leaves read as falling behind the fogged
+        // tree line instead of in front of it.  The weather pass' coverage
+        // mask marks the pixels a (visible) particle occupies; skip the
+        // fog in proportion to that coverage.
+        if (pc.weatherMaskIndex != 0xFFFFFFFFu) {
+            float particleCov = texelFetch(
+                sampler2D(textures[nonuniformEXT(pc.weatherMaskIndex)],
+                          samplers[SAMPLER_NEAREST]),
+                coord, 0).r;
+            fogFactor *= 1.0 - particleCov;
+        }
+
+        composite = mix(composite, sceneBuffer.fog.fogColor.rgb, fogFactor);
+    }
+
+    // ── 8b. Underwater tint + fog ──────────────────────────────────────
+    // When the camera is submerged, shift the whole scene toward the water
+    // colour and apply a short-range exponential fog so distance reads as
+    // murky water instead of air. Density grows with submersion depth so
+    // the deeper you sink, the shorter the visibility.
+    if (underwater > 0.001) {
+        float dist = isSky ? 1.0e4
+                           : length(worldPos - sceneBuffer.cameras[0].position.xyz);
+        float subDepth = max(0.0, waterSurfaceY - sceneBuffer.cameras[0].position.y);
+        float density  = 0.045 + subDepth * 0.002;
+        float uf = clamp(1.0 - exp(-dist * density), 0.0, 1.0);
+
+        vec3 waterCol = mix(sceneBuffer.water.deepColor.rgb,
+                            sceneBuffer.water.shallowColor.rgb, 0.5);
+        vec3 submerged = mix(composite, waterCol, uf);
+        // Persistent tint even right at the camera, so close geometry reads
+        // as submerged rather than dry.
+        submerged = mix(submerged, waterCol, 0.35);
+        composite = mix(composite, submerged, underwater);
+    }
+
+    // ── 9. Volumetric lighting (god rays) ───────────────────────────────
+    if (pc.volumetricColorIndex != 0u) {
+        vec3 godRays = texture(
+            sampler2D(textures[nonuniformEXT(pc.volumetricColorIndex)],
+                      samplers[SAMPLER_CLAMP_LINEAR]),
+            uv).rgb;
+        composite += godRays;
+    }
+
+    // ── 10. Output ───────────────────────────────────────────────────────
+    imageStore(storageImages[nonuniformEXT(pc.outputImageIndex)],
+               coord, vec4(composite, 1.0));
+}

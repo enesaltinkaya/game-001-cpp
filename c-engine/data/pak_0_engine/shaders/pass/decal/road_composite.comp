@@ -1,0 +1,37 @@
+#version 460
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_nonuniform_qualifier : require
+#extension GL_ARB_shading_language_include : enable
+
+#include "../../includes/utils.shader"
+#include "../../includes/globalset.shader"
+
+// Composites the road "union" layer (RGB = constant road color, A = coverage,
+// already deduped so overlaps don't accumulate) onto the scene color buffer.
+// Runs as a compute pass so it can read+write sceneColor via a storage image
+// (sampling the live render target inside the same raster pass is a feedback
+// loop and not allowed).
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(push_constant) uniform PushConstants {
+    uint roadLayerIndex;    // sampled
+    uint sceneColorIndex;   // storage image, read+write
+    uint width;
+    uint height;
+} pc;
+
+void main() {
+    ivec2 coord = ivec2(gl_GlobalInvocationID.xy);
+    if (coord.x >= int(pc.width) || coord.y >= int(pc.height)) return;
+
+    vec4 road = texelFetch(sampler2D(textures[nonuniformEXT(pc.roadLayerIndex)],
+                                     samplers[SAMPLER_NEAREST]),
+                           coord, 0);
+    if (road.a <= 0.0001) return;
+
+    vec4 scene = imageLoad(storageImages[nonuniformEXT(pc.sceneColorIndex)], coord);
+    vec3 result = mix(scene.rgb, road.rgb, road.a);
+    imageStore(storageImages[nonuniformEXT(pc.sceneColorIndex)], coord, vec4(result, scene.a));
+}

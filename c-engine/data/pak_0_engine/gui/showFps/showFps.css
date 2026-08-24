@@ -1,0 +1,15 @@
+body {
+  font-family: "Sometype Mono";
+  font-size: 12dp;
+  z-index: 20;
+  padding: 1rem;
+  padding-top: 0.5rem;
+  /* font-effect: glow(4dp black); */
+  /* font-effect: shadow(3dp 3dp black); */
+  font-effect: glow(3px black);
+  flex-direction: column;
+
+  pointer-events: none;
+  tab-index: none;
+  nav: none;
+}

@@ -1,0 +1,208 @@
+#include "Utils.h"
+#include "ecs/Ecs.h"
+#include "ecs/system/System.h"
+#include "ecs/system/camera/Camera.h"
+#include "ecs/system/window/WindowSystem.h"
+#include "ecs/system/camera/CameraSystem.h"
+#include "events/Events.h"
+#include "renderer/Renderer.h"
+#include "renderer/vulkan2/Vlk.h"
+#include "renderer/vulkan2/barrier/VlkBarrier.h"
+#include "renderer/vulkan2/command/VulkanCommand.h"
+#include "renderer/vulkan2/pipeline/VlkProfile.h"
+#include "renderer/vulkan2/resources/VlkResourceManager.h"
+#include "renderer/vulkan2/scene/vlkterrain/VlkTerrain.h"
+#include "timer/Timer.h"
+
+static void added(void);
+static void preUpdate(void);
+static void postUpdate(void);
+static void removed(void);
+
+static void swapchainCreated(void* _);
+static void createPipelines(void);
+static void createDescs(void);
+
+static void addDepthBias(void);
+static void calculateSSS(void);
+static void blurSSS(void);
+
+System vlkScreenSpaceShadowPass = {
+    .name       = "ss shadow",
+    .added      = added,
+    .preUpdate  = preUpdate,
+    .postUpdate = postUpdate,
+    .removed    = removed,
+};
+
+static VlkPipe pipelineDepthBias, pipelineSSS, pipelineBlur;
+
+static void added(void) {
+    createDescs();
+    createPipelines();
+    eventSubscribe(EVENT_SWAPCHAIN_CREATED, swapchainCreated);
+}
+
+static struct {
+    int colorImage;
+    int depthImage;
+    int outputImage;
+    float heightScale;
+} depthBiasPushConstant;
+
+static struct {
+    vec3 lightDir;       // Direction TOWARDS the light (World Space)
+    float shadowLength;  // Max ray length (World Space)
+    float thickness;     // Surface thickness (View Space / Linear Z units)
+    u32 steps;           // Linear steps (e.g. 8-16)
+    float jitter;        // Jitter strength (0.0 - 1.0)
+    int sssDepthImage;
+    int sssImageOut;
+} sssPushConstant;
+
+static void preUpdate(void) {
+    vlkResetProfile(vlk.currentCmd, &pipelineDepthBias.profile, 0);
+    vlkResetProfile(vlk.currentCmd, &pipelineSSS.profile, 0);
+    // vlkResetProfile(vlk.currentCmd, &pipelineBlur.profile, 0);
+}
+
+static void postUpdate(void) {
+    if (vlk.skipFrame) {
+        return;
+    }
+    if (isDebug()) {
+        vlkLabelBegin(vlk.currentCmd, "screen-space shadow");
+    }
+
+    vlkTransition(vlk.currentCmd, &vlkResources.gbuffer[renderer.flightIndex].sssDepthImage, VLK_LAYOUT_GENERAL, 0, 1);
+    addDepthBias();
+    vlkTransition(vlk.currentCmd, &vlkResources.gbuffer[renderer.flightIndex].sssDepthImage, VLK_LAYOUT_SHADER_READ, 0, 1);
+
+    vlkTransition(vlk.currentCmd, &vlkResources.gbuffer[renderer.flightIndex].sssImage, VLK_LAYOUT_GENERAL, 0, 1);
+    calculateSSS();
+    vlkTransition(vlk.currentCmd, &vlkResources.gbuffer[renderer.flightIndex].sssImage, VLK_LAYOUT_SHADER_READ, 0, 1);
+
+    // blurSSS();
+
+    if (isDebug()) {
+        vlkLabelEnd(vlk.currentCmd);
+    }
+}
+
+static void removed(void) {
+    vlkDestroyPipe(&pipelineDepthBias);
+    vlkDestroyPipe(&pipelineSSS);
+    vlkDestroyPipe(&pipelineBlur);
+}
+
+void createPipelines(void) {
+    pipelineDepthBias = vlkCreatePipe(.name = "sssDepthBias",  //
+                                      .comp = "shaders/utils/screenSpaceShadows/spv/depthBias.comp.spv");
+    pipelineSSS       = vlkCreatePipe(.name = "heretic",  //
+                                .comp = "shaders/utils/screenSpaceShadows/spv/heretic.comp.spv");
+
+    //     pipelineBlur = vlkCreatePipe(.name = "sss",  //
+    //                                  .comp = "shaders/utils/blur/spv/blur.comp.spv");
+}
+
+void addDepthBias(void) {
+    Command* cmd      = vlk.currentCmd;
+    int group_size_x = 16;
+    int group_size_y = 16;
+    int dispatch_x   = (window.width + group_size_x - 1) / group_size_x;
+    int dispatch_y   = (window.height + group_size_y - 1) / group_size_y;
+
+    depthBiasPushConstant.colorImage  = vlkResources.gbuffer[renderer.flightIndex].colorImage.sampledPoolIndex;
+    depthBiasPushConstant.depthImage  = vlkResources.gbuffer[renderer.flightIndex].depthImage.sampledPoolIndex;
+    depthBiasPushConstant.outputImage = vlkResources.gbuffer[renderer.flightIndex].sssDepthImage.storagePoolIndex;
+    depthBiasPushConstant.heightScale = 1.0;
+
+    vlkBeginProfile(cmd, &pipelineDepthBias.profile, 0);
+    vlkBindPipe(cmd, &pipelineDepthBias);
+    vlkPush(cmd, &pipelineDepthBias, sizeof(depthBiasPushConstant), &depthBiasPushConstant);
+    vlkDispatch(cmd, dispatch_x, dispatch_y, 1);
+    vlkEndProfile(cmd, &pipelineDepthBias.profile, 0);
+}
+
+float interleavedGradientNoise(u32 x, u32 y, u32 frameCount) {
+    float xx = (float)x + 5.588238f * (float)(frameCount % 16);
+    float yy = (float)y + 5.588238f * (float)(frameCount % 16);
+    return fmodf(52.9829189f * fmodf(0.06711056f * xx + 0.00583715f * yy, 1.0f), 1.0f);
+}
+
+void calculateSSS(void) {
+    Command* cmd      = vlk.currentCmd;
+    u32 cameraEntity = cameraGetEntity();
+    Camera* camera   = component(Camera, cameraEntity);
+
+    vec3 dir = {1, 1, 1};
+    glm_vec3_normalize(dir);
+
+    sssPushConstant.lightDir[0]  = dir[0];
+    sssPushConstant.lightDir[1]  = dir[1];
+    sssPushConstant.lightDir[2]  = dir[2];
+    sssPushConstant.shadowLength = 2.0;
+    sssPushConstant.thickness    = 0.25;
+    sssPushConstant.steps        = 20;
+    // sssPushConstant.jitter       = interleavedGradientNoise(timer.frameCounter % (u64)camera->cameraUbo.viewPort[0],
+    //                                                   timer.frameCounter % (u64)camera->cameraUbo.viewPort[1],
+                                                    //   timer.frameCounter);
+    sssPushConstant.jitter       = 0.5;
+
+    sssPushConstant.sssDepthImage = vlkResources.gbuffer[renderer.flightIndex].depthImage.sampledPoolIndex;
+    sssPushConstant.sssImageOut   = vlkResources.gbuffer[renderer.flightIndex].sssImage.storagePoolIndex;
+
+    vlkBeginProfile(cmd, &pipelineSSS.profile, 0);
+    vlkBindPipe(cmd, &pipelineSSS);
+    vlkPush(cmd, &pipelineSSS, sizeof(sssPushConstant), &sssPushConstant);
+    u32 dispatch_x = (camera->cameraUbo.viewPort[0] + 7) / 8;
+    u32 dispatch_y = (camera->cameraUbo.viewPort[1] + 7) / 8;
+    vlkDispatch(cmd, dispatch_x, dispatch_y, 1);
+
+    vlkEndProfile(cmd, &pipelineSSS.profile, 0);
+    vlkScreenSpaceShadowPass.gpuElapsed = pipelineSSS.profile.elapsed + pipelineDepthBias.profile.elapsed;
+}
+
+void blurSSS(void) {
+    struct {
+        vec2 direction;
+        vec2 imageSize;
+    } blurPushConstant;
+
+    Command* cmd = vlk.currentCmd;
+
+    vlkTransition(vlk.currentCmd, &vlkResources.gbuffer[renderer.flightIndex].sssTemp, VLK_LAYOUT_GENERAL, 0, 1);
+
+    int dispatch_x = (window.width + 7) / 8;
+    int dispatch_y = (window.height + 7) / 8;
+
+    blurPushConstant.imageSize[0] = window.width;
+    blurPushConstant.imageSize[1] = window.height;
+
+    vlkBeginProfile(cmd, &pipelineBlur.profile, 0);
+    vlkBindPipe(cmd, &pipelineBlur);
+
+    {
+        blurPushConstant.direction[0] = 1.0f;
+        blurPushConstant.direction[1] = 0.0f;
+        vlkPush(cmd, &pipelineBlur, sizeof(blurPushConstant), &blurPushConstant);
+        vlkDispatch(cmd, dispatch_x, dispatch_y, 1);
+    }
+
+    vlkTransition(vlk.currentCmd, &vlkResources.gbuffer[renderer.flightIndex].sssTemp, VLK_LAYOUT_SHADER_READ, 0, 1);
+    vlkTransition(vlk.currentCmd, &vlkResources.gbuffer[renderer.flightIndex].sssImage, VLK_LAYOUT_GENERAL, 0, 1);
+
+    {
+        blurPushConstant.direction[0] = 0.0f;
+        blurPushConstant.direction[1] = 1.0f;
+        vlkPush(cmd, &pipelineBlur, sizeof(blurPushConstant), &blurPushConstant);
+        vlkDispatch(cmd, dispatch_x, dispatch_y, 1);
+    }
+    vlkEndProfile(cmd, &pipelineBlur.profile, 0);
+
+    vlkTransition(vlk.currentCmd, &vlkResources.gbuffer[renderer.flightIndex].sssImage, VLK_LAYOUT_SHADER_READ, 0, 1);
+}
+
+void createDescs(void) {}
+
+void swapchainCreated(void* _) {}

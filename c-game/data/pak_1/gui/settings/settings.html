@@ -1,0 +1,48 @@
+<html>
+
+<head>
+    <link type="text/rcss" href="../milligram.css" />
+    <link type="text/rcss" href="settings.css" />
+    <script src="settings.lua"></script>
+    <script src="../global.lua"></script>
+</head>
+
+<body id="settings" onkeydown="settingsKeyDown(event)" onload="documentInit(element)">
+
+    <div class="main">
+        <div class="top">
+            <span>Settings</span>
+        </div>
+
+        <div class="middle">
+
+            <div id="settingsMenuContainer" class="tab currentTab">
+                <div class="buttonContainer">
+                    <button id="first" autofocus onclick="showAudioSettings()">
+                        <div>AUDIO</div>
+                    </button>
+
+                    <button onclick="showVideoSettings()">
+                        <div>VIDEO</div>
+                    </button>
+
+                    <button onclick="showGraphicsSettings()">
+                        <div>GRAPHICS</div>
+                    </button>
+
+                    <button class="disabled">
+                        <div>KEYBINDINGS</div>
+                    </button>
+
+                    <button id="last" onclick="settingsClose()">
+                        <div>BACK</div>
+                    </button>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+</body>
+
+</html>

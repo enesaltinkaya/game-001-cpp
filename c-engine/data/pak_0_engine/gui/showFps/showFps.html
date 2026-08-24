@@ -1,0 +1,49 @@
+<html>
+
+<head>
+  <link type="text/rcss" href="../milligram.css" />
+  <link type="text/rcss" href="showFps.css" />
+  <script src="showFps.lua"></script>
+</head>
+
+<body id="showFps" data-model="showFps" onload="showFpsOnLoad(document)" disabled>
+  <div class="row">
+    <div style="width:50dp; text-align: right;">
+      fps:
+    </div>
+    <div>
+      {{ format(fps, 2) }}
+    </div>
+  </div>
+  <div class="row">
+    <div style="width:50dp; text-align: right;">
+      frame:
+    </div>
+    <div>
+      {{ format(elapsedCpuTotal / 1000000, 2) }} ms
+    </div>
+  </div>
+  <div class="row">
+    <div style="width:50dp; text-align: right;">
+      cpu:
+    </div>
+    <div>
+      {{ format(elapsedCpu / 1000000, 2) }} ms
+    </div>
+  </div>
+  <div class="row">
+    <div style="width:50dp; text-align: right;">
+      gpu:
+    </div>
+    <div style="color:green;">
+      {{ format(elapsedGpu / 1000000, 2) }} ms
+    </div>
+  </div>
+</body>
+
+</html>
+
+<!-- <div style="text-align: right;"> fps : {{ format(fps, 2) }} fps</div> -->
+<!-- <div style="text-align: right;">frame: {{ format(elapsedCpuTotal / 1000000, 2) }} ms</div> -->
+<!-- <div style="text-align: right;">cpu : {{ format(elapsedCpu / 1000000, 2) }} ms</div> -->
+<!-- <div style="text-align: right;">gpu : {{ format(elapsedCpu / 1000000, 2) }} ms</div> -->

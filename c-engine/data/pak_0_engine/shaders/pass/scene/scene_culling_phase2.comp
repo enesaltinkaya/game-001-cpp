@@ -1,0 +1,182 @@
+#version 460
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_buffer_reference : require
+#extension GL_ARB_shading_language_include : enable
+
+layout(local_size_x = 64) in;
+
+layout(push_constant) uniform PushConstants {
+    uint64_t drawInstanceBufferAddress;
+    uint64_t visibilityBufferAddress;
+    uint64_t transformBufferAddress;
+    uint64_t indirectBufferAddress;
+    uint64_t culledBufferAddress;
+    uint64_t drawCountBufferAddress;
+    uint64_t dsIndirectBufferAddress;
+    uint64_t dsCulledBufferAddress;
+    uint64_t dsDrawCountBufferAddress;
+    uint maxDrawInstances;
+    uint hizTextureIndex;
+};
+
+#include "../../includes/utils.shader"
+#include "../../includes/globalset.shader"
+
+TransformBufferRef transformBuffer = TransformBufferRef(transformBufferAddress);
+
+#define DRAW_FLAG_DOUBLE_SIDED 1u
+#define DRAW_FLAG_TRANSPARENT  2u
+
+struct GpuDrawInstance {
+    uint firstIndex;
+    uint indexCount;
+    int vertexOffset;
+    uint entity;
+    uint materialId;
+    uint flags;
+    uint _pad0;
+    uint _pad1;
+    vec4 boundingSphere;
+};
+
+struct DrawIndexedCommand {
+    uint indexCount;
+    uint instanceCount;
+    uint firstIndex;
+    int vertexOffset;
+    uint firstInstance;
+};
+
+layout(buffer_reference, std430) buffer DrawInstanceBuffer {
+    GpuDrawInstance instances[];
+};
+
+layout(buffer_reference, std430) buffer VisibilityBuffer {
+    uint flags[];
+};
+
+layout(buffer_reference, std430) buffer IndirectBuffer {
+    DrawIndexedCommand commands[];
+};
+
+layout(buffer_reference, std430) buffer CulledBuffer {
+    uint culledIndices[];
+};
+
+layout(buffer_reference, std430) buffer DrawCountBuffer {
+    uint count;
+};
+
+void main() {
+    uint instanceIndex = gl_GlobalInvocationID.x;
+    if (instanceIndex >= maxDrawInstances) return;
+
+    // Only retry occlusion rejects (flag == 2)
+    VisibilityBuffer visBuf = VisibilityBuffer(visibilityBufferAddress);
+    if (visBuf.flags[instanceIndex] != 2u) return;
+
+    DrawInstanceBuffer instBuf = DrawInstanceBuffer(drawInstanceBufferAddress);
+    GpuDrawInstance inst = instBuf.instances[instanceIndex];
+
+    // Transform bounding sphere to world space
+    Transform transform = transformBuffer.transforms[inst.entity];
+    vec3 worldCenter = transformVertex(inst.boundingSphere.xyz,
+                                       transform.pos.xyz,
+                                       transform.rot,
+                                       vec3(transform.pos.w));
+    float worldRadius = inst.boundingSphere.w * abs(transform.pos.w);
+
+    // HiZ test using current frame's early HiZ
+    if (hizTextureIndex != 0xFFFFFFFF) {
+        mat4 viewProj = sceneBuffer.cameras[0].viewProjection;
+
+        vec3 boundsMin = worldCenter - vec3(worldRadius);
+        vec3 boundsMax = worldCenter + vec3(worldRadius);
+
+        vec4 corners[8] = {
+            vec4(boundsMin.x, boundsMin.y, boundsMin.z, 1.0),
+            vec4(boundsMax.x, boundsMin.y, boundsMin.z, 1.0),
+            vec4(boundsMin.x, boundsMax.y, boundsMin.z, 1.0),
+            vec4(boundsMax.x, boundsMax.y, boundsMin.z, 1.0),
+            vec4(boundsMin.x, boundsMin.y, boundsMax.z, 1.0),
+            vec4(boundsMax.x, boundsMin.y, boundsMax.z, 1.0),
+            vec4(boundsMin.x, boundsMax.y, boundsMax.z, 1.0),
+            vec4(boundsMax.x, boundsMax.y, boundsMax.z, 1.0)
+        };
+
+        vec2 minXY          = vec2(1.0);
+        vec2 maxXY          = vec2(-1.0);
+        float nearestZ      = 0.0;
+        bool crossNearPlane = false;
+
+        for (int i = 0; i < 8; i++) {
+            vec4 clip = viewProj * corners[i];
+            if (clip.w <= 0.0) {
+                crossNearPlane = true;
+                break;
+            }
+
+            vec3 ndc = clip.xyz / clip.w;
+            minXY    = min(minXY, ndc.xy);
+            maxXY    = max(maxXY, ndc.xy);
+            nearestZ = max(nearestZ, ndc.z);
+        }
+
+        if (!crossNearPlane) {
+            vec2 uvMin = vec2(minXY.x * 0.5 + 0.5, maxXY.y * -0.5 + 0.5);
+            vec2 uvMax = vec2(maxXY.x * 0.5 + 0.5, minXY.y * -0.5 + 0.5);
+
+            uvMin = clamp(uvMin, 0.0, 1.0);
+            uvMax = clamp(uvMax, 0.0, 1.0);
+
+            vec2 size      = (uvMax - uvMin) * sceneBuffer.cameras[0].viewport;
+            float mipLevel = ceil(log2(max(max(size.x, size.y), 1.0))) + 1.0;
+
+            float d0 = textureLod(sampler2D(textures[hizTextureIndex], samplers[SAMPLER_NEAREST]), vec2(uvMin.x, uvMin.y), mipLevel).r;
+            float d1 = textureLod(sampler2D(textures[hizTextureIndex], samplers[SAMPLER_NEAREST]), vec2(uvMax.x, uvMin.y), mipLevel).r;
+            float d2 = textureLod(sampler2D(textures[hizTextureIndex], samplers[SAMPLER_NEAREST]), vec2(uvMin.x, uvMax.y), mipLevel).r;
+            float d3 = textureLod(sampler2D(textures[hizTextureIndex], samplers[SAMPLER_NEAREST]), vec2(uvMax.x, uvMax.y), mipLevel).r;
+
+            float minHiZ = min(min(d0, d1), min(d2, d3));
+
+            if (nearestZ < minHiZ) {
+                return;  // still occluded
+            }
+        }
+    }
+
+    // Skip transparent objects in phase 2. Dynamic camera occluders are
+    // rendered by the OIT path in phase 1, not as opaque late draws.
+    bool isTransparent = ((inst.flags & DRAW_FLAG_TRANSPARENT) != 0u) ||
+                         cameraOccluderAlpha(inst.entity) < CAMERA_OCCLUDER_ACTIVE_ALPHA;
+    if (isTransparent) return;
+
+    // Classify: only opaque single-sided and double-sided
+    bool isDoubleSided = (inst.flags & DRAW_FLAG_DOUBLE_SIDED) != 0u;
+
+    uint64_t targetIndirectAddr;
+    uint64_t targetCulledAddr;
+    uint64_t targetDrawCountAddr;
+
+    if (isDoubleSided) {
+        targetIndirectAddr  = dsIndirectBufferAddress;
+        targetCulledAddr    = dsCulledBufferAddress;
+        targetDrawCountAddr = dsDrawCountBufferAddress;
+    } else {
+        targetIndirectAddr  = indirectBufferAddress;
+        targetCulledAddr    = culledBufferAddress;
+        targetDrawCountAddr = drawCountBufferAddress;
+    }
+
+    uint visibleIndex = atomicAdd(DrawCountBuffer(targetDrawCountAddr).count, 1);
+
+    CulledBuffer culledBuf               = CulledBuffer(targetCulledAddr);
+    culledBuf.culledIndices[visibleIndex] = instanceIndex;
+
+    IndirectBuffer indirectBuf = IndirectBuffer(targetIndirectAddr);
+    indirectBuf.commands[visibleIndex].indexCount    = inst.indexCount;
+    indirectBuf.commands[visibleIndex].instanceCount = 1;
+    indirectBuf.commands[visibleIndex].firstIndex    = inst.firstIndex;
+    indirectBuf.commands[visibleIndex].vertexOffset  = inst.vertexOffset;
+    indirectBuf.commands[visibleIndex].firstInstance  = 0;
+}

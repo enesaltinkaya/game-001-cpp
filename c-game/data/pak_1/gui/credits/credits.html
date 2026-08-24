@@ -1,0 +1,51 @@
+<html>
+
+<head>
+  <link type="text/rcss" href="../milligram.css" />
+  <link type="text/rcss" href="credits.css" />
+  <script src="credits.lua"></script>
+  <script src="../global.lua"></script>
+</head>
+
+<body id="settings" onkeydown="creditsKeyDown(event)" onload="documentInit(element)">
+
+  <div class="main">
+    <div class="top">
+      <span>Credits</span>
+    </div>
+
+    <div class="middle">
+      C Programming Language by <b>Dennis Ritchie</b>	&nbsp;
+      <p> </p>
+      Featuring Music by <b>Matthew Pablo</b> - matthewpablo.com
+      Mesh Optimizer and Volk by <b>Arseny Kapoulkine</b> - github.com/zeux/meshoptimizer github.com/zeux/volk
+      RmlUi by <b>Michael R. P. Ragazzon</b> - github.com/mikke89/RmlUi
+      Dear ImGui by <b>Omar Cornut</b> - github.com/ocornut/imgui
+      Cimgui by <b>Victor Bombi</b> - github.com/cimgui/cimgui
+      Cgltf by <b>Johannes Kuhlmann</b> - github.com/jkuhlmann/cgltf
+      Cglm by <b>Recep Aslantaş</b> - github.com/recp/cglm
+      Json-c by <b>Eric Hawicz</b> - github.com/json-c/json-c
+      SoLoud by <b>Jari Komppa</b> - github.com/jarikomppa/soloud
+      Jolt Physics by <b>Jorrit Rouwe</b> - github.com/jrouwe/JoltPhysics
+      SDL by <b>SDL Devs libsdl.org/credits.php</b> - github.com/libsdl-org/SDL
+      STB libraries by <b>Sean Barrett</b> - github.com/nothings/stb
+      VulkanMemoryAllocator by <b>AMD</b> - github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator
+      Buddy Allocator by <b>Stanislav Paskalev</b> - github.com/spaskalev/buddy_alloc
+      OpenEXR by <b>Academy Software Foundation</b> - github.com/AcademySoftwareFoundation/openexr
+      <p></p>
+      Portions of this software are copyright © 2024 The FreeType Project (www.freetype.org).
+      <p></p>
+      Thank you!
+    </div>
+    <div class="bottom" onclick="creditsClose()">
+      <div class="buttonContainer">
+        <button onclick="creditsClose()" autofocus>
+          <div>BACK</div>
+        </button>
+      </div>
+    </div>
+  </div>
+
+</body>
+
+</html>
