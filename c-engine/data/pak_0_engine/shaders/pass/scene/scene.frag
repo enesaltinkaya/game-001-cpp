@@ -133,9 +133,10 @@ void main() {
     vec3 kD = (1.0 - kS) * (1.0 - metallic);
     vec3 Lo = (kD * baseColor.rgb / PI + specular) * lightColor * NdotL * shadow;
 
-    // No ambient / IBL: shadowed areas are pure black; only direct light
-    // (sun + Forward+ point/spot) reaches the surface.
-    vec3 color = Lo;
+    // Fixed slight ambient (from the sun UBO): lifts shadowed areas just
+    // above black.  Scaled by kD for energy conservation with specular.
+    vec3 ambient = dirLight.ambient.rgb;
+    vec3 color   = Lo + ambient * kD * baseColor.rgb;
 
     // Forward+ point/spot lights
     vec3 T_aniso = vec3(0.0);
