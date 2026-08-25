@@ -141,7 +141,17 @@ void main() {
     float displace = 0.2 * shoreNoise * lineProx;
     float dryT     = smoothstep(0.0, 0.05, terrainPos.y - waterY);
     float shoreY   = waterY + displace * (1.0 - dryT) + min(displace, 0.0) * dryT;
-    if (terrainPos.y > shoreY + 0.05) discard;
+    // Hard cull over dry land, keyed to the *undisturbed* sea level: the
+    // meander/foam/fade banding only ever shapes the water-side edge.  The old
+    // test (terrain > displaced line + 0.05) let the animated film — ripples,
+    // shore foam, shallow tint — bleed up to ~0.5 m *above* sea level onto
+    // dry sand, ghosting a moving water sheet over the beach and over the
+    // player character standing on it (their pixels reconstruct to
+    // character height ≈ sea level, inside the old band).  Any pixel whose
+    // surface (terrain, or the character in front of it) is at or above
+    // sea level gets no water at all: the animation runs only where the
+    // terrain is genuinely submerged.
+    if (terrainPos.y >= waterY) discard;
 
     vec3 N = normalize(inWorldNormal);
     vec3 V = normalize(sceneBuffer.cameras[0].position.xyz - inWorldPos);
