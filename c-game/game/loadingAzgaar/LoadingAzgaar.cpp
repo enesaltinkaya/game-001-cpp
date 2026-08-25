@@ -449,6 +449,19 @@ static void loadingAzgaarStartLoad(void* _) {
     // so the grid is centred on the player's actual position.
     azgaarSnapPlayerToTerrain();
 
+    // TEMP (beach test): log terrain height at the saved player position vs
+    // sea level, so we know whether the parked beach is dry or submerged.
+    {
+        engine::Transform dbgSaved;
+        engine::transformDbInit();
+        if (engine::transformDbLoad("player", &dbgSaved)) {
+            float dbgH = azgaarHeightmapSrc.vtable.heightAt(&azgaarHeightmapSrc, dbgSaved.pos[0], dbgSaved.pos[2]);
+            utils::info("TEMP beach test: player xz=(%.2f, %.2f) terrainH=%.3f seaLevel=%.3f -> %s",
+                        dbgSaved.pos[0], dbgSaved.pos[2], dbgH, azgaarSeaLevelMeters(&azgaarWorld),
+                        dbgH >= azgaarSeaLevelMeters(&azgaarWorld) ? "DRY" : "SUBMERGED");
+        }
+    }
+
     i32 centerTileX;
     i32 centerTileZ;
     float spawnX;

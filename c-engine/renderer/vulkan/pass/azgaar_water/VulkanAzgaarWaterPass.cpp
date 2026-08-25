@@ -263,6 +263,27 @@ void VulkanAzgaarWaterPass::update() {
     Camera* cam       = camEntity ? getComponent(camEntity->scene, Camera, camEntity->id) : NULL;
     if (!cam) return;
 
+    // TEMP-DEBUG: dump camera UBO for offline depth-buffer decoding.
+    if (getenv("ENGINE_DBG_CAMUBO")) {
+        static bool printed = false;
+        if (!printed) {
+            printed = true;
+            for (int r = 0; r < 4; r++)
+                utils::info("DBG view r%d: %.5f %.5f %.5f %.5f",
+                            r, cam->cameraUbo.view[0][r], cam->cameraUbo.view[1][r],
+                            cam->cameraUbo.view[2][r], cam->cameraUbo.view[3][r]);
+            for (int r = 0; r < 4; r++)
+                utils::info("DBG invView r%d: %.5f %.5f %.5f %.5f",
+                            r, cam->cameraUbo.invView[0][r], cam->cameraUbo.invView[1][r],
+                            cam->cameraUbo.invView[2][r], cam->cameraUbo.invView[3][r]);
+            for (int r = 0; r < 4; r++)
+                utils::info("DBG proj r%d: %.5f %.5f %.5f %.5f",
+                            r, cam->cameraUbo.projection[0][r], cam->cameraUbo.projection[1][r],
+                            cam->cameraUbo.projection[2][r], cam->cameraUbo.projection[3][r]);
+            utils::info("DBG znear=%.4f zfar=%.4f", cam->znear, cam->zfar);
+        }
+    }
+
     // The depth buffer is no longer a render attachment here, so it can be
     // sampled as a texture.  Ensure it is in SHADER_READ_ONLY_OPTIMAL.
     vulkanTransition(cmd, depthImage, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);

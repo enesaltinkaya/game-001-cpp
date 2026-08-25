@@ -106,23 +106,45 @@ static void recreatePipelines(void) {
 
     // Azgaar water depth/velocity pre-pass: animated water surface needs
     // motion vectors for FSR. Uses a water-specific vertex shader that
-    // reproduces the camera-snapped grid and wave displacement.
+    // reproduces the camera-snapped grid, the depth-attenuated wave
+    // displacement and the color pass' dry-land cull (depth-buffer
+    // sampling + fragment early-out), so the swell never leaks onto the
+    // beach or the player character.
+    //
+    // It runs in its OWN render pass (see update()): no depth attachment —
+    // the scene depth buffer is sampled as a texture in the VS/FS, which is
+    // only possible once it is no longer this pass' depth attachment.
+    // The velocity / view-normal attachments are LOADed (no clears): the
+    // scene / heightmap / props pre-passes already wrote their motion
+    // vectors; water only overwrites the pixels where it is actually drawn.
     waterDepthPipe = vulkanCreatePipe(
         .name               = "azgaar_water_depth_prepass",
         .vs                 = "shaders/pass/azgaar_water/spv/azgaar_water_depth.vert.spv",
         .fs                 = "shaders/pass/azgaar_water/spv/azgaar_water_depth.frag.spv",
         .colorFormat1       = VK_FORMAT_R16G16_SFLOAT,
         .colorFormat2       = VK_FORMAT_R16G16_SNORM,
-        .depthFormat        = VK_FORMAT_D32_SFLOAT,
-        .depthFormat        = VK_FORMAT_D32_SFLOAT,
+        .clearColor1        = {0, 0, 0, 0}, .clearColor1Enabled = 0,
+        .clearColor2        = {0, 0, 0, 0}, .clearColor2Enabled = 0,
         .noCull             = 1,
-        .depthTestOnly      = 1,
-        .depthCompareOp     = VK_COMPARE_OP_GREATER_OR_EQUAL,
         .vertexAttributes   = terrainVertexAttrs,
         .vertexAttributeCount = 4,
         .vertexBindings     = &sceneVertexBinding,
         .vertexBindingCount = 1);
 }
+
+// Must match the GLSL WaterPushConstants in azgaar_water_depth.vert/.frag
+// (identical payload to the color pass' WaterPushConstants).
+typedef struct WaterDepthPushConstants {
+    u32 depthIndex;
+    u32 width;
+    u32 height;
+    float nearZ;
+    float farZ;
+    float projM00;
+    float projM11;
+    float projM20;
+    float projM21;
+} WaterDepthPushConstants;
 
 void VulkanDepthPass::added() {
     utils::signalSubscribe("swapchainCreated", swapchainCreated);
@@ -276,30 +298,13 @@ Entity* camEntity = cameraGetEntity();
     bool hasWater = vulkanAzgaarWaterGetGpuMesh(&waterVbo, &waterIbo,
                                                 &waterVertexCount, &waterIndexCount);
 
-    if (cam && (hasWater || heightmapBackend)) {
+    if (cam && heightmapBackend) {
         // Heightmap terrain (Azgaar world): the heightmap pass renders
         // its implicit grid into the same depth/velocity/view-normal
         // attachments with its own pre-pass pipe (per-tile height textures),
         // so downstream passes and FSR see the heightmap surface. This gives
         // FSR valid per-pixel motion vectors without a full-mesh terrain.
-        if (heightmapBackend) {
-            vulkanHeightmapTerrainDrawPrepass();
-        }
-
-        // Azgaar water needs motion vectors for FSR; render the animated grid
-        // into the velocity / view-normal attachments using a water-specific
-        // depth/velocity shader that reproduces the vertex displacement.
-        // Skipped entirely when no water can be on screen (disabled,
-        // underwater camera, or frustum fully above the sea plane).
-        if (hasWater && vulkanAzgaarWaterIsVisible()) {
-            vulkanBindPipe(cmd, &waterDepthPipe);
-            vulkanBindVertex(cmd, waterVbo, 0, NULL, 0, NULL, 0);
-            vulkanBindIndex(cmd, waterIbo, 0, VK_INDEX_TYPE_UINT32);
-            // Water grid is a single draw; depth test is kept to avoid writing
-            // over opaque geometry, but depth writes are disabled in the
-            // waterDepthPipe's depth state to match the water render pass.
-            vkCmdDrawIndexed(cmd->cmd, waterIndexCount, 1, 0, 0, 0);
-        }
+        vulkanHeightmapTerrainDrawPrepass();
     }
 
     // Azgaar props need motion vectors for FSR; the prepass renders the
@@ -311,7 +316,84 @@ Entity* camEntity = cameraGetEntity();
 
     vulkanEndRender(cmd);
 
+    // ── Azgaar water depth/velocity (own render pass) ────────────────────
+    // The water surface' motion vectors must match the surface the color
+    // pass displays: the same depth-attenuated swell and the same
+    // "only where water is drawn" dry-land early-out.  Both need the scene
+    // depth buffer as a *sampled texture*, so the water pre-pass runs in
+    // its own render pass (no depth attachment) after the depth buffer is
+    // fully populated by the scene / heightmap / props draws above.
+    // Skipped entirely when no water can be on screen (disabled,
+    // underwater camera, or frustum fully above the sea plane).
+    if (cam && hasWater && vulkanAzgaarWaterIsVisible()) {
+        // Depth buffer: attachment (write) → sampled texture (read).
+        // The transition barrier's dst stages (fragment/compute) do not
+        // cover the vertex stage, and the water VS also samples the depth
+        // buffer (terrainHeightAt for the swell attenuation): make the
+        // depth writes of the pass above explicitly visible to the VS.
+        {
+            VkMemoryBarrier2 depthReadBarrier = {};
+            depthReadBarrier.sType            = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2;
+            depthReadBarrier.srcStageMask     = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT |
+                                                VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
+            depthReadBarrier.srcAccessMask    = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+            depthReadBarrier.dstStageMask     = VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT |
+                                                VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
+            depthReadBarrier.dstAccessMask    = VK_ACCESS_2_SHADER_READ_BIT;
+
+            VkDependencyInfo depthReadDep = {};
+            depthReadDep.sType            = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+            depthReadDep.memoryBarrierCount = 1;
+            depthReadDep.pMemoryBarriers  = &depthReadBarrier;
+            vkCmdPipelineBarrier2(cmd->cmd, &depthReadDep);
+        }
+        vulkanTransition(cmd, depthImage, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
+
+        // Velocity / view-normal: LOAD the data the previous pre-passes
+        // wrote; water overwrites only its own (submerged) pixels.
+        vulkanBeginRender(.cmd = cmd,
+                          .pipe = &waterDepthPipe,
+                          .color1 = velocityImage,
+                          .color2 = viewNormalImage);
+
+        vulkanViewport(cmd, 0, depthImage->extent.height, depthImage->extent.width,
+                       -((i32)depthImage->extent.height));
+        vulkanScissor(cmd, 0, 0, depthImage->extent.width, depthImage->extent.height);
+
+        vulkanBindPipe(cmd, &waterDepthPipe);
+        vulkanBindVertex(cmd, waterVbo, 0, NULL, 0, NULL, 0);
+        vulkanBindIndex(cmd, waterIbo, 0, VK_INDEX_TYPE_UINT32);
+
+        // Same push-constant payload the color pass pushes: lets the VS/FS
+        // sample the scene depth and reconstruct the terrain height exactly
+        // like azgaar_water.vert/.frag (jitter-corrected projection).
+        WaterDepthPushConstants pc = {
+            .depthIndex = (u32)depthImage->sampledPoolIndex,
+            .width      = depthImage->extent.width,
+            .height     = depthImage->extent.height,
+            .nearZ      = cam->znear,
+            .farZ       = cam->zfar,
+            .projM00    = cam->cameraUbo.projection[0][0],
+            .projM11    = cam->cameraUbo.projection[1][1],
+            .projM20    = cam->cameraUbo.projection[2][0],
+            .projM21    = cam->cameraUbo.projection[2][1],
+        };
+        vulkanPush(cmd, &waterDepthPipe, sizeof(pc), &pc);
+
+        vkCmdDrawIndexed(cmd->cmd, waterIndexCount, 1, 0, 0, 0);
+
+        vulkanEndRender(cmd);
+
+        // Restore the layout contract downstream pre-passes rely on: the
+        // HiZ and occlusion passes hardcode the scene-depth transition
+        // ATTACHMENT → SHADER_READ (raw barriers, bypassing the VulkanImage
+        // layout tracker), so the depth image must be back in
+        // DEPTH_STENCIL_ATTACHMENT_OPTIMAL once the water pre-pass is done.
+        vulkanTransition(cmd, depthImage, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, 0, 1);
+    }
+
     // Depth + color attachment write -> subsequent read barrier
+    // (covers both the scene/terrain/props pass and the water pre-pass).
     VkMemoryBarrier2 barriers[2] = {
         {
             .sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
