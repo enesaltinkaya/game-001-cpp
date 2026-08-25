@@ -24,10 +24,13 @@
 namespace engine {
 
 /* AMD FidelityFX Lens — grain / vignette / chromatic aberration, applied in
- * the DISPLAY-REFERRED domain (sRGB-encoded LDR), after the Final pass and
+ * the DISPLAY-REFERRED domain (sRGB-encoded LDR), after the LPM pass and
  * before any UI:
  *
- *   Final (unchanged) -> LensInput (SRGB attachment, auto-encoded)
+ *   LPM (compute): LpmInput (R16F HDR) -> LpmOutput (UNORM, LPM's LDR
+ *                  display mode gamma-encodes) — the tone/gamut mapper
+ *   blit:         LpmOutput -> LensInput (SRGB attachment, auto-encoded
+ *                  bytes; the LPM pass does this blit)
  *   Lens dispatch: LensInput (SRV, auto-decoded to linear) -> LensOutput
  *                  (UNORM storage, linear bytes)
  *   blit LensOutput -> swapchain (format-aware: swizzle + sRGB encode)
@@ -114,14 +117,16 @@ static void createImages(void) {
     if (window.width <= 0 || window.height <= 0) {
         return;
     }
-    /* SRGB so the Final pass's attachment store encodes — same contract as
-     * the swapchain, so Final uses its regular (unchanged) pipeline. */
+    /* SRGB so the LPM pass's blit stores sRGB-encoded bytes — same
+     * contract as the swapchain. TRANSFER_DST: the LPM pass blits its
+     * display-referred output into this image. */
     lensInput =
         vulkanCreateImage(.name   = "LensInput",
                           .format = VK_FORMAT_B8G8R8A8_SRGB,
                           .usage  = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
                                    VK_IMAGE_USAGE_SAMPLED_BIT |
-                                   VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+                                   VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+                                   VK_IMAGE_USAGE_TRANSFER_DST_BIT,
                           .width  = window.width,
                           .height = window.height);
     lensOutput =
@@ -136,7 +141,9 @@ static void createImages(void) {
     outputHeight = (u32)window.height;
 
     VulkanCommand* cmd = vulkanTransientBegin();
-    vulkanTransition(cmd, &lensInput, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, 0, 1);
+    /* The LPM pass blits into the lens input (TRANSFER_DST); the lens
+     * dispatch reads it (SHADER_READ_ONLY). */
+    vulkanTransition(cmd, &lensInput, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 0, 1);
     vulkanTransition(cmd, &lensOutput, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
     vulkanTransientEnd(cmd, 1);
     utils::info("vulkanLensPass: created intermediates %ux%u", outputWidth, outputHeight);
@@ -267,8 +274,8 @@ void VulkanLensPass::update() {
 
     VulkanCommand* cmd = vulkan.currentCmd;
 
-    /* Final rendered into lensInput (COLOR_ATTACHMENT_OPTIMAL); stage for
-     * the compute read, and the UAV target to GENERAL. */
+    /* LPM blitted its display-referred output into lensInput (TRANSFER_DST);
+     * stage it for the compute read, and the UAV target to GENERAL. */
     vulkanTransition(cmd, &lensInput, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
     vulkanTransition(cmd, &lensOutput, VK_IMAGE_LAYOUT_GENERAL, 0, 1);
 
@@ -305,12 +312,11 @@ void VulkanLensPass::update() {
     vulkanBlit(cmd, &lensOutput, swapImage);
     vulkanTransition(cmd, swapImage, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, 0, 1);
 
-    /* Put lensInput back into the attachment-tracked layout: Final's render
-     * pass does not update the engine's per-image layout tracking, so a
-     * SHADER_READ-only tracked state would no-op next frame's transition
-     * while the attachment use changed the actual layout (validation
-     * catches exactly that mismatch). */
-    vulkanTransition(cmd, &lensInput, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, 0, 1);
+    /* Put lensInput back in the LPM blit's target layout (TRANSFER_DST):
+     * the LPM pass blits its display-referred output into the lens input
+     * each frame, and the engine's per-image layout tracking no-ops a
+     * transition to the already-tracked layout. */
+    vulkanTransition(cmd, &lensInput, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 0, 1);
 
     elapsedGPU = profile.elapsed;
 }

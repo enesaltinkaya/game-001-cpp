@@ -44,6 +44,7 @@
 #include "renderer/vulkan/pass/dof/VulkanDofPass.h"
 #include "renderer/vulkan/pass/bloom/VulkanBloomPass.h"
 #include "renderer/vulkan/pass/final/VulkanFinalPass.h"
+#include "renderer/vulkan/pass/lpm/VulkanLpmPass.h"
 #include "renderer/vulkan/pass/lens/VulkanLensPass.h"
 #include "renderer/vulkan/pass/rmlui/VulkanRmluiPass.h"
 #include "renderer/vulkan/pass/debug_physics/VulkanDebugPhysicsPass.h"
@@ -264,6 +265,7 @@ void vulkanInit(void) {
     addPass(&vulkanFsrPass);
     addPass(&vulkanBloomPass);
     addPass(&vulkanFinalPass);
+    addPass(&vulkanLpmPass);
     addPass(&vulkanLensPass);
     addPass(&vulkanDebugPhysicsPass);
     addPass(&vulkanRmluiPass);

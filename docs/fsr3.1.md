@@ -3,7 +3,9 @@
 Custom build of the AMD FidelityFX FSR 3.1 SDK for use from a **C++ game engine**
 via Vulkan. Currently enabled via `ENABLED_COMPONENTS` in `build.sh`:
 the **FSR3 Upscaler**, **CACAO** (ambient occlusion), **SPD** (Single Pass
-Downsampler), **Lens** and **DOF** components (no frame generation, no
+Downsampler), **Lens**, **DOF** and **LPM** (Luma Preserving Mapper —
+tone/gamut mapping, replacing the engine's custom tonemapping) components
+(no frame generation, no
 DX12 backend). **SSSR** + **Denoiser** (SSSR's temporal denoiser) were
 integrated in Phase 5 of the SDK-expansion plan but were reverted on
 2026-08-23 in favor of the engine's custom SSR pass — their registry blocks
@@ -27,6 +29,7 @@ is a registry edit (see "Build Script" below).
 | `src/components/fsr3upscaler/ffx_fsr3upscaler.cpp`                        | FSR3 upscaler core logic                                                                                                               |
 | `src/components/cacao/ffx_cacao.cpp`                                      | CACAO AO core logic (`ffxCacaoContextCreate/Dispatch/Destroy`, `ffxCacaoUpdateSettings`)                                               |
 | `src/components/dof/ffx_dof.cpp`                                          | DOF core logic (`ffxDofContextCreate/Dispatch/Destroy`, `ffxDofCalculateCoc{Scale,Bias}`)                                              |
+| `src/components/lpm/ffx_lpm.cpp`                                          | LPM core logic (`ffxLpmContextCreate/Dispatch/Destroy`, `FfxPopulateLpmConsts`)                                                       |
 | `src/components/brixelizer/ffx_brixelizer.cpp` + `ffx_brixelizer_raw.cpp` | Brixelizer SDF voxelizer (high-level + raw contexts: `ffxBrixelizer{ContextCreate,BakeUpdate,Update,CreateInstances,DeleteInstances}`) |
 | `src/components/brixelizergi/ffx_brixelizergi.cpp`                        | Brixelizer GI (`ffxBrixelizerGIContext{Create,Dispatch,Destroy,DebugVisualization}`)                                                   |
 | `src/shared/ffx_assert.cpp`                                               | Assert/debug utilities                                                                                                                 |
@@ -37,6 +40,7 @@ is a registry edit (see "Build Script" below).
 | `src/backends/shared/blob_accessors/ffx_fsr3upscaler_shaderblobs.cpp`     | Precompiled SPIR-V shader permutations (FSR3)                                                                                          |
 | `src/backends/shared/blob_accessors/ffx_cacao_shaderblobs.cpp`            | Precompiled SPIR-V shader permutations (CACAO)                                                                                         |
 | `src/backends/shared/blob_accessors/ffx_dof_shaderblobs.cpp`              | Precompiled SPIR-V shader permutations (DOF)                                                                                           |
+| `src/backends/shared/blob_accessors/ffx_lpm_shaderblobs.cpp`              | Precompiled SPIR-V shader permutations (LPM)                                                                                           |
 | `src/backends/shared/blob_accessors/ffx_brixelizer_shaderblobs.cpp`       | Precompiled SPIR-V shader permutations (Brixelizer)                                                                                    |
 | `src/backends/shared/blob_accessors/ffx_brixelizergi_shaderblobs.cpp`     | Precompiled SPIR-V shader permutations (Brixelizer GI)                                                                                 |
 | `../../ffx_stubs.cpp`                                                     | Stubs for unbuilt components (breadcrumbs, frame interpolation swapchain)                                                              |
@@ -106,6 +110,9 @@ DOF shaders (5): `ffx_dof_downsample_depth_pass`,
 `ffx_dof_downsample_color_pass`, `ffx_dof_dilate_pass`, `ffx_dof_blur_pass`,
 `ffx_dof_composite_pass`.
 
+LPM: 1 shader, no permutation axes → 1 × 4 variants = 4 permutation
+headers: `ffx_lpm_filter_pass`.
+
 Brixelizer shaders (31): 18 `ffx_brixelizer_cascade_ops_*` passes (build
 AABB tree, coarse culling, voxelize, E… job/reference scanning + counters,
 cascade scroll/reset/invalidate), 10 `ffx_brixelizer_context_ops_*` passes
@@ -137,8 +144,8 @@ with `FFX_DENOISER_REFLECTIONS`).
 - **DX12 backend** (`src/backends/dx12/`) — not needed
 - **ffx-api layer** (`ffx-api/`) — has hard-coded Windows/DX12 dependencies; we use the SDK-level API directly
 - **Frame generation / interpolation** (`src/components/frameinterpolation/`, `src/components/opticalflow/`)
-- **All other FidelityFX effects** (blur, CAS, FSR1, FSR2, LPM, VRS, etc.)
-- **All other shader blob accessors** — only the accessors of the enabled components (`ffx_fsr3upscaler`, `ffx_cacao`, `ffx_spd`, `ffx_lens`, `ffx_dof`, `ffx_brixelizer`, `ffx_brixelizergi`) are compiled
+- **All other FidelityFX effects** (blur, CAS, FSR1, FSR2, VRS, etc.)
+- **All other shader blob accessors** — only the accessors of the enabled components (`ffx_fsr3upscaler`, `ffx_cacao`, `ffx_spd`, `ffx_lens`, `ffx_dof`, `ffx_lpm`, `ffx_brixelizer`, `ffx_brixelizergi`) are compiled
 
 ## SDK Header Patches
 
@@ -267,6 +274,24 @@ includable from C11 code (committed in git):
   `wchar_t` inflation: `FfxDofContext_Private` with its 5
   `FfxPipelineState` members is 349096 B = 87274 uint32s there; the SDK's
   `FFX_STATIC_ASSERT` in `ffxDofContextCreate` catches regressions).
+
+### `sdk/include/FidelityFX/gpu/lpm/ffx_lpm_callbacks_glsl.h` (LPM round)
+
+- Output UAV `rw_output_color` qualifier `rgba32f` → `rgba8` (non-HALF
+  branch; the VK backend forces `fp16Supported = false`, so the 32-bit
+  permutations are selected and this is the qualifier that gets baked into
+  the SPIR-V). LPM's LDR display mode gamma-encodes its output
+  (`ApplyGamma`), so the engine runs it on a display-referred 8-bit image —
+  the same convention as the LENS output patch above. The LPM pass writes
+  the result to an `R8G8B8A8_UNORM` image and blits it into the SRGB
+  swapchain / lens input (format-compatible, swizzle only).
+
+### `sdk/include/FidelityFX/host/ffx_lpm.h` (LPM round)
+
+- `FFX_LPM_CONTEXT_SIZE` 9300 → 18000 uint32s on non-Windows (Linux
+  `wchar_t` inflation, same pattern as the LENS/SPD/DOF bumps: the private
+  context's single `FfxPipelineState` name buffers dominate; the SDK's
+  `FFX_STATIC_ASSERT` in `ffxLpmContextCreate` catches regressions).
 
 ### `sdk/include/FidelityFX/gpu/sssr/ffx_sssr_callbacks_glsl.h` (SSSR round — kept in the fork, SSSR currently not built)
 

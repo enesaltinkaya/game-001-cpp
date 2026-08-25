@@ -16,21 +16,22 @@ public:
 
 extern VulkanLensPass vulkanLensPass;
 
-/* True when the lens pass will dispatch this frame: the Final pass renders
- * into the lens input image (UNORM, shader-side sRGB encode) instead of the
- * swapchain. False when lens effects are off or not ready. */
+/* True when the lens pass will dispatch this frame: the LPM pass blits its
+ * display-referred output into the lens input image (SRGB, auto-decoded by
+ * the lens shader) instead of the swapchain. False when lens effects are
+ * off or not ready. */
 char vulkanLensPassIsActive(void);
 
-/* Called by the Final pass right after it rendered into the lens input.
- * The lens pass only dispatches on frames where this was called —
- * e.g. the main menu frame renders no Final pass output. */
+/* Called by the LPM pass right after it blitted its output into the lens
+ * input. The lens pass only dispatches on frames where this was called —
+ * e.g. the main menu frame renders no LPM output. */
 void vulkanLensPassMarkRendered(void);
 
-/* The UNORM render target Final must draw into when the lens pass is active.
- * Only valid when vulkanLensPassIsActive() — the image is created lazily at
- * display resolution in the lens pass's own update, which runs before
- * Final's in the pass order... see Vulkan.cpp for ordering; Final falls
- * back to the swapchain while this returns NULL. */
+/* The SRGB render target the LPM pass blits into when the lens pass is
+ * active. Only valid when vulkanLensPassIsActive() — the image is created
+ * lazily at display resolution in the lens pass's own update, which runs
+ * before the LPM pass's in the pass order... see Vulkan.cpp for ordering;
+ * the LPM pass falls back to the swapchain while this returns NULL. */
 struct VulkanImage* vulkanLensPassGetInput(void);
 
 void vulkanLensPassSetDisabled(char disabled);

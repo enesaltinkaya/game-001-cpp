@@ -11,8 +11,8 @@
    The kernel limits sharpening by *relative* contrast (hitMin/hitMax are
    neighbor ratios, not absolute-range terms), so it is range-robust:
    FSR3 runs it on HDR radiance before tonemapping; this engine also runs
-   it on the tonemapped LDR result in the final pass when the upscaler is
-   off — both placements are valid.
+   it on the exposed HDR composite in the final pass (before LPM) when the
+   upscaler is off — both placements are valid.
 
    rcasSharpness is the linear sharpness produced by FsrRcasCon:
    exp2(-stops) — 1.0 = maximum, 0.25 = 2 stops (mild). Map the engine's

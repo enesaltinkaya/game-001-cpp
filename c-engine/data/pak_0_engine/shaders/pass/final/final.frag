@@ -11,22 +11,28 @@ layout(push_constant) uniform PushConstants {
     uint colorTextureIndex;
     uint bloomTextureIndex;
     float bloomStrength;
-    float contrast;
     float rcasStrength;  // 0 = off; AMD RCAS in this pass (upscaler off)
-    uint tonemapMode;
-    uint pad[2];
+    uint pad[4];
 };
 
 #include "../../includes/utils.shader"
 #include "../../includes/globalset.shader"
 #include "../../includes/rcas.shader"
 
+/* This pass composites the input for the FFX LPM tone/gamut mapper:
+ * scene HDR + bloom + exposure, still LINEAR. The LPM pass (lpm) applies
+ * the tone curve + display gamma and writes the final 8-bit image, which
+ * is blitted into the swapchain (or the lens input). The custom
+ * tonemapping curves (AgX/ACES/...) that used to run here were replaced
+ * by LPM. */
+
 /* Sharpening: AMD RCAS has two placements, both driven by the aaCasStrength
  * setting —
  *   upscaler on:  inside the FSR3 upscaler dispatch (VulkanFsrPass) on
  *                 the upscaled image (this pass receives strength 0)
- *   upscaler off: here, on the tonemapped LDR result (TAA / raw path)
- *                 using the same vendored RCAS kernel. */
+ *   upscaler off: here, on the exposed HDR composite (TAA / raw path),
+ *                 using the same vendored RCAS kernel — the same domain
+ *                 the upscaler's internal RCAS works in (HDR, pre-LPM). */
 
 vec3 sampleSceneHdr(vec2 uv) {
     vec3 hdr = texture(sampler2D(textures[nonuniformEXT(colorTextureIndex)],
@@ -42,48 +48,7 @@ vec3 sampleSceneHdr(vec2 uv) {
         hdr += bloom * bloomStrength;
     }
 
-    return hdr;
-}
-
-vec3 tonemapAndContrast(vec3 hdr) {
-    float exposure   = sceneBuffer.cameras[0].exposure;
-    vec3 exposed     = hdr * exposure;
-    vec3 ldr;
-
-    // Analytic curves only (the IBL-baked AgX LUTs were removed together
-    // with IBL; AgX modes use the polynomial approximation).
-    if (tonemapMode == 0u || tonemapMode == 1u) {
-        ldr = agxBase(exposed);
-    } else if (tonemapMode == 2u) {
-        ldr = aces(exposed);  // ACES Filmic
-    } else if (tonemapMode == 3u) {
-        ldr = filmic(exposed);  // Filmic (Hable-like)
-    } else if (tonemapMode == 4u) {
-        ldr = reinhard(exposed);  // Reinhard
-    } else if (tonemapMode == 5u) {
-        ldr = tonemapUncharted2(exposed);  // Uncharted 2
-    } else if (tonemapMode == 6u) {
-        ldr = uchimura(exposed);  // Uchimura (Gran Turismo)
-    } else if (tonemapMode == 7u) {
-        ldr = unreal(exposed);  // Unreal Engine 3
-    } else {
-        ldr = agxBase(exposed);  // fallback
-    }
-
-    if (contrast != 1.0) {
-        // Apply contrast in perceptual (gamma) space where 0.5 is mid-gray.
-        // The tonemapped LDR values are linear; operating directly on them
-        // uses a wrong midpoint (linear 0.5 ≈ perceptual 0.73).
-        vec3 perceptual = fromLinear(max(ldr, vec3(0.0)));
-        perceptual      = clamp((perceptual - 0.5) * contrast + 0.5, 0.0, 1.0);
-        ldr             = toLinear(perceptual);
-    }
-
-    return ldr;
-}
-
-vec3 fetchDisplay(vec2 uv) {
-    return tonemapAndContrast(sampleSceneHdr(uv));
+    return hdr * sceneBuffer.cameras[0].exposure;
 }
 
 void main() {
@@ -97,22 +62,22 @@ void main() {
         0);
     vec2 texelSize = 1.0 / vec2(max(colorSize, ivec2(1)));
 
-    /* RCAS in the display-referred domain — after bloom/tonemap/contrast,
-     * before dithering. exp2(2*s - 2) maps the slider to FsrRcasCon's linear
-     * sharpness, the same remap the FSR3 upscaler host applies. */
-    vec3 ldr;
+    /* RCAS in the HDR domain — after bloom/exposure, before LPM.
+     * exp2(2*s - 2) maps the slider to FsrRcasCon's linear sharpness, the
+     * same remap the FSR3 upscaler host applies. */
+    vec3 hdr;
     if (rcasStrength > 0.0) {
-        vec3 b = fetchDisplay(uv + texelSize * vec2(0.0, -1.0));
-        vec3 d = fetchDisplay(uv + texelSize * vec2(-1.0, 0.0));
-        vec3 e = fetchDisplay(uv);
-        vec3 f = fetchDisplay(uv + texelSize * vec2(1.0, 0.0));
-        vec3 h = fetchDisplay(uv + texelSize * vec2(0.0, 1.0));
-        ldr    = rcasFilter(b, d, e, f, h, exp2(2.0 * rcasStrength - 2.0));
+        vec3 b = sampleSceneHdr(uv + texelSize * vec2(0.0, -1.0));
+        vec3 d = sampleSceneHdr(uv + texelSize * vec2(-1.0, 0.0));
+        vec3 e = sampleSceneHdr(uv);
+        vec3 f = sampleSceneHdr(uv + texelSize * vec2(1.0, 0.0));
+        vec3 h = sampleSceneHdr(uv + texelSize * vec2(0.0, 1.0));
+        hdr    = rcasFilter(b, d, e, f, h, exp2(2.0 * rcasStrength - 2.0));
     } else {
-        ldr = fetchDisplay(uv);
+        hdr = sampleSceneHdr(uv);
     }
 
-    /* sRGB attachment (swapchain or lens input): keep output linear —
-     * the attachment store encodes. */
-    outColor = vec4(ldr, 1.0);
+    /* R16F attachment: store the linear HDR composite as-is — LPM does
+     * the tone curve + gamma. */
+    outColor = vec4(hdr, 1.0);
 }

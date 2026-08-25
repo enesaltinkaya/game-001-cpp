@@ -43,8 +43,6 @@ struct RendererSunLight {
 #define SAMPLER_CLAMP_LINEAR 8
 #define SAMPLER_CLAMP_NEAREST 9
 
-#define CONTRAST 1.0
-
 struct Renderer {
     std::vector<System*> passes;
     u32 drawCalls;
@@ -162,18 +160,7 @@ void rendererDrawCapsule(vec3 location, vec4 rotation, vec3 scale);
 
 /////////////////////
 /// tonemapping
-typedef enum TonemapMode {
-    TONEMAP_AGX = 0,     // AgX Base Contrast (LUT if available, polynomial fallback)
-    TONEMAP_AGX_PUNCHY,  // AgX Punchy — deeper shadows, punchier contrast (LUT)
-    TONEMAP_ACES,        // ACES Filmic (Narkowicz)
-    TONEMAP_FILMIC,      // Filmic (Hable-like)
-    TONEMAP_REINHARD,    // Reinhard
-    TONEMAP_UNCHARTED2,  // Uncharted 2
-    TONEMAP_UCHIMURA,    // Uchimura (Gran Turismo)
-    TONEMAP_UNREAL,      // Unreal Engine 3
-    TONEMAP_COUNT
-} TonemapMode;
-
-void rendererSetTonemapMode(TonemapMode mode);
-TonemapMode rendererGetTonemapMode(void);
+/* Tone/gamut mapping is done by the FFX LPM pass (vulkanLpmPass) — the
+ * custom tonemapping curves (AgX/ACES/Filmic/...) were removed with the
+ * LPM migration. LPM parameters live in the LPM pass. */
 }  // namespace engine

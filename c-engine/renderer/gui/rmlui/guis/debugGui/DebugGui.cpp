@@ -32,16 +32,6 @@ static char pomEnabled;
 static char contactShadowEnabled;
 static char volumetricFogEnabled;
 
-static const char* tonemapNames[] = {
-    "AgX",
-    "AgX Punchy",
-    "ACES Filmic",
-    "Filmic (Hable)",
-    "Reinhard",
-    "Uncharted 2",
-    "Uchimura (GT)",
-    "Unreal 3",
-};
 static char* tonemapLabel;
 
 static char* aaPolicyLabel;
@@ -57,7 +47,9 @@ static void syncFromPasses(void) {
     pomEnabled        = vulkanResourceGetTerrainPomEnabled() != 0;
     contactShadowEnabled = !vulkanContactShadowPassIsDisabled();
     volumetricFogEnabled = !vulkanVolumetricPassIsDisabled();
-    tonemapLabel      = (char*)tonemapNames[rendererGetTonemapMode()];
+    /* Tone/gamut mapping is done by the FFX LPM pass — no more custom
+     * tonemapping curves to cycle through. */
+    tonemapLabel      = (char*)"LPM";
 
     RendererAASettings aa = rendererGetAASettings();
 
@@ -127,25 +119,6 @@ static int toggleContactShadow(void* _) {
     return 0;
 }
 
-static int tonemapPrev(void* _) {
-    int cur = (int)rendererGetTonemapMode();
-    cur     = (cur + TONEMAP_COUNT - 1) % TONEMAP_COUNT;
-    rendererSetTonemapMode((TonemapMode)cur);
-    syncFromPasses();
-    rmlUpdateDirtyAll(model);
-    return 0;
-}
-
-static int tonemapNext(void* _) {
-    int cur = (int)rendererGetTonemapMode();
-    cur     = (cur + 1) % TONEMAP_COUNT;
-    rendererSetTonemapMode((TonemapMode)cur);
-    syncFromPasses();
-    rmlUpdateDirtyAll(model);
-    return 0;
-}
-
-
 static int aaCasPrev(void* _) {
     RendererAASettings aa = rendererGetAASettings();
     aa.casStrength -= 0.05f;
@@ -175,8 +148,6 @@ void DebugGui::added() {
     luaRegisterFunction("debugTogglePOM", togglePOM);
     luaRegisterFunction("debugToggleContactShadow", toggleContactShadow);
     luaRegisterFunction("debugToggleVolumetricFog", toggleVolumetricFog);
-    luaRegisterFunction("debugTonemapPrev", tonemapPrev);
-    luaRegisterFunction("debugTonemapNext", tonemapNext);
     luaRegisterFunction("debugAaCasPrev", aaCasPrev);
     luaRegisterFunction("debugAaCasNext", aaCasNext);
     document = rmlNewDocument("gui/debug/debug.html");

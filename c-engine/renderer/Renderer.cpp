@@ -36,7 +36,6 @@ static RendererAASettings aaSettings     = {
     .taaGhost    = 1.0f,
     .taaDepth    = 0.06f,
 };
-static TonemapMode tonemapMode = TONEMAP_ACES;
 static float renderScale       = 1.0f;
 
 RenderSystem renderSystem;
@@ -63,7 +62,6 @@ void RenderSystem::added() {
     });
 
     vulkanInit();
-    rendererSetTonemapMode(TONEMAP_ACES);
     createDefaultMaterial();
     textureManagerInit();
 
@@ -328,16 +326,6 @@ void rendererDrawCapsule(vec3 location, vec4 rotation, vec3 scale) {
     (void)location;
     (void)rotation;
     (void)scale;
-}
-
-void rendererSetTonemapMode(TonemapMode mode) {
-    if (mode >= 0 && mode < TONEMAP_COUNT) {
-        tonemapMode = mode;
-    }
-}
-
-TonemapMode rendererGetTonemapMode(void) {
-    return tonemapMode;
 }
 
 static AAMode sanitizeAAMode(AAMode mode) {

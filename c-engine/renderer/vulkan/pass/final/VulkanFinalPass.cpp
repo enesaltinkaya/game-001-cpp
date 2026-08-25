@@ -6,9 +6,8 @@
 #include "renderer/vulkan/command/VulkanCommand.h"
 #include "renderer/vulkan/pipeline/VulkanPipe.h"
 #include "renderer/vulkan/resources/VulkanFrameResources.h"
-#include "renderer/vulkan/swapchain/VulkanSwapchain.h"
 #include "renderer/vulkan/pass/fsr/VulkanFsrPass.h"
-#include "renderer/vulkan/pass/lens/VulkanLensPass.h"
+#include "renderer/vulkan/pass/lpm/VulkanLpmPass.h"
 #include "renderer/vulkan/pass/taa/VulkanTaaPass.h"
 #include "renderer/vulkan/pass/bloom/VulkanBloomPass.h"
 #include "renderer/vulkan/pass/dof/VulkanDofPass.h"
@@ -27,17 +26,19 @@ struct FinalPushConstants {
     u32 colorTextureIndex = 0;
     u32 bloomTextureIndex = 0;
     float bloomStrength   = 0.0f;
-    float contrast        = 0.0f;
     float rcasStrength    = 0.0f;
-    u32 tonemapMode       = 0;  // must match the GLSL push constant layout
-    u32 pad[2]           = {};
+    u32 pad[4]           = {};
 };
 
 void VulkanFinalPass::added() {
+    /* R16F attachment: the pass stores the LINEAR HDR composite; the LPM
+     * pass tone/gamut-maps it (replacing the custom tonemapping curves)
+     * and blits its 8-bit result into the lens input (when the lens is
+     * active) or the swapchain. */
     pipeline = vulkanCreatePipe(.name               = "final",
                                 .vs                 = "shaders/pass/final/spv/final.vert.spv",
                                 .fs                 = "shaders/pass/final/spv/final.frag.spv",
-                                .colorFormat1       = VK_FORMAT_B8G8R8A8_SRGB,
+                                .colorFormat1       = VK_FORMAT_R16G16B16A16_SFLOAT,
                                 .clearColor1Enabled = 1,
                                 .clearColor1        = {0.0f, 0.0f, 0.0f, 1.0f});
 }
@@ -63,53 +64,47 @@ void VulkanFinalPass::update() {
                            : dofImage       ? dofImage
                            : compositeImage ? compositeImage
                                            : vulkanFrameResourcesGetSceneColor();
-    VulkanImage* swapImage  = vulkanSwapchain.currentSwapchainImage;
+    /* LPM input (R16F): the pass stores the linear HDR composite here;
+     * the LPM pass tone-maps it and blits the 8-bit result into the lens
+     * input (lens active) or the swapchain. */
+    VulkanImage* lpmImage = vulkanLpmPassGetInput();
 
-    if (!colorImage || !swapImage) return;
+    if (!colorImage || !lpmImage) return;
 
-    /* Lens active: render into the lens input (also an SRGB attachment —
-     * same pipeline); the lens pass then blits its output into the swapchain
-     * before UI. Lens inactive: render straight into the swapchain. */
-    char        lensActive = vulkanLensPassIsActive();
-    VulkanPipe* pipe       = &pipeline;
-    VulkanImage* target    = lensActive ? vulkanLensPassGetInput() : swapImage;
-
-    vulkanBeginProfile(cmd, &pipe->profile, 0);
+    vulkanBeginProfile(cmd, &pipeline.profile, 0);
     vulkanTransition(cmd, colorImage, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
 
-    vulkanBeginRender(.cmd = cmd, .pipe = pipe, .color1 = target);
+    vulkanBeginRender(.cmd = cmd, .pipe = &pipeline, .color1 = lpmImage);
 
     vulkanViewport(cmd,
                    0,
-                   swapImage->extent.height,
-                   swapImage->extent.width,
-                   -((i32)swapImage->extent.height));
-    vulkanScissor(cmd, 0, 0, swapImage->extent.width, swapImage->extent.height);
+                   lpmImage->extent.height,
+                   lpmImage->extent.width,
+                   -((i32)lpmImage->extent.height));
+    vulkanScissor(cmd, 0, 0, lpmImage->extent.width, lpmImage->extent.height);
 
-    vulkanBindPipe(cmd, pipe);
+    vulkanBindPipe(cmd, &pipeline);
 
     FinalPushConstants pc = {
         .colorTextureIndex = (u32)colorImage->sampledPoolIndex,
         .bloomTextureIndex = (u32)vulkanBloomPassGetBloomSampledIndex(),
         .bloomStrength     = vulkanBloomPassGetStrength(),
-        .contrast          = CONTRAST,
         /* RCAS runs here only when the upscaler is off (TAA / raw path).
          * When the FSR3 upscaler is active it applies RCAS internally on
          * the upscaled image — pushing a nonzero strength here too would
          * sharpen twice (stacked kernels cause ringing). */
         .rcasStrength      = rendererIsUpscalerEnabled() ? 0.0f : rendererGetCasStrength(),
-        .tonemapMode       = (u32)rendererGetTonemapMode(),
     };
-    vulkanPush(cmd, pipe, sizeof(pc), &pc);
+    vulkanPush(cmd, &pipeline, sizeof(pc), &pc);
     vulkanDraw(cmd, 3, 1);
 
     vulkanEndRender(cmd);
-    vulkanEndProfile(cmd, &pipe->profile, 0);
-    if (lensActive) {
-        vulkanLensPassMarkRendered();
-    }
-    elapsedGPU = pipe->profile.elapsed;
+    vulkanEndProfile(cmd, &pipeline.profile, 0);
 
+    /* The LPM pass dispatches on frames where the Final pass rendered. */
+    vulkanLpmPassMarkRendered();
+
+    elapsedGPU = pipeline.profile.elapsed;
 }
 
 void VulkanFinalPass::postUpdate() {
