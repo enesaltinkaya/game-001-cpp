@@ -190,6 +190,8 @@ static VkVertexInputAttributeDescription depthPrepassAttrs[] = {
 };
 static VkVertexInputAttributeDescription shadowAttrs[] = { // only what azgaar_props_shadow.vert reads
     {.location = 0, .binding = 0, .format = VK_FORMAT_R32G32B32_SFLOAT, .offset = 0},
+    {.location = 8, .binding = 0, .format = VK_FORMAT_R32G32_SFLOAT, .offset = 40},
+    {.location = 9, .binding = 0, .format = VK_FORMAT_R32_UINT, .offset = 56},
     {.location = 2, .binding = 1, .format = VK_FORMAT_R32G32B32_SFLOAT, .offset = 0},
     {.location = 3, .binding = 1, .format = VK_FORMAT_R32_SFLOAT, .offset = 12},
     {.location = 4, .binding = 1, .format = VK_FORMAT_R32_SFLOAT, .offset = 16},
@@ -275,7 +277,7 @@ static void recreatePipelines(void) {
         .depthBiasSlopeFactor    = 0.8f,
         .depthBiasClamp          = 0.0f,
         .vertexAttributes        = shadowAttrs,
-        .vertexAttributeCount    = 5,
+        .vertexAttributeCount    = 7,
         .vertexBindings          = vertexBindings,
         .vertexBindingCount      = 2);
     pipeRecreated = true;

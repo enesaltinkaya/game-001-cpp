@@ -13,11 +13,16 @@
 // same as the colour / pre-pass shaders.
 
 layout(location = 0) in vec3 inPosition; // mesh local (metres, origin at base)
+layout(location = 8) in vec2 inUV;      // mesh UV (texture alpha test)
+layout(location = 9) in uint inTexId; // texture-array index (0xFFFFFFFF = none)
 
 layout(location = 2) in vec3 inPos;      // instance world position (ground)
 layout(location = 3) in float inYaw;     // 0..2pi
 layout(location = 4) in float inScale;   // target height (metres)
 layout(location = 6) in float inPhase;   // 0..2pi wind de-sync
+
+layout(location = 0) out vec2 outUV;
+layout(location = 1) flat out uint outTexId;
 
 #include "../../includes/utils.shader"
 #include "../../includes/globalset.shader"
@@ -65,4 +70,6 @@ void main() {
 
     gl_Position = sceneBuffer.shadow.shadowViewProjection[pc.cascadeIndex]
                   * vec4(worldPos, 1.0);
+    outUV    = inUV;
+    outTexId = inTexId;
 }
