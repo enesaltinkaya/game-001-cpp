@@ -8,8 +8,8 @@ produce a temporally filtered full-resolution shadow mask that all lit passes
 consume.
 
 This revives two items that `plans/fidelityfx-sdk-expansion.md` listed under
-"Explicitly out of scope" (*Classifier — "RT-shadow classification; engine is
-fully raster"* and *Denoiser (shadows)*), in a strictly raster form: the
+"Explicitly out of scope" (_Classifier — "RT-shadow classification; engine is
+fully raster"_ and _Denoiser (shadows)_), in a strictly raster form: the
 sample's RT dispatch is never issued, and the classifier's RT-only outputs
 (minT/maxT, work queue) are allocated but never consumed. No BVH/TLAS, no
 `traceshadows.hlsl`, no `BuildRayTracingAccelerationStructure`.
@@ -23,7 +23,7 @@ sample's RT dispatch is never issued, and the classifier's RT-only outputs
   light-view basis, quantized extents, 2 active cascades on a 2048² D32
   array, tuned raster + receiver biasing). Keep ours.
 - **The RT path**: `traceshadows.hlsl` indirect dispatch, TLAS binding,
-  blue-noise ray jitter. The classifier still *queues* indeterminate tiles
+  blue-noise ray jitter. The classifier still _queues_ indeterminate tiles
   into a GPU work-queue buffer; we simply never dispatch it.
 
 ## Data flow (raster-only)
@@ -71,8 +71,8 @@ the frame, so no other ordering constraints.
 - **Per-fragment cost**: today every lit fragment shader (`scene.frag`,
   `heightmap_terrain.frag`, `azgaar_props.frag`, `oit_accumulate.frag`,
   `triangle.frag`) pays a 9-tap 3×3 comparison PCF + texel-scaled normal
-  bias + cascade-blend second lookup, *per cascade-blend region a second
-  full PCF*. The FFX chain moves shadow sampling out of the (expensive) lit
+  bias + cascade-blend second lookup, _per cascade-blend region a second
+  full PCF_. The FFX chain moves shadow sampling out of the (expensive) lit
   fragment shaders into 5 relatively cheap compute dispatches, and the
   fragment cost becomes one mask texture fetch.
 - **Quality**: the denoiser's temporal history yields far more effective
@@ -106,7 +106,7 @@ non-inverted convention, unlike the DX12 sample which used reverse-Z).
   is wired automatically; it routes by effect id and selects the
   `CLASSIFIER_MODE` permutation from the context flag).
 - `BASE_ARGS`: `-compiler=glslang -e CS --target-env vulkan1.2 -S comp -Os
-  -DFFX_GLSL=1 -reflection -DFFX_GPU=1` (the CMake
+-DFFX_GLSL=1 -reflection -DFFX_GPU=1` (the CMake
   `CMakeCompileClassifierShaders.txt` BASE args are SC-tool-agnostic
   (`-reflection -deps=gcc -DFFX_GPU=1`); mirror the denoiser block's
   glslang args).
@@ -153,7 +153,7 @@ integration pattern), registered in `Vulkan.cpp` between `vulkanShadowPass`
 and `vulkanHeightmapTerrainPass`.
 
 - **FFX contexts**: own `FfxInterface` + scratch (`ffxGetScratchMemorySizeVK
-  (phys, 2)`), a `FfxClassifierContext`
+(phys, 2)`), a `FfxClassifierContext`
   (`FFX_CLASSIFIER_SHADOW | FFX_CLASSIFIER_CLASSIFY_BY_CASCADES`) and a
   `FfxDenoiserContext` (`FFX_DENOISER_SHADOWS`). Recreate both on
   `swapchainCreated` (they own render-resolution GPU resources internally).
@@ -267,8 +267,7 @@ view-space XY (R16G16 SNORM). Add a full-res R16G16B16_SFLOAT
       resources, classifier + denoiser dispatches, env toggle +
       `ENGINE_HYBRID_SHADOWS_DUMP`; no shader changes yet (visually a
       no-op; inspect the dumped mask).
-- [ ] **Phase 3 — consume the mask**: ShadowUbo index + `sampleShadowMask`
-      + settings toggle; A/B screenshots (PCF vs mask) at the parked
+- [ ] **Phase 3 — consume the mask**: ShadowUbo index + `sampleShadowMask` + settings toggle; A/B screenshots (PCF vs mask) at the parked
       camera, sun 0° and 0.5–2°; verify OIT/terrain/props parity.
 - [ ] **Phase 4 — tuning + validation**: sun-size / blocker / sigma
       sweeps; FSR on/off (jitter interaction); fast camera moves (ghosting
