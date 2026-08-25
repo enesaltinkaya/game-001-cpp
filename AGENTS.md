@@ -148,6 +148,9 @@ automated testing since the game won't wait for main menu input.
 - When adding source files, use the `.cpp` extension (headers stay `.h`) and ensure they live under the appropriate module (`c-utils`, `c-engine`, or `c-game`).
 - Be careful with shared headers because `Utils.h` and `pch.h` are precompiled and widely included.
 - Avoid introducing compiler warnings; the project is configured to be warning-strict.
+- Coding agents are **not allowed to run git commands** (no commits, pushes,
+  rebases, checkouts, or any other `git` invocations). Version control is
+  handled by the user.
 
 ## Validation guidance
 
