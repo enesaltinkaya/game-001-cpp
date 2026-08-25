@@ -239,16 +239,26 @@ void main() {
             mapUV);
     }
 
-    // ── Turf colour variation ───────────────────────────────────
-    // Coarse world-anchored value noise (40 m / 80 m) modulates the grass
-    // albedo so open fields read as patches of lighter/darker turf instead
-    // of one uniform tint.  World-anchored + stateless → stable across
-    // tiles/frames.  Inserted before the beach/cliff/snow swaps below so
-    // only the grass base is affected.
+    // ── Turf colour variation (dry-grass patches) ───────────────
+    // Coarse world-anchored value noise (12 m / 48 m) splits the ground into
+    // patches of dry, sun-bleached straw and surviving green turf, like a
+    // parched summer field (todo/terrain-texture-example.jpeg).  The dry
+    // state dominates; green survives where the noise runs high.  A fine 4 m
+    // octave wobbles brightness so neither state reads as a flat fill.
+    // World-anchored + stateless → stable across tiles/frames.  Inserted
+    // before the beach/cliff/snow swaps below so only the grass base is
+    // affected.
     {
-        float n = 0.6 * microValueNoise(inWorldPos.xz / 40.0 + 31.7) +
-                  0.4 * microValueNoise(inWorldPos.xz / 80.0 + 71.3);  // [-1,1]
-        baseColor *= 0.82 + 0.36 * (0.5 + 0.5 * n);  // ~±18%
+        float n = 0.6 * microValueNoise(inWorldPos.xz / 12.0 + 31.7) +
+                  0.4 * microValueNoise(inWorldPos.xz / 48.0 + 71.3);  // [-1,1]
+        // Mean noise ≈ 0 → mean mask ≈ 0.65: the ground is mostly parched
+        // straw with a healthy scatter of green patches where the noise runs
+        // high (matches the dry-dominant look of todo/terrain-texture-example.jpeg).
+        float dryMask = smoothstep(0.32, 0.62, 0.5 + 0.5 * n);
+        // Sun-bleached straw (linear space; the grass albedo is sRGB-decoded).
+        vec3 dryColor = vec3(0.58, 0.50, 0.32);
+        float wobble  = 0.82 + 0.36 * (0.5 + 0.5 * microValueNoise(inWorldPos.xz / 4.0 + 13.9));
+        baseColor    = mix(baseColor, dryColor, dryMask) * wobble;
     }
 
     // 2) Beach band: low land near sea level becomes sand, with a darker
