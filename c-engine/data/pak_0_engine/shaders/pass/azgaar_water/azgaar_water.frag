@@ -130,7 +130,17 @@ void main() {
     // animated dry "holes" and puddles into the shallow water.  Weighting by
     // proximity keeps water deeper than ~1 m pinned to a stable sea level.
     float lineProx = 1.0 - smoothstep(1.0, 3.0, abs(terrainPos.y - waterY));
-    float shoreY   = waterY + 0.2 * shoreNoise * lineProx;
+    // The meander must not strand standing water on dry land.  Where the
+    // terrain sits above sea level only the *downward* part of the
+    // displacement applies: on a flat shelf a few centimetres above the
+    // waterline the upward meander (up to +0.2 m) pushed the displaced
+    // line above the terrain, so the early-out never fired and the
+    // shallow-solid opacity + shore foam painted an animated water film
+    // over the dry sand.  Submerged shoreline (terrainPos.y < waterY) is
+    // unchanged — the full ±0.2 m meander still shapes the waterline.
+    float displace = 0.2 * shoreNoise * lineProx;
+    float dryT     = smoothstep(0.0, 0.05, terrainPos.y - waterY);
+    float shoreY   = waterY + displace * (1.0 - dryT) + min(displace, 0.0) * dryT;
     if (terrainPos.y > shoreY + 0.05) discard;
 
     vec3 N = normalize(inWorldNormal);
