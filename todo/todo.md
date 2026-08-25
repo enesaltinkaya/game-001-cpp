@@ -1,5 +1,5 @@
-- make terrain texture look like /home/enes/Projects/c/game-001-cpp/todo/terrain-texture-example.jpeg, procedular yellow ground variance, not all green like now.
-- switch from grass blades to plane with transparent grass image style. grass-textures directory contains some.
+- make terrain texture look like terrain-texture-example.jpeg, procedular yellow ground variance, not all green like now.
+- switch from grass blades to plane with transparent grass image style. c-game/data/pak_1/images/grass-textures directory contains some.
 - migrate to /home/enes/Projects/c/cpp-thirdparty/fsr3.1/git/samples/lpm instead of our own tonemapping.
 - investigate /home/enes/Projects/c/cpp-thirdparty/fsr3.1/git/samples/hybridshadows, can we take advantage of their raster shadows? we are not interested in raytracing.
 - @plans/ffx-hybrid-shadows-raster.md better shadows.
