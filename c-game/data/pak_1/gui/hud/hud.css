@@ -4,6 +4,7 @@ body {
   height: 100%;
   background-color: rgba(0, 0, 0, 0);
   font-family: "Sometype Mono";
+  pointer-events: none;
 }
 
 /* ── Stats Panel ─────────────────────────────────── */
@@ -163,4 +164,3 @@ body {
   background-color: rgb(200, 120, 40);
   pointer-events: none;
 }
-
