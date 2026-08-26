@@ -68,7 +68,11 @@ void RenderSystem::added() {
 
     /* Restore per-effect enable/disable from saved settings. */
     if (utils::settingsGetBool("shadowsDisabled")) vulkanShadowPassSetDisabled(1);
-    if (utils::settingsGetBool("hybridShadowsEnabled")) {
+    /* FFX hybrid shadows ride on the master Shadows toggle: when shadows are
+     * on, the FFX classifier/denoiser mask is the default shadow path.  The
+     * hidden disableHybridShadows setting forces the raster (PCF) fallback.
+     * hybridShadowsSun (degrees) is 0 = use the pass default. */
+    if (!utils::settingsGetBool("shadowsDisabled") && !utils::settingsGetBool("disableHybridShadows")) {
         vulkanShadowDenoisePassSetEnabled(1);
         double hsSun = utils::settingsGetDouble("hybridShadowsSun");
         if (hsSun > 0.0) vulkanShadowDenoisePassSetSunAngle((float)hsSun);

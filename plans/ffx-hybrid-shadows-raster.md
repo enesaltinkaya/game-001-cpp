@@ -347,6 +347,18 @@ view-space XY (R16G16 SNORM). Add a full-res R16G16B16_SFLOAT
   (per-frame `hs_lit_*.jpg` + `hs_mask_*.jpg` in the dir). The plan's
   `ENGINE_HYBRID_SHADOWS_SUN` / `_BLOCKER` / `_DUMP` names were superseded
   by these.
+- **Settings model change (hybrid is now the default shadow path)**: the
+  player-facing GUI exposes only the master **Shadows** toggle
+  (`shadowsDisabled`).  When shadows are on, the FFX hybrid mask is the
+  default shadow path; the standalone "Soft Shadows (Hybrid)" toggle and the
+  sun-size slider were removed from the Graphics GUI.  A HIDDEN setting
+  `disableHybridShadows` (bool, default false, not in the GUI) forces the
+  raster (PCF) fallback when true.  Effective FFX state =
+  `!shadowsDisabled && !disableHybridShadows`, applied at startup
+  (`Renderer.cpp`) and by `toggleShadows` in the Graphics GUI.  The old
+  `hybridShadowsEnabled` setting was dropped (vestigial key may remain in
+  existing files, ignored).  `hybridShadowsSun` is now a settings.json / env
+  tuning knob only (no GUI slider).
 - **Dump readback ordering bug (found during A/B validation, fixed)**: `hsReadbackPixels`
   memcpy'd the mapped readback buffer *before* `vulkanTransientEnd` (submit +
   fence-wait), i.e. before the GPU `vkCmdCopyImageToBuffer` had even been

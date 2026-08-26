@@ -77,7 +77,6 @@ static char* dofLabel;
 static char* contactShadowLabel;
 static char* fogLabel;
 static char* taaLabel;
-static char* hybridShadowsLabel;
 static int   fogMode;
 static char upscalerLabelText[64];
 static char aaPolicyLabelText[192];
@@ -91,9 +90,6 @@ static char dofLabelText[16];
 static char contactShadowLabelText[16];
 static char fogLabelText[16];
 static char taaLabelText[16];
-static char hybridShadowsLabelText[16];
-static float hybridShadowsSunPercent;
-static int   hybridShadowsSunTaskKey = -1;
 
 static int upscalerPrev(void* _);
 static int upscalerNext(void* _);
@@ -111,9 +107,6 @@ static int toggleBloom(void* _);
 static int toggleContactShadow(void* _);
 static int toggleFog(void* _);
 static int toggleTaa(void* _);
-static int toggleHybridShadows(void* _);
-static int hybridShadowsSunChange(void* _);
-static void persistHybridShadowsSun(void* _);
 
 void SettingsGraphicsGui::added() {
     engine::luaRegisterFunction("upscalerPrev", upscalerPrev);
@@ -132,8 +125,6 @@ void SettingsGraphicsGui::added() {
     engine::luaRegisterFunction("toggleContactShadow", toggleContactShadow);
     engine::luaRegisterFunction("toggleFog", toggleFog);
     engine::luaRegisterFunction("toggleTaa", toggleTaa);
-    engine::luaRegisterFunction("toggleHybridShadows", toggleHybridShadows);
-    engine::luaRegisterFunction("hybridShadowsSunChange", hybridShadowsSunChange);
 
     /* Read live renderer state rather than stale settings values so that
      * changes made via the debug GUI (or elsewhere) are reflected. */
@@ -150,10 +141,6 @@ void SettingsGraphicsGui::added() {
     syncAAUi();
 
     renderScalePercent = engine::rendererGetRenderScale() * 100.0f;
-
-    hybridShadowsSunPercent = (engine::vulkanShadowDenoisePassGetSunAngle() - 0.1f) / 3.9f * 100.0f;
-    if (hybridShadowsSunPercent < 0.0f) hybridShadowsSunPercent = 0.0f;
-    if (hybridShadowsSunPercent > 100.0f) hybridShadowsSunPercent = 100.0f;
 
     document = rmlNewDocument("gui/settings/graphics/graphics.html");
     model    = rmlCreateModel("graphics");
@@ -178,8 +165,6 @@ void SettingsGraphicsGui::added() {
     rmlBind(model, "contactShadowLabel", &contactShadowLabel);
     rmlBind(model, "fogLabel", &fogLabel);
     rmlBind(model, "taaLabel", &taaLabel);
-    rmlBind(model, "hybridShadowsLabel", &hybridShadowsLabel);
-    rmlBindFloat(model, "hybridShadowsSunPercent", &hybridShadowsSunPercent);
     rmlLoadDocument(document);
     rmlShowDocument(document);
 }
@@ -225,8 +210,6 @@ static void syncAAUi(void) {
 
     snprintf(shadowsLabelText, sizeof(shadowsLabelText), "%s", engine::vulkanShadowPassIsDisabled() ? "Off" : "On");
     shadowsLabel = shadowsLabelText;
-    snprintf(hybridShadowsLabelText, sizeof(hybridShadowsLabelText), "%s", engine::vulkanShadowDenoisePassIsEnabled() ? "On" : "Off");
-    hybridShadowsLabel = hybridShadowsLabelText;
     snprintf(ssrLabelText, sizeof(ssrLabelText), "%s", engine::vulkanSsrPassIsDisabled() ? "Off" : "On");
     ssrLabel = ssrLabelText;
     snprintf(aoLabelText, sizeof(aoLabelText), "%s", engine::vulkanAOPassIsDisabled() ? "Off" : "On");
@@ -400,10 +383,6 @@ static void flushPendingTasks(void) {
         utils::futureTaskRemove(dofTaskKey);
         persistDofSettings(nullptr);
     }
-    if (hybridShadowsSunTaskKey != -1) {
-        utils::futureTaskRemove(hybridShadowsSunTaskKey);
-        persistHybridShadowsSun(nullptr);
-    }
 }
 
 int graphicsClose(void* _) {
@@ -415,8 +394,6 @@ int graphicsClose(void* _) {
 static void syncEffectLabels(void) {
     snprintf(shadowsLabelText, sizeof(shadowsLabelText), "%s", engine::vulkanShadowPassIsDisabled() ? "Off" : "On");
     shadowsLabel = shadowsLabelText;
-    snprintf(hybridShadowsLabelText, sizeof(hybridShadowsLabelText), "%s", engine::vulkanShadowDenoisePassIsEnabled() ? "On" : "Off");
-    hybridShadowsLabel = hybridShadowsLabelText;
     snprintf(taaLabelText, sizeof(taaLabelText), "%s", engine::rendererIsTAAEnabled() ? "On" : "Off");
     taaLabel = taaLabelText;
     snprintf(lensLabelText, sizeof(lensLabelText), "%s", engine::vulkanLensPassIsDisabled() ? "Off" : "On");
@@ -437,7 +414,6 @@ static void syncEffectLabels(void) {
 
 static void persistEffectSettings(void) {
     utils::settingsSetBool("shadowsDisabled", engine::vulkanShadowPassIsDisabled());
-    utils::settingsSetBool("hybridShadowsEnabled", engine::vulkanShadowDenoisePassIsEnabled());
     utils::settingsSetBool("ssrDisabled", engine::vulkanSsrPassIsDisabled());
     utils::settingsSetBool("aoDisabled", engine::vulkanAOPassIsDisabled());
     utils::settingsSetBool("bloomDisabled", engine::vulkanBloomPassIsDisabled());
@@ -461,7 +437,12 @@ static void persistEffectSettings(void) {
 }
 
 int toggleShadows(void* _) {
-    engine::vulkanShadowPassSetDisabled(!engine::vulkanShadowPassIsDisabled());
+    char newDisabled = !engine::vulkanShadowPassIsDisabled();
+    engine::vulkanShadowPassSetDisabled(newDisabled);
+    /* The Shadows toggle is the master switch for FFX hybrid shadows too:
+     * when shadows are on, the FFX mask is the default shadow path.  The
+     * hidden disableHybridShadows setting forces the raster (PCF) fallback. */
+    engine::vulkanShadowDenoisePassSetEnabled(!newDisabled && !utils::settingsGetBool("disableHybridShadows"));
     syncEffectLabels();
     rmlUpdateDirtyAll(model);
     persistEffectSettings();
@@ -570,44 +551,6 @@ int toggleContactShadow(void* _) {
     syncEffectLabels();
     rmlUpdateDirtyAll(model);
     persistEffectSettings();
-    return 0;
-}
-
-/* Sun-size slider (0-100%) -> sun angular diameter in degrees (0.1..4.0).
- * The pass clamps the range again (0.1deg floor, 10deg ceiling). */
-static float hsSunPctToDeg(float pct) {
-    return 0.1f + (pct / 100.0f) * 3.9f;
-}
-
-static void persistHybridShadowsSun(void* _) {
-    hybridShadowsSunTaskKey = -1;
-
-    /* Read the bound slider value here (debounced), not in the change
-     * handler -- RMLUI writes the fresh value back only while processing
-     * the 'change' event (same caveat as the lens sliders). */
-    engine::vulkanShadowDenoisePassSetSunAngle(hsSunPctToDeg(hybridShadowsSunPercent));
-
-    utils::settingsSetDouble("hybridShadowsSun", (double)engine::vulkanShadowDenoisePassGetSunAngle());
-    utils::settingsWrite();
-
-    if (model) {
-        rmlUpdateDirtyAll(model);
-    }
-}
-
-int toggleHybridShadows(void* _) {
-    engine::vulkanShadowDenoisePassSetEnabled(!engine::vulkanShadowDenoisePassIsEnabled());
-    syncEffectLabels();
-    rmlUpdateDirtyAll(model);
-    persistEffectSettings();
-    return 0;
-}
-
-int hybridShadowsSunChange(void* _) {
-    if (hybridShadowsSunTaskKey != -1) {
-        utils::futureTaskRemove(hybridShadowsSunTaskKey);
-    }
-    hybridShadowsSunTaskKey = utils::futureTaskAdd(500, persistHybridShadowsSun, nullptr);
     return 0;
 }
 
