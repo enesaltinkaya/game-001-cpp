@@ -30,9 +30,7 @@ static void renderScaleApply(void* _);
 
 SettingsGraphicsGui settingsGraphicsGui;
 
-SettingsGraphicsGui::SettingsGraphicsGui() : engine::System("settingsGraphicsGui") {
-    menuGui = 1;
-}
+SettingsGraphicsGui::SettingsGraphicsGui() : engine::System("settingsGraphicsGui") {}
 
 static void* document;
 static void* model;
@@ -150,7 +148,6 @@ void SettingsGraphicsGui::added() {
     renderScalePercent = engine::rendererGetRenderScale() * 100.0f;
 
     document = rmlNewDocument("gui/settings/graphics/graphics.html");
-    rmlDocument = document;
     model    = rmlCreateModel("graphics");
     rmlBindBool(model, "renderScaleDisabled", &renderScaleDisabled);
     rmlBind(model, "upscalerLabel", &upscalerLabel);
@@ -190,7 +187,6 @@ void SettingsGraphicsGui::removed() {
     rmlUnloadModel(model);
     document = nullptr;
     model    = nullptr;
-    rmlDocument = nullptr;
 }
 
 static void syncAAUi(void) {

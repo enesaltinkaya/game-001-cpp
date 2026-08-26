@@ -531,7 +531,7 @@ void PlayerSystem::preUpdate() {
     float rawDy         = 0.0f;
     bool anyDragNow     = false;
     bool anyDragBefore  = false;
-    char overMenuGui    = 0;
+    char guiInteracting = 0;
 
     // In top-down mode, delegate camera to TopDownCamera system
     if (gCameraMode == CAM_MODE_ISO) {
@@ -568,26 +568,31 @@ void PlayerSystem::preUpdate() {
     anyDragNow  = playerInput.rightMouse || playerInput.leftMouse;
     anyDragBefore = piPrevRightMouse || piPrevLeftMouse;
 
-    /* A press that lands on a menu-style gui (debug gui, settings) is a
-     * UI click, not a camera drag: no cursor hide, no delta accumulation
+    /* A press that lands on the GUI (debug gui, settings, ...) is a UI
+     * click, not a camera drag: no cursor hide, no delta accumulation
      * (SDL's relative accumulator runs in absolute mode too, so a held
-     * gui click would otherwise rotate the camera). */
-    overMenuGui = engine::guiManagerIsMouseOverMenuGui();
+     * gui click would otherwise rotate the camera). RmlUi reports the
+     * interaction itself (hover or active press on any document element). */
+    guiInteracting = engine::guiManagerIsMouseInteracting();
 
     // Cursor show/hide on mouse-button transitions.
     // Use SDL relative mouse mode — it works on Wayland (where warping
     // is not supported) and automatically restores the cursor position
     // when the mode is exited.
-    if (anyDragNow && !anyDragBefore && !overMenuGui) {
+    if (anyDragNow && !anyDragBefore && !guiInteracting) {
         engine::windowSystemHideCursor();
         // Drain any stale delta from the mode switch.
         engine::windowSystemGetRelativeMouseDelta(&rawDx, &rawDy);
-    } else if (!anyDragNow && anyDragBefore) {
+    } else if (!anyDragNow && anyDragBefore && !engine::windowSystemIsCursorVisible()) {
+        /* Only restore when this press actually entered relative mode.
+         * A press that landed on the GUI never hid the cursor, and
+         * restoring here would warp it back to the stale position
+         * saved by the previous drag. */
         engine::windowSystemShowCursor();
     }
 
     // Accumulate relative mouse only during an ongoing drag.
-    if (anyDragNow && anyDragBefore && !overMenuGui) {
+    if (anyDragNow && anyDragBefore && !guiInteracting) {
         playerInput.mouseDx += rawDx;
         playerInput.mouseDy += rawDy;
     }

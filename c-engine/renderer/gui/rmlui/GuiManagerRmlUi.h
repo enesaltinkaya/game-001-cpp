@@ -20,11 +20,11 @@ extern GuiManagerRmlUi guiManagerRmlUi;
 void guiManagerAddGuiNextFrame(System* gui);
 void guiManagerRemoveGuiNextFrame(System* gui);
 
-/* 1 if the mouse cursor is inside the panel region of any active
- * menu-style GUI (gui->menuGui). Game input that would conflict with
- * the menu (the player camera's click-hold-rotate) should be gated on
- * this. Only meaningful while the cursor is visible. */
-char guiManagerIsMouseOverMenuGui(void);
+/* 1 if the mouse cursor is hovering over, or has activated, an element
+ * of any loaded RmlUi document (Rml::Context::IsMouseInteracting).
+ * Game input that would conflict with the GUI (the player camera's
+ * click-hold-rotate) should be gated on this. */
+char guiManagerIsMouseInteracting(void);
 
 extern std::vector<System*> rmluiGuis;
 

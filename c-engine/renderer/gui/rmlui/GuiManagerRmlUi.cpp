@@ -194,17 +194,16 @@ void guiManagerAddGuiNextFrame(System* gui) {
     utils::futureTaskAdd(0, addGui, gui);
 }
 
-char guiManagerIsMouseOverMenuGui(void) {
-    /* A hidden cursor means relative-mouse mode (an in-flight camera
-     * drag) — the absolute position is frozen, so nothing can be
-     * "over" a menu. */
-    if (!windowSystemIsCursorVisible()) return 0;
-
-    for (System* gui : rmluiGuis) {
-        if (!gui->menuGui || !gui->rmlDocument) continue;
-        if (rmlDocumentIsMouseOver(gui->rmlDocument, input.xpos, input.ypos)) return 1;
-    }
-    return 0;
+char guiManagerIsMouseInteracting(void) {
+    /* RmlUi's own answer (Rml::Context::IsMouseInteracting): the cursor
+     * hovers over, or has activated, an element in any loaded document.
+     * The context state is refreshed by rmlUpdate() after the input
+     * events are forwarded, so this lags the live cursor by one frame —
+     * fine for gating camera input. While a camera drag is in flight
+     * (cursor hidden, moves not forwarded) the state is frozen at
+     * "not interacting", so an in-flight drag is never blocked by its
+     * own gate. */
+    return rmlIsMouseInteracting();
 }
 
 void guiManagerRemoveGuiNextFrame(System* gui) {

@@ -12,9 +12,7 @@ namespace game {
 
 SettingsGui settingsGui;
 
-SettingsGui::SettingsGui() : engine::System("settingsGui") {
-    menuGui = 1;
-}
+SettingsGui::SettingsGui() : engine::System("settingsGui") {}
 
 static void* document;
 
@@ -25,7 +23,6 @@ static int showGraphicsSettings(void* _);
 
 void SettingsGui::added() {
     document = rmlNewDocument("gui/settings/settings.html");
-    rmlDocument = document;
     rmlLoadDocument(document);
     rmlShowDocument(document);
 
@@ -38,7 +35,6 @@ void SettingsGui::added() {
 void SettingsGui::removed() {
     rmlUnloadDocument(document);
     document = nullptr;
-    rmlDocument = nullptr;
 }
 
 void settingsGuiHide(void) {

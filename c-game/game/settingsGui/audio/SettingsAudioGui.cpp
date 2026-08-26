@@ -12,9 +12,7 @@ namespace game {
 
 SettingsAudioGui settingsAudioGui;
 
-SettingsAudioGui::SettingsAudioGui() : engine::System("settingsAudioGui") {
-    menuGui = 1;
-}
+SettingsAudioGui::SettingsAudioGui() : engine::System("settingsAudioGui") {}
 
 static void* document;
 static void* model;
@@ -32,7 +30,6 @@ void SettingsAudioGui::added() {
     music   = utils::settingsGetDouble("music");
 
     document = rmlNewDocument("gui/settings/audio/audio.html");
-    rmlDocument = document;
     model    = rmlCreateModel("audio");
     rmlBindFloat(model, "effects", &effects);
     rmlBindFloat(model, "music", &music);
@@ -43,7 +40,6 @@ void SettingsAudioGui::added() {
 void SettingsAudioGui::removed() {
     rmlUnloadDocument(document);
     rmlUnloadModel(model);
-    rmlDocument = nullptr;
 }
 
 int audioSettingsClose(void* _) {
