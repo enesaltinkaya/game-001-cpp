@@ -198,19 +198,6 @@ float sampleShadowCascade(int cascade, vec3 worldPos, vec3 normal,
     return sum / weightSum;
 }
 
-/* Sample the FFX hybrid-shadows denoised mask (full-res, .r = lit fraction).
- * Returns 1.0 when the pass is off (index 0). Mirrors sampleContactShadow:
- * fetched at gl_FragCoord / viewport through the bindless sampled pool. */
-float sampleShadowMask(void) {
-    if (sceneBuffer.shadow.shadowMaskImageIndex == 0u)
-        return 1.0;
-    vec2 screenUV = gl_FragCoord.xy / sceneBuffer.cameras[0].viewport;
-    return texture(
-        sampler2D(textures[nonuniformEXT(sceneBuffer.shadow.shadowMaskImageIndex)],
-                  samplers[SAMPLER_CLAMP_LINEAR]),
-        screenUV).r;
-}
-
 /* -----------------------------------------------------------------------
  * Main shadow entry point — called from forward fragment shaders
  * ----------------------------------------------------------------------- */
@@ -219,13 +206,6 @@ vec4 sampleShadowFull(vec3 worldPos, vec3 normal) {
         return debugShadow(worldPos, normal);
 
     ShadowData sd = sceneBuffer.shadow;
-
-    /* FFX hybrid-shadows mask: when the pass is enabled it replaces the
-     * per-cascade PCF (the PCF path below stays as the fallback). */
-    if (sd.shadowMaskImageIndex != 0u) {
-        float mask = sampleShadowMask();
-        return vec4(vec3(mask), mask);
-    }
 
     /* No shadow map bound */
     if (sd.cascadeCount == 0u)

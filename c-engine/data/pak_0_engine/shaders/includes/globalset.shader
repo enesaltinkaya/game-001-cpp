@@ -81,7 +81,6 @@ struct ShadowData {
     vec4 shadowParams;          // x: bias, y: normalBias, z: mapSize, w: 1/mapSize
     uint shadowMapIndex[SHADOW_CASCADE_COUNT];
     uint cascadeCount;
-    uint shadowMaskImageIndex;   // bindless sampled index of the FFX hybrid-shadows mask (0 = off)
     float lightSize;            // unused (PCSS removed), kept for struct alignment
     uint temporalActive;         // 1 when temporal upscaler (FSR) is active — enables temporal PCF noise
     uint contactShadowImageIndex;

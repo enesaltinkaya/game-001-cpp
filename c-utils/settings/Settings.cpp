@@ -48,14 +48,6 @@ void settingsInit(void) {
      * 3=high (4096/3/160m).  shadowsDisabled above is the legacy on/off key,
      * kept in sync by the settings GUI and read once for migration. */
     templates.push_back((Template{"shadowQuality", "int", 2.}));
-    /* FFX hybrid-shadows (raster CSM + FFX classifier/denoiser mask) ride on
-     * the master Shadows toggle (shadowsDisabled): when shadows are on the
-     * FFX mask is the default shadow path.  hybridShadowsSun (degrees) is
-     * 0 = use the pass default.  disableHybridShadows is a HIDDEN override
-     * (not exposed in the settings GUI): when true it forces the raster (PCF)
-     * fallback instead of the FFX mask, even while shadows are on. */
-    templates.push_back((Template{"hybridShadowsSun", "double", 0.}));
-    templates.push_back((Template{"disableHybridShadows", "boolean", 0.}));
     templates.push_back((Template{"ssrDisabled", "boolean", 0.}));
     templates.push_back((Template{"aoDisabled", "boolean", 0.}));
     templates.push_back((Template{"bloomDisabled", "boolean", 0.}));

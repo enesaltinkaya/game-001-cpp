@@ -16,7 +16,6 @@
 #include "renderer/vulkan/pass/contact_shadow/VulkanContactShadowPass.h"
 #include "renderer/vulkan/pass/fsr/VulkanFsrUtils.h"
 #include "renderer/vulkan/pass/shadow/VulkanShadowPass.h"
-#include "renderer/vulkan/pass/shadow_denoise/VulkanShadowDenoisePass.h"
 #include "renderer/vulkan/pass/ssr/VulkanSsrPass.h"
 #include "renderer/vulkan/pass/volumetric/VulkanVolumetricPass.h"
 #include "settings/Settings.h"
@@ -81,15 +80,6 @@ void RenderSystem::added() {
     }
     vulkanShadowPassSetQuality((engine::ShadowQuality)shadowQuality);
 
-    /* FFX hybrid shadows ride on the master Shadows toggle: with any active
-     * quality level the FFX classifier/denoiser mask is the default shadow
-     * path.  The hidden disableHybridShadows setting forces the raster (PCF)
-     * fallback.  hybridShadowsSun (degrees) is 0 = use the pass default. */
-    if (shadowQuality != engine::SHADOW_QUALITY_OFF && !utils::settingsGetBool("disableHybridShadows")) {
-        vulkanShadowDenoisePassSetEnabled(1);
-        double hsSun = utils::settingsGetDouble("hybridShadowsSun");
-        if (hsSun > 0.0) vulkanShadowDenoisePassSetSunAngle((float)hsSun);
-    }
     if (utils::settingsGetBool("ssrDisabled")) vulkanSsrPassSetDisabled(1);
     if (utils::settingsGetBool("aoDisabled")) vulkanAOPassSetDisabled(1);
     if (utils::settingsGetBool("bloomDisabled")) vulkanBloomPassSetDisabled(1);

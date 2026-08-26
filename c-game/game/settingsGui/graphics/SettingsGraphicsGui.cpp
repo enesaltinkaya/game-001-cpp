@@ -9,7 +9,6 @@
 #include "renderer/vulkan/pass/dof/VulkanDofPass.h"
 #include "renderer/vulkan/pass/lens/VulkanLensPass.h"
 #include "renderer/vulkan/pass/shadow/VulkanShadowPass.h"
-#include "renderer/vulkan/pass/shadow_denoise/VulkanShadowDenoisePass.h"
 #include "renderer/vulkan/pass/ssr/VulkanSsrPass.h"
 #include "renderer/vulkan/pass/contact_shadow/VulkanContactShadowPass.h"
 #include "renderer/vulkan/pass/volumetric/VulkanVolumetricPass.h"
@@ -453,12 +452,6 @@ int toggleShadows(void* _) {
     int q = (int)engine::vulkanShadowPassGetQuality() + 1;
     if (q >= engine::SHADOW_QUALITY_COUNT) q = 0;
     engine::vulkanShadowPassSetQuality((engine::ShadowQuality)q);
-    /* The Shadows row is the master switch for FFX hybrid shadows too:
-     * with any active quality level the FFX mask is the default shadow
-     * path.  The hidden disableHybridShadows setting forces the raster
-     * (PCF) fallback. */
-    engine::vulkanShadowDenoisePassSetEnabled(q != engine::SHADOW_QUALITY_OFF &&
-                                              !utils::settingsGetBool("disableHybridShadows"));
     syncEffectLabels();
     rmlUpdateDirtyAll(model);
     persistEffectSettings();

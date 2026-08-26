@@ -114,14 +114,6 @@ static float focusDistance = 0.0f; /* player-character distance for cascade bias
 
 static mat4 cascadeViewProj[SHADOW_CASCADE_COUNT];
 static float cascadeSplits[SHADOW_CASCADE_COUNT]; /* view-space far plane */
-/* Per-cascade light-view (rotation, translation=0) and light orthographic
- * projection.  Exposed for the FFX shadow classifier, which decomposes the
- * world→shadow-UV transform as  shadowUV = lightProj * (lightView * world):
- * a single shared lightView (the rotation is identical for every cascade —
- * it derives from the fixed sun direction) plus a per-cascade scale/offset
- * (the diagonal / translation of lightProj). */
-static mat4 cascadeLightView[SHADOW_CASCADE_COUNT];
-static mat4 cascadeProj[SHADOW_CASCADE_COUNT];
 static vec3 cascadeLightDir; /* toward the scene (-sun.direction) */
 
 /* ── Helpers ──────────────────────────────────────────────────────────── */
@@ -320,8 +312,6 @@ static void buildCascadeMatrix(const Camera* cam,
     glm_mat4_mul(lightProj, lightView, lightViewProjAbs);
 
     glm_mat4_copy(lightViewProjAbs, cascadeViewProj[cascadeIndex]);
-    glm_mat4_copy(lightProj, cascadeProj[cascadeIndex]);
-    glm_mat4_copy(lightView, cascadeLightView[cascadeIndex]);
 }
 
 /* ── Image management ─────────────────────────────────────────────────── */
@@ -774,22 +764,5 @@ char vulkanShadowPassIsPCSS(void) {
 
 void vulkanShadowPassSetFocusDistance(float distance) {
     focusDistance = distance;
-}
-
-void vulkanShadowPassGetCascadeData(ShadowCascadeData* out) {
-    if (!out) return;
-    const ShadowQualityParams qs = shadowQualityParams(shadowQuality);
-    out->cascadeCount = qs.cascadeCount;
-    out->cascadeSize  = qs.mapSize;
-    glm_vec3_copy(cascadeLightDir, out->lightDir);
-    for (int i = 0; i < SHADOW_CASCADE_COUNT; i++) {
-        glm_mat4_copy(cascadeProj[i], out->cascadeProj[i]);
-        glm_mat4_copy(cascadeLightView[i], out->cascadeLightView[i]);
-    }
-}
-
-VulkanImage* vulkanShadowPassGetShadowMapLayer(int index) {
-    if (index < 0 || index >= SHADOW_CASCADE_COUNT) return NULL;
-    return shadowMapLayerImages[index].img ? &shadowMapLayerImages[index] : NULL;
 }
 }  // namespace engine
