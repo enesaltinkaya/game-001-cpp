@@ -51,6 +51,7 @@ VulkanImage r_vulkanCreateImg(VulkanImageInfo info) {
         imageCreateInfo.imageType   = VK_IMAGE_TYPE_3D;
         imageCreateInfo.extent      = VkExtent3D{static_cast<uint32_t>(info.width), static_cast<uint32_t>(info.height), static_cast<uint32_t>(info.layers)};
         imageCreateInfo.arrayLayers = 1;  // Must be 1 for 3D images
+        image.extent                = imageCreateInfo.extent;  // keep the struct field in sync (depth)
     } else {
         imageCreateInfo.imageType   = VK_IMAGE_TYPE_2D;
         imageCreateInfo.extent      = VkExtent3D{static_cast<uint32_t>(info.width), static_cast<uint32_t>(info.height), 1};
@@ -94,8 +95,11 @@ VulkanImage r_vulkanCreateImg(VulkanImageInfo info) {
     imageViewCreateInfo.subresourceRange.baseArrayLayer = 0;
     vkCreateImageView(vulkan.device, &imageViewCreateInfo, nullptr, &image.view);
 
-    image.views.resize(info.layers);
-    for (i32 i = 0, si = info.layers; i < si; i++) {
+    /* 3D images have no per-layer concept — layers holds the extent depth,
+     * one 3D view covers the whole volume. */
+    i32 viewCount = (info.type == VK_IMAGE_TYPE_3D) ? 1 : info.layers;
+    image.views.resize(viewCount);
+    for (i32 i = 0; i < viewCount; i++) {
         VkImageViewCreateInfo perLayerViewCI = {};
         perLayerViewCI.sType                 = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
         if (info.type == VK_IMAGE_TYPE_3D) {

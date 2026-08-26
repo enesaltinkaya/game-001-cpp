@@ -13,7 +13,7 @@ FFX passes (`VulkanFsrPass`, CACAO in `VulkanAOPass`, `VulkanLpmPass`, `VulkanLe
 ## Status
 
 - [x] Step 0 — SDK side verified (library + sample run as reference)
-- [ ] Step 1 — Engine plumbing: FFX device, voxelizer context + resources (no instances)
+- [x] Step 1 — Engine plumbing: FFX device, voxelizer context + resources (no instances)
 - [ ] Step 2 — Voxelizer smoke test: one instance + SDF debug visualization
 - [ ] Step 3 — Real scene meshes registered (static world)
 - [ ] Step 4 — Terrain SDF meshes (streaming tiles)
@@ -313,10 +313,34 @@ name)` (uses `ffxGetBufferResourceDescriptionVK` — synthesize the
 
 No instances yet. No GI context yet.
 
-**Gate 1:** context create returns `FFX_OK`; a `play log 5000` run completes with
-the validation layer on and **zero** FFX-related warnings/errors; stats struct
-(`FfxBrixelizerStats` via `outStats`) shows `freeBricks > 0`; profile shows the
-empty-update cost (record it).
+**Gate 1 (met 2026-08-26):** `ffxBrixelizerContextCreate` → `FFX_OK` (log: "created
+voxelizer context (8 cascades, voxel 2-256 m, gpu scratch 1024 MiB)"); `play log 5000`
+completes with the validation layer on and **zero** validation/FFX errors; stats readback
+live with `freeBricks = 262144` (> 0, all bricks free — no instances yet); empty-update
+cost recorded: **~0.35–0.36 ms** GPU (8 static-cascade pass set, zero instances, forced
+profile logged every 120 frames).
+
+Deviations from the plan text (verified against the SDK source, kept):
+- `gpuScratch` is **1 GiB** (the sample's `GPU_SCRATCH_BUFFER_SIZE`), not 256 MiB: with
+  the sample budgets (maxReferences 32 M / triangleSwapSize 300 M) the required scratch
+  is ~892 MB — the 256 MiB estimate in the step text was wrong; the overflow check is
+  kept as a log error.
+- The scratch buffer needs `VK_BUFFER_USAGE_TRANSFER_SRC_BIT` (the FFX backend
+  `vkCmdCopyBuffer`s job/constant data into it each update).
+- The SDF atlas needs `VK_IMAGE_USAGE_TRANSFER_DST_BIT` (one-time clear on creation;
+  history resets in Step 10).
+- `r_vulkanCreateImg` (VulkanImage.cpp): two 3D-path fixes — the 3D branch now keeps
+  `VulkanImage.extent` in sync (depth was lost, which made the FFX wrap helper
+  synthesize a 2D-array description for the 3D atlas), and 3D images create a single
+  3D view instead of one duplicated view per "layer" (512 handles for the atlas).
+
+Known issue (deferred — gameplay is clean, this is shutdown-only): the process segfaults
+at `vulkanDestroyDelayed` → `VulkanBrixelizerPass::removed()` →
+`ffxBrixelizerContextDestroy` (fault attributed to the call site; the stored FFX
+interface copy in the context looks intact, so the exact faulting instruction inside the
+FFX destroy path is unconfirmed). Investigate when Step 10 (robustness) lands — likely
+order: destroy the FFX context before the engine's VMA/device teardown, or a stale
+pipeline-state deref in the backend's `DestroyPipelineVK`.
 
 ## Step 2 — Voxelizer smoke test: one instance + SDF debug view
 
