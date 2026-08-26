@@ -172,6 +172,23 @@ bool heightmapTerrainCopyTile(HeightmapTerrain* ht,
                               i32 tileZ,
                               float* outHeights);
 
+// Lock-safe bulk copy of one tile's physics grid ([HEIGHTMAP_PHYSICS_PSN]^2,
+// metres) into outHeights. The physics grid is what the Jolt heightfield is
+// built from and what the render lattice lifts, so it is the exact
+// walkable/rendered ground surface; consumers that place world objects on
+// the ground should sample THIS grid, not the finer CPU height grid. Same
+// copy rationale as heightmapTerrainCopyTile.
+bool heightmapTerrainCopyPhysicsTile(HeightmapTerrain* ht,
+                                     i32 tileX,
+                                     i32 tileZ,
+                                     float* outHeights);
+
+// Bilinear sample of a regular height grid spanning [0, dim-1] in both axes
+// (endpoints included; coordinates are clamped to the grid). Shared by the
+// physics-grid generation, heightmapTerrainSample and off-thread consumers
+// that must match the rendered/physics surface exactly.
+float heightmapGridBilinear(const float* grid, u32 dim, float gx, float gz);
+
 // Height (metres) at world (wx, wz). Bilinear fast path through the CPU
 // grid of a READY tile (matches the GPU/physics bilinear surface exactly);
 // falls back to the source for tiles that are not READY yet.

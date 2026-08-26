@@ -80,6 +80,7 @@ namespace game {
     static const u32 kGrassTexCount = sizeof(kGrassTexPaths) / sizeof(kGrassTexPaths[0]);
     static u32 g_grassTexIds[kGrassTexCount];     // texture-array index per variant
     static float g_grassAspects[kGrassTexCount];  // texture width/height per variant
+    static float g_grassBottomVs[kGrassTexCount];  // V of the tuft base (1.0 = no trim)
     static bool g_grassTexLoaded = false;
 
     // The grass card is tintable: the per-instance colour multiplies the texture
@@ -91,6 +92,14 @@ namespace game {
     // Loads the grass card textures (on demand, from the game pak) and records each
     // one's global texture-array index + aspect ratio.  Idempotent: the textures
     // are cached by the texture manager, so the ids are stable across rebuilds.
+    //
+    // It also measures each texture's EMPTY BOTTOM BAND: the tuft images do not
+    // reach the image's bottom edge (the blades end 2-4% above it, the padding
+    // is in the source PNGs), so a card placed exactly on the ground shows its
+    // tuft floating.  g_grassBottomVs stores the V coordinate of the lowest row
+    // the fragment shader's 0.5 alpha test keeps; the card's bottom edge samples
+    // that V instead of 1.0, trimming the empty band so the visible blades end
+    // at the card's base (the ground).
     static void grassLoadTextures(void) {
         if (g_grassTexLoaded) return;
         for (u32 i = 0; i < kGrassTexCount; i++) {
@@ -101,10 +110,51 @@ namespace game {
                     (t->image.width > 0 && t->image.height > 0)
                         ? static_cast<float>(t->image.width) / static_cast<float>(t->image.height)
                         : 1.0f;
+                // Lowest row the fragment shader's 0.5 alpha test keeps (alpha >
+                // 128); its V coordinate trims the empty band below the tuft out
+                // of the card's UVs.  1.0 = no trim.  Missing alpha / single-row
+                // images keep the full UVs.
+                float bottomV = 1.0f;
+                utils::Image& img = t->image;
+                if (img.data && img.channels >= 4 && img.depth == 1 && img.width > 0 &&
+                    img.height > 1) {
+                    const u8* px     = static_cast<const u8*>(img.data);
+                    u32 w            = static_cast<u32>(img.width);
+                    u32 h            = static_cast<u32>(img.height);
+                    u32 ch           = static_cast<u32>(img.channels);
+                    u32 lastRow      = 0;
+                    bool foundRow     = false;
+                    for (u32 y = h - 1; y > 0; y--) {
+                        bool any = false;
+                        for (u32 x = 0; x < w; x++) {
+                            if (px[((y * w + x) * ch) + 3] > 128) {
+                                any = true;
+                                break;
+                            }
+                        }
+                        if (any) {
+                            lastRow  = y;
+                            foundRow = true;
+                            break;
+                        }
+                    }
+                    if (foundRow) {
+                        // Row 0 -> V 0, row h-1 -> V 1 (texel-centre addressing).
+                        bottomV = (lastRow == 0) ? 0.0f : static_cast<float>(lastRow) /
+                                                    static_cast<float>(h - 1);
+                    }
+                }
+                g_grassBottomVs[i] = bottomV;
+                if (bottomV < 1.0f) {
+                    utils::info("azgaarProps: grass texture %s trims %.1f%% empty bottom band",
+                                kGrassTexPaths[i],
+                                (1.0f - bottomV) * 100.0f);
+                }
             } else {
                 utils::warn("azgaarProps: grass texture not found: %s", kGrassTexPaths[i]);
-                g_grassTexIds[i]  = NO_PROPS_TEX;
-                g_grassAspects[i] = 1.0f;
+                g_grassTexIds[i]     = NO_PROPS_TEX;
+                g_grassAspects[i]    = 1.0f;
+                g_grassBottomVs[i]   = 1.0f;
             }
         }
         g_grassTexLoaded = true;
@@ -693,26 +743,33 @@ namespace game {
     }
 
     // A crossed grass card: two perpendicular quads (a "+" viewed from above), each
-    // carrying the full grass texture (unit UVs).  The texture's alpha channel is
-    // tested in the fragment shader (stochasticAlphaDiscard), so only the tuft
-    // pixels survive and the card reads as grass instead of a flat quad.  `aspect`
-    // is the texture's width/height (the mesh is unit-height, so the card width ==
+    // carrying the grass texture.  The texture's alpha channel is tested in the
+    // fragment shader (stochasticAlphaDiscard), so only the tuft pixels survive
+    // and the card reads as grass instead of a flat quad.  `aspect` is the
+    // texture's width/height (the mesh is unit-height, so the card width ==
     // aspect).  `texId` selects the grass texture in the global set 0 `textures`
-    // array.  Verts are white (tintable) so the per-instance biome tint modulates
-    // the texture.  8 verts / 4 tris.
-    static void buildGrassCard(MeshBuilder* mb, u32 texId, float aspect) {
+    // array.  `vBottom` is the V of the card's bottom edge: the card's V spans
+    // [0, vBottom] instead of [0, 1] so the texture's empty bottom band is
+    // trimmed and the visible tuft ends exactly at the card's base (the ground)
+    // instead of floating above it (vBottom = 1.0 keeps the full texture).
+    // Verts are white (tintable) so the per-instance biome tint modulates the
+    // texture.  8 verts / 4 tris.
+    static void buildGrassCard(MeshBuilder* mb, u32 texId, float aspect, float vBottom) {
         if (aspect <= 0.0f) aspect = 1.0f;
+        if (vBottom < 0.0f) vBottom = 0.0f;
+        else if (vBottom > 1.0f) vBottom = 1.0f;
         float hw  = aspect * 0.5f;  // half-width (unit height = 1)
         u32 start = mb->vertCount;
-        // Quad A (along X, in the XY plane).
-        u32 a0 = mbAddVert(mb, -hw, 0.0f, 0.0f, 0, 1, 0, 0.0f, 1.0f);
-        u32 a1 = mbAddVert(mb, hw, 0.0f, 0.0f, 0, 1, 0, 1.0f, 1.0f);
+        // Quad A (along X, in the XY plane).  V=0 is the image top (blades),
+        // V=1 the image bottom (empty padding) — see grassLoadTextures.
+        u32 a0 = mbAddVert(mb, -hw, 0.0f, 0.0f, 0, 1, 0, 0.0f, vBottom);
+        u32 a1 = mbAddVert(mb, hw, 0.0f, 0.0f, 0, 1, 0, 1.0f, vBottom);
         u32 a2 = mbAddVert(mb, hw, 1.0f, 0.0f, 0, 1, 0, 1.0f, 0.0f);
         u32 a3 = mbAddVert(mb, -hw, 1.0f, 0.0f, 0, 1, 0, 0.0f, 0.0f);
         mbQuad(mb, a0, a1, a2, a3);
         // Quad B (along Z, in the ZY plane).
-        u32 b0 = mbAddVert(mb, 0.0f, 0.0f, -hw, 0, 1, 0, 0.0f, 1.0f);
-        u32 b1 = mbAddVert(mb, 0.0f, 0.0f, hw, 0, 1, 0, 1.0f, 1.0f);
+        u32 b0 = mbAddVert(mb, 0.0f, 0.0f, -hw, 0, 1, 0, 0.0f, vBottom);
+        u32 b1 = mbAddVert(mb, 0.0f, 0.0f, hw, 0, 1, 0, 1.0f, vBottom);
         u32 b2 = mbAddVert(mb, 0.0f, 1.0f, hw, 0, 1, 0, 1.0f, 0.0f);
         u32 b3 = mbAddVert(mb, 0.0f, 1.0f, -hw, 0, 1, 0, 0.0f, 0.0f);
         mbQuad(mb, b0, b1, b2, b3);
@@ -1212,7 +1269,10 @@ namespace game {
         for (u32 i = 0; i < kGrassTexCount; i++) {
             mbInit(&grassBuilders[i], kVertCap, kIdxCap);
             if (g_grassTexIds[i] != NO_PROPS_TEX) {
-                buildGrassCard(&grassBuilders[i], g_grassTexIds[i], g_grassAspects[i]);
+                buildGrassCard(&grassBuilders[i],
+                               g_grassTexIds[i],
+                               g_grassAspects[i],
+                               g_grassBottomVs[i]);
                 grassValid++;
             }
         }
@@ -2815,9 +2875,31 @@ namespace game {
             return;
         }
 
+        // Lock-safe copy of the tile's 256^2 physics grid (heap: ~256 KB).
+        // Instances must sit on THIS surface: the render lattice (255 segments
+        // per tile edge) lifts the 512^2 texture at the 256 physics positions,
+        // so the rendered ground == the Jolt heightfield == bilinear over these
+        // 256^2 control points.  Placing instances on the finer 512^2 grid
+        // (the old behaviour) left up to a few cm of gap on the 64/128 m
+        // noise band, with the sign flipping every ~8 m physics cell — the
+        // "grass hovering here, piercing there" artifact.
+        std::vector<float> physHeights(HEIGHTMAP_PHYSICS_PSN * HEIGHTMAP_PHYSICS_PSN);
+        if (!heightmapTerrainCopyPhysicsTile(ht, job->tileX, job->tileZ, physHeights.data())) {
+            delete job;
+            if (hitchOn)
+                utils::info("HITCH: scatter tile(%d,%d) evicted-mid-job (physics) %.1f ms",
+                            job->tileX,
+                            job->tileZ,
+                            (utils::nanos() - jobT0) / 1e6);
+            return;
+        }
+
         const u32 TEX        = HEIGHTMAP_TEX;
+        const u32 PSN        = HEIGHTMAP_PHYSICS_PSN;
         const float tileSize = ht->tileSizeMeters;
         const float tsz      = tileSize / static_cast<float>(TEX - 1u);  // texel world size (m)
+        const float psnScale =
+            static_cast<float>(PSN - 1u) / tileSize;  // world metres -> 256^2 grid units
         const float originX  = static_cast<float>(job->tileX) * tileSize;
         const float originZ  = static_cast<float>(job->tileZ) * tileSize;
         const u32 tileSeed   = g_mapSeed ^ static_cast<u32>(job->tileX * 374761393u) ^
@@ -2854,8 +2936,15 @@ namespace game {
                 float wx = originX + static_cast<float>(tx) * tsz;
                 float wz = originZ + static_cast<float>(tz) * tsz;
 
-                float h = row[tx];
-                if (h < seaY + 0.5f) continue;  // water / below the grass line
+                // Ground height on the 256^2 render/physics surface (bilinear at
+                // this texel's world position).  All instance Ys below use this,
+                // not the 512^2 texel value the surface is lifted from.
+                float hGround =
+                    engine::heightmapGridBilinear(physHeights.data(),
+                                                  PSN,
+                                                  (wx - originX) * psnScale,
+                                                  (wz - originZ) * psnScale);
+                if (hGround < seaY + 0.5f) continue;  // water / below the grass line
 
                 // Slope (finite difference over the grid; clamped at the borders).
                 const u32 txL = (tx > 0u) ? tx - 1u : 0u;
@@ -2919,12 +3008,19 @@ namespace game {
                                                              static_cast<float>(M_PI);
                             float gwx = wx + cosf(ang) * 2.0f;
                             float gwz = wz + sinf(ang) * 2.0f;
+                            // Ground under THIS card (its own xz, not the
+                            // cluster centre): a 2 m arm on any slope changes
+                            // the ground height by up to slope * 2 m, so
+                            // sharing the centre height left cards hovering
+                            // or biting into the rendered surface.
+                            float gGround = engine::heightmapGridBilinear(
+                                physHeights.data(), PSN, (gwx - originX) * psnScale, (gwz - originZ) * psnScale);
                             float gScale =
                                 gdef->baseMin + (gdef->baseMax - gdef->baseMin) *
                                                     propsRand(tileSeed, tx, tz, 0xD2 + gi);
                             engine::PropInstance inst = {};
                             inst.pos[0]               = gwx;
-                            inst.pos[1]               = h;
+                            inst.pos[1]               = gGround;
                             inst.pos[2]               = gwz;
                             inst.yaw   = propsRand(tileSeed, tx, tz, 0xD4 + gi) * 2.0f *
                                          static_cast<float>(M_PI);
@@ -3003,7 +3099,7 @@ namespace game {
 
                     engine::PropInstance inst = {};
                     inst.pos[0]               = wx;
-                    inst.pos[1]               = h;
+                    inst.pos[1]               = hGround;
                     inst.pos[2]               = wz;
                     inst.yaw = propsRand(tileSeed, tx, tz, 0xE1) * 2.0f * static_cast<float>(M_PI);
                     inst.scale = instScale;
@@ -3070,7 +3166,7 @@ namespace game {
                 }
 
                 // ── Rocks (non-biome, on steep / high ground) ──
-                if ((slope > 0.35f || h > 0.5f * maxLand) &&
+                if ((slope > 0.35f || hGround > 0.5f * maxLand) &&
                     !roadNear(&g_roadHash, wx, wz, 12.0f)) {
                     float rockD = 0.001f * (tsz * tsz);
                     if (propsRand(tileSeed, tx, tz, 0xF1) < rockD) {
@@ -3079,7 +3175,7 @@ namespace game {
                             continue;  // overlap gate
                         engine::PropInstance inst = {};
                         inst.pos[0]               = wx;
-                        inst.pos[1]               = h;
+                        inst.pos[1]               = hGround;
                         inst.pos[2]               = wz;
                         inst.yaw =
                             propsRand(tileSeed, tx, tz, 0xF2) * 2.0f * static_cast<float>(M_PI);

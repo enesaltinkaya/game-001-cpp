@@ -49,7 +49,7 @@ HeightmapTerrain* heightmapTerrainGetActive(void) {
 // ── Grid helpers (lock-free: pure math on already-published data) ─────────
 
 // Bilinear sample of a regular grid spanning [0, dim-1] (endpoints included).
-static float heightmapGridBilinear(const float* grid, u32 dim, float gx, float gz) {
+float heightmapGridBilinear(const float* grid, u32 dim, float gx, float gz) {
     if (gx < 0.0f) gx = 0.0f;
     else if (gx > static_cast<float>(dim) - 1.0f) gx = static_cast<float>(dim) - 1.0f;
     if (gz < 0.0f) gz = 0.0f;
@@ -174,6 +174,28 @@ bool heightmapTerrainCopyTile(HeightmapTerrain* ht,
         HeightmapTile* tile = heightmapTerrainFindTile(ht, tileX, tileZ);
         if (tile && tile->state == HEIGHTMAP_TILE_READY && !tile->heights.empty()) {
             memcpy(outHeights, tile->heights.data(), sizeof(float) * static_cast<size_t>(HEIGHTMAP_TEX) * HEIGHTMAP_TEX);
+            copied = true;
+        }
+    }
+    utils::threadUnlock(&heightmapLock);
+    return copied;
+}
+
+bool heightmapTerrainCopyPhysicsTile(HeightmapTerrain* ht,
+                                     i32 tileX,
+                                     i32 tileZ,
+                                     float* outHeights) {
+    if (!ht || !ht->initialized || !outHeights) return false;
+
+    utils::threadLock(&heightmapLock);
+    bool copied = false;
+    if (ht->registered) {
+        HeightmapTile* tile = heightmapTerrainFindTile(ht, tileX, tileZ);
+        if (tile && tile->state == HEIGHTMAP_TILE_READY && !tile->physicsHeights.empty()) {
+            memcpy(outHeights,
+                   tile->physicsHeights.data(),
+                   sizeof(float) * static_cast<size_t>(HEIGHTMAP_PHYSICS_PSN) *
+                       static_cast<size_t>(HEIGHTMAP_PHYSICS_PSN));
             copied = true;
         }
     }
