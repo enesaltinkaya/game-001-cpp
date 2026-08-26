@@ -58,8 +58,9 @@ static char         depthCopyPipeReady = 0;
  * so it cannot sample a layer of the CSM 2D-array shadow map directly.  Each
  * active cascade's depth is copied into a single-layer 2D image that the FFX
  * backend can wrap. */
-static VulkanImage  cascadeDepthImages[2]; /* single-layer 2D D32, per cascade */
+static VulkanImage  cascadeDepthImages[FFX_CLASSIFIER_MAX_SHADOW_MAP_TEXTURES_COUNT]; /* single-layer 2D D32, per cascade */
 static int          cascadeDepthCount = 0;
+static u32          hsCascadeMapSize  = 0; /* CSM map size the cascade depth copies were built for */
 /* The classifier's r_input_shadowMap is an array of 4 textures; the inactive
  * cascade slots (beyond the active count) still need a valid (non-null)
  * resource bound, so a 1x1 dummy depth image fills them. */
@@ -135,6 +136,7 @@ static const u32 HS_TILE_Y = 4;
 static void swapchainCreated(void* _);
 static void hsDestroyResources(void);
 static char hsEnsureContexts(u32 width, u32 height);
+static char hsEnsureCascadeDepths(void);
 static void hsDispatch(VulkanCommand* cmd,
                        VulkanImage*   depth,
                        VulkanImage*   worldNormal,
@@ -188,7 +190,7 @@ static void hsDestroyResources(void) {
         vulkanDestroyImage(&hsDebugImage, NULL);
         hsDebugImage = VulkanImage{};
     }
-    for (int i = 0; i < 2; i++) {
+    for (int i = 0; i < FFX_CLASSIFIER_MAX_SHADOW_MAP_TEXTURES_COUNT; i++) {
         if (cascadeDepthImages[i].img) {
             vulkanDestroyImage(&cascadeDepthImages[i], NULL);
             cascadeDepthImages[i] = VulkanImage{};
@@ -199,11 +201,15 @@ static void hsDestroyResources(void) {
         dummyCascadeDepth = VulkanImage{};
     }
     cascadeDepthCount = 0;
+    hsCascadeMapSize  = 0;
     contextsWidth  = 0;
     contextsHeight = 0;
 }
 
 static char hsEnsureContexts(u32 width, u32 height) {
+    /* The FFX contexts and the fixed-size (resolution-scoped) resources are
+     * independent of the shadow quality level; the per-cascade depth copies
+     * are managed separately (hsEnsureCascadeDepths). */
     if (contextsReady && rayHitImage.img && shadowMaskImage.img &&
         workQueueBuf.buf && workQueueCountBuf.buf &&
         contextsWidth == width && contextsHeight == height) {
@@ -315,27 +321,6 @@ static char hsEnsureContexts(u32 width, u32 height) {
         hsDebugPipeReady = 1;
     }
 
-    /* Single-layer 2D D32 images for the active cascades (the FFX backend
-     * cannot sample a layer of the CSM 2D array directly). */
-    ShadowCascadeData cascadeTmp;
-    vulkanShadowPassGetCascadeData(&cascadeTmp);
-    const int cascadeCount = cascadeTmp.cascadeCount;
-    cascadeDepthCount      = cascadeCount > 2 ? 2 : cascadeCount;
-    for (int i = 0; i < cascadeDepthCount; i++) {
-        cascadeDepthImages[i] = vulkanCreateImage(.name   = "hs_cascade_depth",
-                                                  .format = VK_FORMAT_D32_SFLOAT,
-                                                  .usage  = VK_IMAGE_USAGE_TRANSFER_DST_BIT |
-                                                            VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
-                                                            VK_IMAGE_USAGE_SAMPLED_BIT,
-                                                  .aspect = VK_IMAGE_ASPECT_DEPTH_BIT,
-                                                  .width  = 2048,
-                                                  .height = 2048);
-        if (!cascadeDepthImages[i].img) {
-            hsDestroyResources();
-            return 0;
-        }
-    }
-
     /* 1x1 dummy depth image for the inactive cascade slots. */
     dummyCascadeDepth = vulkanCreateImage(.name   = "hs_dummy_cascade_depth",
                                          .format = VK_FORMAT_D32_SFLOAT,
@@ -349,16 +334,14 @@ static char hsEnsureContexts(u32 width, u32 height) {
     }
 
     /* Initialize the UAV images to GENERAL (and the depth images to a known
-     * layout) so the FFX backend's first barrier is valid. */
+     * layout) so the FFX backend's first barrier is valid.  The per-cascade
+     * depth copies are created by hsEnsureCascadeDepths (quality-scoped). */
     VulkanCommand* cmd = vulkanTransientBegin();
     vulkanTransition(cmd, &rayHitImage, VK_IMAGE_LAYOUT_GENERAL, 0, 1);
     vulkanTransition(cmd, &shadowMaskImage, VK_IMAGE_LAYOUT_GENERAL, 0, 1);
     vulkanTransition(cmd, &depthCopyImage, VK_IMAGE_LAYOUT_GENERAL, 0, 1);
     vulkanTransition(cmd, &hsDebugImage, VK_IMAGE_LAYOUT_GENERAL, 0, 1);
     vulkanTransition(cmd, &dummyCascadeDepth, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
-    for (int i = 0; i < cascadeDepthCount; i++) {
-        vulkanTransition(cmd, &cascadeDepthImages[i], VK_IMAGE_LAYOUT_GENERAL, 0, 1);
-    }
     vulkanTransientEnd(cmd, 1);
 
     /* FFX contexts. */
@@ -410,6 +393,59 @@ static char hsEnsureContexts(u32 width, u32 height) {
     frameIndex     = 0;
     utils::info("vulkanShadowDenoisePass: created FFX classifier+denoiser for %ux%u (%u tiles)",
                 width, height, tileCount);
+    return 1;
+}
+
+/* Single-layer 2D D32 depth copies of the active CSM cascades (the FFX
+ * backend cannot sample a layer of the CSM 2D array directly).  Unlike the
+ * FFX contexts, these are scoped to the active shadow quality level (map
+ * size + cascade count).  A quality change recreates them after a device
+ * wait-idle: the previous frame's FFX dispatch may still be reading the old
+ * copies on the GPU (same pattern as the DOF context recreate). */
+static char hsEnsureCascadeDepths(void) {
+    ShadowCascadeData cascadeNow;
+    vulkanShadowPassGetCascadeData(&cascadeNow);
+
+    if ((u32)cascadeNow.cascadeSize == hsCascadeMapSize &&
+        cascadeNow.cascadeCount == cascadeDepthCount) {
+        return 1;
+    }
+
+    if (hsCascadeMapSize != 0 || cascadeDepthCount != 0) {
+        vulkanWaitIdle("shadow quality change: cascade depth rebuild");
+        for (int i = 0; i < FFX_CLASSIFIER_MAX_SHADOW_MAP_TEXTURES_COUNT; i++) {
+            if (cascadeDepthImages[i].img) {
+                vulkanDestroyImage(&cascadeDepthImages[i], NULL);
+                cascadeDepthImages[i] = VulkanImage{};
+            }
+        }
+    }
+
+    cascadeDepthCount = cascadeNow.cascadeCount > FFX_CLASSIFIER_MAX_SHADOW_MAP_TEXTURES_COUNT
+                            ? FFX_CLASSIFIER_MAX_SHADOW_MAP_TEXTURES_COUNT
+                            : cascadeNow.cascadeCount;
+    for (int i = 0; i < cascadeDepthCount; i++) {
+        cascadeDepthImages[i] = vulkanCreateImage(.name   = "hs_cascade_depth",
+                                                  .format = VK_FORMAT_D32_SFLOAT,
+                                                  .usage  = VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+                                                            VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+                                                            VK_IMAGE_USAGE_SAMPLED_BIT,
+                                                  .aspect = VK_IMAGE_ASPECT_DEPTH_BIT,
+                                                  .width  = cascadeNow.cascadeSize,
+                                                  .height = cascadeNow.cascadeSize);
+        if (!cascadeDepthImages[i].img) return 0;
+    }
+
+    /* Initial layout so the FFX backend's first barrier is valid. */
+    VulkanCommand* cmd = vulkanTransientBegin();
+    for (int i = 0; i < cascadeDepthCount; i++) {
+        vulkanTransition(cmd, &cascadeDepthImages[i], VK_IMAGE_LAYOUT_GENERAL, 0, 1);
+    }
+    vulkanTransientEnd(cmd, 1);
+
+    hsCascadeMapSize = (u32)cascadeNow.cascadeSize;
+    utils::info("vulkanShadowDenoisePass: cascade depth copies: %u cascades @ %u",
+                (u32)cascadeDepthCount, hsCascadeMapSize);
     return 1;
 }
 
@@ -551,6 +587,7 @@ static void hsDispatch(VulkanCommand* cmd,
     const u32 width  = depth->extent.width;
     const u32 height = depth->extent.height;
     if (!hsEnsureContexts(width, height)) return;
+    if (!hsEnsureCascadeDepths()) return;
 
     const u32 xTiles    = (width + HS_TILE_X - 1) / HS_TILE_X;
     const u32 yTiles    = (height + HS_TILE_Y - 1) / HS_TILE_Y;
@@ -607,17 +644,19 @@ static void hsDispatch(VulkanCommand* cmd,
         for (int i = 0; i < cascade.cascadeCount; i++) {
             const float (*pm)[4] = cascade.cascadeProj[i];
             const float extent = 0.5f / pm[0][0]; /* ortho half-extent in light units */
+            const float mapSize  = (float)cascade.cascadeSize;
+            const float halfSize = 0.5f * mapSize;
             const float radius = slope * camLS4[2];
-            const float radiusTex = fabsf(radius) * (0.5f / extent) * 2048.0f + 1.0f;
+            const float radiusTex = fabsf(radius) * (0.5f / extent) * mapSize + 1.0f;
             int inRange = 0;
             for (int s = 0; s < 24; s++) {
-                float x = 1024.0f + disc[s][0] * radiusTex;
-                float y = 1024.0f + disc[s][1] * radiusTex;
-                if (x >= 0.0f && x < 2048.0f && y >= 0.0f && y < 2048.0f) inRange++;
+                float x = halfSize + disc[s][0] * radiusTex;
+                float y = halfSize + disc[s][1] * radiusTex;
+                if (x >= 0.0f && x < mapSize && y >= 0.0f && y < mapSize) inRange++;
             }
             utils::info(
-                "hs DIAG c%d: camLS.z=%.1f slope=%.5f radius=%.2fm -> %.0f texels (map half-size 1024), "
-                "in-range taps at map center: %d/24", i, camLS4[2], slope, radius, radiusTex, inRange);
+                "hs DIAG c%d: camLS.z=%.1f slope=%.5f radius=%.2fm -> %.0f texels (map half-size %.0f), "
+                "in-range taps at map center: %d/24", i, camLS4[2], slope, radius, radiusTex, halfSize, inRange);
         }
         /* Full matrix dump for offline analysis of the CSM depth convention. */
         for (int i = 0; i < cascade.cascadeCount; i++) {
@@ -686,7 +725,7 @@ static void hsDispatch(VulkanCommand* cmd,
         region.dstSubresource.mipLevel       = 0;
         region.dstSubresource.baseArrayLayer = 0;
         region.dstSubresource.layerCount     = 1;
-        region.extent = {2048, 2048, 1};
+        region.extent = {(u32)cascade.cascadeSize, (u32)cascade.cascadeSize, 1};
         vkCmdCopyImage(cmd->cmd, layer->img, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                        cascadeDepthImages[i].img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
         vulkanTransition(cmd, &cascadeDepthImages[i], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);

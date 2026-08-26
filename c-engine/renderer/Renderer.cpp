@@ -66,13 +66,26 @@ void RenderSystem::added() {
     createDefaultMaterial();
     textureManagerInit();
 
-    /* Restore per-effect enable/disable from saved settings. */
-    if (utils::settingsGetBool("shadowsDisabled")) vulkanShadowPassSetDisabled(1);
-    /* FFX hybrid shadows ride on the master Shadows toggle: when shadows are
-     * on, the FFX classifier/denoiser mask is the default shadow path.  The
-     * hidden disableHybridShadows setting forces the raster (PCF) fallback.
-     * hybridShadowsSun (degrees) is 0 = use the pass default. */
-    if (!utils::settingsGetBool("shadowsDisabled") && !utils::settingsGetBool("disableHybridShadows")) {
+    /* Restore shadow quality (0=off 1=low 2=medium 3=high) from settings. */
+    int shadowQuality = utils::settingsGetInt("shadowQuality");
+    if (shadowQuality < 0 || shadowQuality >= engine::SHADOW_QUALITY_COUNT) {
+        shadowQuality = engine::SHADOW_QUALITY_MEDIUM;
+    }
+    /* One-time migration from the legacy on/off toggle: an old settings file
+     * without shadowQuality is seeded with the template default (medium), so
+     * a user who had shadows disabled is honoured via the legacy key.  The
+     * settings GUI keeps shadowsDisabled in sync, so this only ever fires
+     * while the file predates the quality levels. */
+    if (shadowQuality == engine::SHADOW_QUALITY_MEDIUM && utils::settingsGetBool("shadowsDisabled")) {
+        shadowQuality = engine::SHADOW_QUALITY_OFF;
+    }
+    vulkanShadowPassSetQuality((engine::ShadowQuality)shadowQuality);
+
+    /* FFX hybrid shadows ride on the master Shadows toggle: with any active
+     * quality level the FFX classifier/denoiser mask is the default shadow
+     * path.  The hidden disableHybridShadows setting forces the raster (PCF)
+     * fallback.  hybridShadowsSun (degrees) is 0 = use the pass default. */
+    if (shadowQuality != engine::SHADOW_QUALITY_OFF && !utils::settingsGetBool("disableHybridShadows")) {
         vulkanShadowDenoisePassSetEnabled(1);
         double hsSun = utils::settingsGetDouble("hybridShadowsSun");
         if (hsSun > 0.0) vulkanShadowDenoisePassSetSunAngle((float)hsSun);

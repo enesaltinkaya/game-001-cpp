@@ -65,6 +65,12 @@ static const char* fogModeNames[] = {
     "Off",
     "Fog",
 };
+static const char* shadowQualityNames[] = {
+    "Off",
+    "Low",
+    "Medium",
+    "High",
+};
 static char* upscalerLabel;
 static char* aaPolicyLabel;
 static char* upscalePolicyLabel;
@@ -208,7 +214,8 @@ static void syncAAUi(void) {
 
     casStrengthPercent = aaSettings.casStrength * 100.0f;
 
-    snprintf(shadowsLabelText, sizeof(shadowsLabelText), "%s", engine::vulkanShadowPassIsDisabled() ? "Off" : "On");
+    snprintf(shadowsLabelText, sizeof(shadowsLabelText), "%s",
+             shadowQualityNames[engine::vulkanShadowPassGetQuality()]);
     shadowsLabel = shadowsLabelText;
     snprintf(ssrLabelText, sizeof(ssrLabelText), "%s", engine::vulkanSsrPassIsDisabled() ? "Off" : "On");
     ssrLabel = ssrLabelText;
@@ -392,7 +399,8 @@ int graphicsClose(void* _) {
 }
 
 static void syncEffectLabels(void) {
-    snprintf(shadowsLabelText, sizeof(shadowsLabelText), "%s", engine::vulkanShadowPassIsDisabled() ? "Off" : "On");
+    snprintf(shadowsLabelText, sizeof(shadowsLabelText), "%s",
+             shadowQualityNames[engine::vulkanShadowPassGetQuality()]);
     shadowsLabel = shadowsLabelText;
     snprintf(taaLabelText, sizeof(taaLabelText), "%s", engine::rendererIsTAAEnabled() ? "On" : "Off");
     taaLabel = taaLabelText;
@@ -413,7 +421,11 @@ static void syncEffectLabels(void) {
 }
 
 static void persistEffectSettings(void) {
-    utils::settingsSetBool("shadowsDisabled", engine::vulkanShadowPassIsDisabled());
+    utils::settingsSetInt("shadowQuality", (int)engine::vulkanShadowPassGetQuality());
+    /* Keep the legacy on/off key in sync; startup reads it once to migrate
+     * old settings files that predate the quality levels. */
+    utils::settingsSetBool("shadowsDisabled",
+                           engine::vulkanShadowPassGetQuality() == engine::SHADOW_QUALITY_OFF);
     utils::settingsSetBool("ssrDisabled", engine::vulkanSsrPassIsDisabled());
     utils::settingsSetBool("aoDisabled", engine::vulkanAOPassIsDisabled());
     utils::settingsSetBool("bloomDisabled", engine::vulkanBloomPassIsDisabled());
@@ -437,12 +449,16 @@ static void persistEffectSettings(void) {
 }
 
 int toggleShadows(void* _) {
-    char newDisabled = !engine::vulkanShadowPassIsDisabled();
-    engine::vulkanShadowPassSetDisabled(newDisabled);
-    /* The Shadows toggle is the master switch for FFX hybrid shadows too:
-     * when shadows are on, the FFX mask is the default shadow path.  The
-     * hidden disableHybridShadows setting forces the raster (PCF) fallback. */
-    engine::vulkanShadowDenoisePassSetEnabled(!newDisabled && !utils::settingsGetBool("disableHybridShadows"));
+    /* Cycle the quality level: off -> low -> medium -> high -> off. */
+    int q = (int)engine::vulkanShadowPassGetQuality() + 1;
+    if (q >= engine::SHADOW_QUALITY_COUNT) q = 0;
+    engine::vulkanShadowPassSetQuality((engine::ShadowQuality)q);
+    /* The Shadows row is the master switch for FFX hybrid shadows too:
+     * with any active quality level the FFX mask is the default shadow
+     * path.  The hidden disableHybridShadows setting forces the raster
+     * (PCF) fallback. */
+    engine::vulkanShadowDenoisePassSetEnabled(q != engine::SHADOW_QUALITY_OFF &&
+                                              !utils::settingsGetBool("disableHybridShadows"));
     syncEffectLabels();
     rmlUpdateDirtyAll(model);
     persistEffectSettings();

@@ -17,14 +17,45 @@
 
 /* ── Constants ────────────────────────────────────────────────────────── */
 
-#define SHADOW_MAP_SIZE 2048
-#define SHADOW_MAX_DISTANCE 80.0f
-#define SHADOW_ACTIVE_CASCADE_COUNT 2
 #define SHADOW_CASCADE_BLEND_FRACTION 0.3f
 
 /* ── Forward declarations ─────────────────────────────────────────────── */
 
 namespace engine {
+
+/* Per-quality map size (texels), active cascade count and shadow cast range
+ * (metres).  The raster CSM redraws the visible casters once per cascade, so
+ * the cost of a level scales with its cascade count as much as its map size. */
+typedef struct ShadowQualityParams {
+    int   mapSize;
+    int   cascadeCount;
+    float maxDistance;
+} ShadowQualityParams;
+
+static const ShadowQualityParams kShadowQualityTable[SHADOW_QUALITY_COUNT - 1] = {
+    /* LOW    */ {1024, 1, 40.0f},
+    /* MEDIUM */ {2048, 2, 80.0f},
+    /* HIGH   */ {4096, 3, 160.0f},
+};
+
+static ShadowQualityParams shadowQualityParams(ShadowQuality quality) {
+    if (quality == SHADOW_QUALITY_OFF) {
+        ShadowQualityParams zero = {0, 0, 0.0f};
+        return zero;
+    }
+    return kShadowQualityTable[quality - 1];
+}
+
+static const char* shadowQualityName(ShadowQuality quality) {
+    switch (quality) {
+        case SHADOW_QUALITY_OFF:    return "off";
+        case SHADOW_QUALITY_LOW:    return "low";
+        case SHADOW_QUALITY_MEDIUM: return "medium";
+        case SHADOW_QUALITY_HIGH:   return "high";
+        case SHADOW_QUALITY_COUNT:
+        default:                    return "?";
+    }
+}
 
 VulkanShadowPass vulkanShadowPass;
 
@@ -75,7 +106,8 @@ static VkVertexInputAttributeDescription shadowVertexAttrs[] = {
 static VulkanImage shadowMapImage; /* 2D array, SHADOW_CASCADE_COUNT layers */
 static VulkanImage shadowMapLayerImages[SHADOW_CASCADE_COUNT]; /* sampled pool proxy per layer */
 static char shadowMapReady;
-static char shadowDisabled;
+static int shadowMapSize; /* live image size in texels, 0 when destroyed */
+static ShadowQuality shadowQuality = SHADOW_QUALITY_MEDIUM;
 static float focusDistance = 0.0f; /* player-character distance for cascade bias */
 
 /* ── Cascade state ────────────────────────────────────────────────────── */
@@ -253,7 +285,7 @@ static void buildCascadeMatrix(const Camera* cam,
     vec4 centerLS4;
     glm_mat4_mulv(lightView, center4, centerLS4);
 
-    float texelSize = (extent * 2.0f) / (float)SHADOW_MAP_SIZE;
+    float texelSize = (extent * 2.0f) / (float)shadowMapSize;
     if (texelSize > 0.0f) {
         centerLS4[0] = roundf(centerLS4[0] / texelSize) * texelSize;
         centerLS4[1] = roundf(centerLS4[1] / texelSize) * texelSize;
@@ -297,6 +329,14 @@ static void buildCascadeMatrix(const Camera* cam,
 static void destroyShadowMap(void) {
     if (!shadowMapReady) return;
 
+    /* The shadow map (and its per-layer views) may still be referenced by
+     * in-flight frames: the shadow pass rendered into it and the lighting
+     * pass sampled it.  A mid-session quality change destroys it while those
+     * frames are queued, so drain the device first (same pattern as the DOF
+     * / swapchain mid-session recreate).  On teardown the renderer has
+     * already drained, so this is a harmless no-op there. */
+    vulkanWaitIdle("shadow map destroy");
+
     for (int i = 0; i < SHADOW_CASCADE_COUNT; i++) {
         if (shadowMapLayerImages[i].img) {
             vulkanRemoveImageFromPool(&shadowMapLayerImages[i]);
@@ -313,10 +353,15 @@ static void destroyShadowMap(void) {
     }
 
     shadowMapReady = 0;
+    shadowMapSize  = 0;
 }
 
-static void ensureShadowMap(void) {
-    if (shadowMapReady) return;
+/* Create (or recreate, when the quality level's map size changed) the shadow
+ * map.  The layer count is always SHADOW_CASCADE_COUNT so the per-layer views,
+ * UBO slots and layout transitions stay stable across quality changes. */
+static void ensureShadowMap(int size) {
+    if (shadowMapReady && shadowMapSize == size) return;
+    destroyShadowMap();
 
     shadowMapImage = vulkanCreateImage(.name   = "shadow_csm",
                                        .format = VK_FORMAT_D32_SFLOAT,
@@ -324,8 +369,8 @@ static void ensureShadowMap(void) {
                                                  VK_IMAGE_USAGE_SAMPLED_BIT |
                                                  VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
                                        .aspect = VK_IMAGE_ASPECT_DEPTH_BIT,
-                                       .width  = SHADOW_MAP_SIZE,
-                                       .height = SHADOW_MAP_SIZE,
+                                       .width  = size,
+                                       .height = size,
                                        .layers = SHADOW_CASCADE_COUNT,
                                        .noPool = 1);
 
@@ -371,6 +416,7 @@ static void ensureShadowMap(void) {
     }
 
     shadowMapReady = 1;
+    shadowMapSize  = size;
 }
 
 /* ── Pipeline management ──────────────────────────────────────────────── */
@@ -427,7 +473,7 @@ void VulkanShadowPass::added() {
     recreatePipelines();
 
     const char* env = getenv("ENGINE_SHADOW_DISABLED");
-    if (env && *env && atoi(env)) shadowDisabled = 1;
+    if (env && *env && atoi(env)) vulkanShadowPassSetQuality(SHADOW_QUALITY_OFF);
 }
 
 void VulkanShadowPass::preUpdate() {
@@ -443,8 +489,8 @@ static void renderCascade(VulkanCommand* cmd, int cascade, u32 fi) {
                       .depth      = &shadowMapImage,
                       .depthLayer = cascade + 1 /* 1-indexed for per-layer view */);
 
-    vulkanViewport(cmd, 0, SHADOW_MAP_SIZE, SHADOW_MAP_SIZE, -(int)SHADOW_MAP_SIZE);
-    vulkanScissor(cmd, 0, 0, SHADOW_MAP_SIZE, SHADOW_MAP_SIZE);
+    vulkanViewport(cmd, 0, shadowMapSize, shadowMapSize, -shadowMapSize);
+    vulkanScissor(cmd, 0, 0, shadowMapSize, shadowMapSize);
 
     u32 visibleSceneCount = 0;
     const Scene** visibleScenes = vulkanGetVisibleScenes(&visibleSceneCount);
@@ -523,10 +569,12 @@ static void uploadEmptyShadow(void) {
 void VulkanShadowPass::update() {
     if (vulkan.skipFrame) return;
 
-    if (shadowDisabled) {
+    if (shadowQuality == SHADOW_QUALITY_OFF) {
         uploadEmptyShadow();
         return;
     }
+
+    const ShadowQualityParams qs = shadowQualityParams(shadowQuality);
 
     Entity* camEntity = cameraGetEntity();
     if (!camEntity) return;
@@ -545,7 +593,7 @@ void VulkanShadowPass::update() {
 
     glm_vec3_copy(lightDir, cascadeLightDir);
 
-    ensureShadowMap();
+    ensureShadowMap(qs.mapSize);
 
     VulkanCommand* cmd = vulkan.currentCmd;
     u32 fi             = renderer.flightIndex;
@@ -554,9 +602,9 @@ void VulkanShadowPass::update() {
 
     /* Compute cascade splits */
     float zNear = camera->cameraUbo.znear;
-    float zFar  = fminf(camera->cameraUbo.zfar, SHADOW_MAX_DISTANCE);
+    float zFar  = fminf(camera->cameraUbo.zfar, qs.maxDistance);
     if (zFar <= zNear) zFar = zNear + 1.0f;
-    const int activeCascadeCount = SHADOW_ACTIVE_CASCADE_COUNT;
+    const int activeCascadeCount = qs.cascadeCount;
     computeCascadeSplits(zNear, zFar, activeCascadeCount);
 
     /* Build per-cascade view-projection matrices */
@@ -580,8 +628,8 @@ void VulkanShadowPass::update() {
                      0,
                      SHADOW_CASCADE_COUNT);
 
-    /* Render each active cascade.  The UBO/layout still reserves four layers,
-     * but three cascades is a much better cost/quality point for this scene. */
+    /* Render each active cascade.  The UBO and the 4-layer image always
+     * reserve the full cascade count; only the active prefix is rendered. */
     for (int i = 0; i < activeCascadeCount; i++) {
         renderCascade(cmd, i, fi);
     }
@@ -603,8 +651,8 @@ void VulkanShadowPass::update() {
     }
     shadow.shadowParams[0] = 0.00015f; /* receiver depth bias */
     shadow.shadowParams[1] = 0.001f; /* normal bias */
-    shadow.shadowParams[2] = (float)SHADOW_MAP_SIZE;
-    shadow.shadowParams[3] = 1.0f / (float)SHADOW_MAP_SIZE;
+    shadow.shadowParams[2] = (float)shadowMapSize;
+    shadow.shadowParams[3] = 1.0f / (float)shadowMapSize;
     shadow.lightSize       = 0.0f;
     shadow.temporalActive  = rendererIsUpscalerEnabled() ? 1u : 0u;
 
@@ -624,12 +672,24 @@ void VulkanShadowPass::removed() {
 
 /* ── Public API ───────────────────────────────────────────────────────── */
 
-void vulkanShadowPassSetDisabled(char disabled) {
-    shadowDisabled = disabled;
+void vulkanShadowPassSetQuality(ShadowQuality quality) {
+    if (quality < SHADOW_QUALITY_OFF || quality >= SHADOW_QUALITY_COUNT) return;
+    if (quality == shadowQuality) return;
+
+    ShadowQuality previous = shadowQuality;
+    shadowQuality = quality;
+
+    /* Free the shadow map while shadows are off; switching between active
+     * levels recreates the image lazily in update() at the new size. */
+    if (quality == SHADOW_QUALITY_OFF) {
+        destroyShadowMap();
+    }
+    utils::info("vulkanShadowPass: shadow quality %s -> %s",
+                shadowQualityName(previous), shadowQualityName(quality));
 }
 
-char vulkanShadowPassIsDisabled(void) {
-    return shadowDisabled;
+ShadowQuality vulkanShadowPassGetQuality(void) {
+    return shadowQuality;
 }
 
 void vulkanShadowPassSetPCSS(char enabled) {
@@ -646,10 +706,11 @@ void vulkanShadowPassSetFocusDistance(float distance) {
 
 void vulkanShadowPassGetCascadeData(ShadowCascadeData* out) {
     if (!out) return;
-    out->cascadeCount = SHADOW_ACTIVE_CASCADE_COUNT;
-    out->cascadeSize  = SHADOW_MAP_SIZE;
+    const ShadowQualityParams qs = shadowQualityParams(shadowQuality);
+    out->cascadeCount = qs.cascadeCount;
+    out->cascadeSize  = qs.mapSize;
     glm_vec3_copy(cascadeLightDir, out->lightDir);
-    for (int i = 0; i < SHADOW_ACTIVE_CASCADE_COUNT; i++) {
+    for (int i = 0; i < SHADOW_CASCADE_COUNT; i++) {
         glm_mat4_copy(cascadeProj[i], out->cascadeProj[i]);
         glm_mat4_copy(cascadeLightView[i], out->cascadeLightView[i]);
     }

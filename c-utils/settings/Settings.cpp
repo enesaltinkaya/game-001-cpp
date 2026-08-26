@@ -44,6 +44,10 @@ void settingsInit(void) {
     templates.push_back((Template{"busyLoopLinux", "boolean", 1.}));
     templates.push_back((Template{"moreShadows", "boolean", 1.}));
     templates.push_back((Template{"shadowsDisabled", "boolean", 0.}));
+    /* Shadow quality: 0=off 1=low (1024/1 cascade/40m) 2=medium (2048/2/80m)
+     * 3=high (4096/3/160m).  shadowsDisabled above is the legacy on/off key,
+     * kept in sync by the settings GUI and read once for migration. */
+    templates.push_back((Template{"shadowQuality", "int", 2.}));
     /* FFX hybrid-shadows (raster CSM + FFX classifier/denoiser mask) ride on
      * the master Shadows toggle (shadowsDisabled): when shadows are on the
      * FFX mask is the default shadow path.  hybridShadowsSun (degrees) is

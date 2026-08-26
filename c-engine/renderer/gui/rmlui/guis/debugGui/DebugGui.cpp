@@ -39,7 +39,7 @@ static char aaPolicyLabelText[192];
 static float casStrengthPercent;
 
 static void syncFromPasses(void) {
-    shadowsEnabled    = !vulkanShadowPassIsDisabled();
+    shadowsEnabled    = vulkanShadowPassGetQuality() != SHADOW_QUALITY_OFF;
     // reflectionEnabled = !vulkanSsrPassIsDisabled();
     bloomEnabled      = !vulkanBloomPassIsDisabled();
     // skyboxEnabled     = !vulkanSkyboxPassIsDisabled();
@@ -62,7 +62,11 @@ static void syncFromPasses(void) {
 }
 
 static int toggleShadows(void* _) {
-    vulkanShadowPassSetDisabled(shadowsEnabled);
+    /* Debug toggle is a simple off <-> medium switch; the full quality
+     * cycle (low/medium/high) lives in the settings GUI. */
+    vulkanShadowPassSetQuality(vulkanShadowPassGetQuality() == SHADOW_QUALITY_OFF
+                                   ? SHADOW_QUALITY_MEDIUM
+                                   : SHADOW_QUALITY_OFF);
     syncFromPasses();
     rmlUpdateDirtyAll(model);
     return 0;
