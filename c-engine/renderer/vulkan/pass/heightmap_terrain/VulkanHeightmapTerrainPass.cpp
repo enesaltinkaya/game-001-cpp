@@ -175,7 +175,7 @@ static void recreatePipelines(void) {
         .clearColor3          = {0, 0, 0, 0}, .clearColor3Enabled = 0);
 
     // Depth/velocity pre-pass pipe: same lattice, writes depth + velocity +
-    // view-normal XY (called inside VulkanDepthPass' render pass).
+    // view-normal XY + world normal (called inside VulkanDepthPass' render pass).
     prepassPipe = vulkanCreatePipe(
         .name               = "heightmap_terrain_depth_prepass",
         .vs                 = "shaders/pass/heightmap_terrain/spv/heightmap_terrain_depth.vert.spv",
@@ -183,6 +183,7 @@ static void recreatePipelines(void) {
         .set1               = &layoutHeightDesc,
         .colorFormat1       = VK_FORMAT_R16G16_SFLOAT,
         .colorFormat2       = VK_FORMAT_R16G16_SNORM,
+        .colorFormat3       = VK_FORMAT_R16G16B16A16_SFLOAT,
         .depthFormat        = VK_FORMAT_D32_SFLOAT);
 }
 

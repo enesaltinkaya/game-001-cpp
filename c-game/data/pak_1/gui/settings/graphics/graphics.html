@@ -81,6 +81,28 @@
                     </div>
                 </button>
 
+                <button class="option" id="toggleHybridShadows" onclick="toggleHybridShadows()">
+                    <div class="label">Soft Shadows (Hybrid)</div>
+                    <div class="widget">
+                        <div class="slider">
+                            <p class="leftarrow">&#xe806;</p>
+                            <p>{{hybridShadowsLabel}}</p>
+                            <p class="rightarrow">&#xe808;</p>
+                        </div>
+                    </div>
+                </button>
+
+                <button class="option">
+                    <div class="label">Soft Shadows — Sun Size ({{format(hybridShadowsSunPercent,0)}}%)</div>
+                    <div class="widget">
+                        <div class="slider">
+                            <p class="leftarrow">&#xe806;</p>
+                            <p class="rightarrow">&#xe808;</p>
+                            <input type="range" min="0" max="100" step="1" data-value="hybridShadowsSunPercent" style="tab-index:none;" onchange="hybridShadowsSunChange()" />
+                        </div>
+                    </div>
+                </button>
+
                 <button class="option" id="toggleContactShadow" onclick="toggleContactShadow()">
                     <div class="label">Contact Shadows</div>
                     <div class="widget">

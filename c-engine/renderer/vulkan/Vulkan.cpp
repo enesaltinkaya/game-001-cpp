@@ -18,6 +18,7 @@
 #include "renderer/vulkan/utils/VulkanUtils.h"
 #include "renderer/vulkan/swapchain/VulkanSwapchain.h"
 #include "renderer/vulkan/pass/shadow/VulkanShadowPass.h"
+#include "renderer/vulkan/pass/shadow_denoise/VulkanShadowDenoisePass.h"
 #include "renderer/vulkan/pass/culling/VulkanCullingPass.h"
 #include "renderer/vulkan/pass/depth/VulkanDepthPass.h"
 #include "renderer/vulkan/pass/occlusion/VulkanOcclusionPass.h"
@@ -245,6 +246,7 @@ void vulkanInit(void) {
     addPass(&vulkanShadowPass);
     addPass(&vulkanContactShadowPass);
     addPass(&vulkanLightCullingPass);
+    addPass(&vulkanShadowDenoisePass);
     addPass(&vulkanHeightmapTerrainPass);
     addPass(&vulkanAzgaarPropsPass);
     addPass(&vulkanDebugNavMeshPass);

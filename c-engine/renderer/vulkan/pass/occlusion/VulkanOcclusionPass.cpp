@@ -195,6 +195,7 @@ static void recreateDepthPipelines(void) {
         .fs                 = "shaders/pass/scene/spv/scene_depth.frag.spv",
         .colorFormat1       = VK_FORMAT_R16G16_SFLOAT,
         .colorFormat2       = VK_FORMAT_R16G16_SNORM,
+        .colorFormat3       = VK_FORMAT_R16G16B16A16_SFLOAT,
         .depthFormat        = VK_FORMAT_D32_SFLOAT,
         .vertexAttributes   = sceneVertexAttrs,
         .vertexAttributeCount = 6,
@@ -207,6 +208,7 @@ static void recreateDepthPipelines(void) {
         .fs                 = "shaders/pass/scene/spv/scene_depth.frag.spv",
         .colorFormat1       = VK_FORMAT_R16G16_SFLOAT,
         .colorFormat2       = VK_FORMAT_R16G16_SNORM,
+        .colorFormat3       = VK_FORMAT_R16G16B16A16_SFLOAT,
         .depthFormat        = VK_FORMAT_D32_SFLOAT,
         .noCull             = 1,
         .vertexAttributes   = sceneVertexAttrs,
@@ -246,6 +248,7 @@ void VulkanOcclusionPass::update() {
     VulkanImage* depthImg        = vulkanFrameResourcesGetDepth();
     VulkanImage* velocityImg     = vulkanFrameResourcesGetVelocity();
     VulkanImage* viewNormalImg   = vulkanFrameResourcesGetViewNormal();
+    VulkanImage* worldNormalImg  = vulkanFrameResourcesGetWorldNormal();
     if (!depthImg || !earlyHiZImage.img || !velocityImg) return;
 
     VulkanCommand* cmd = vulkan.currentCmd;
@@ -509,6 +512,7 @@ void VulkanOcclusionPass::update() {
                       .pipe    = &phase2DepthPipe,
                       .color1  = velocityImg,
                       .color2  = viewNormalImg,
+                      .color3  = worldNormalImg,
                       .depth   = depthImg);
 
     vulkanViewport(cmd, 0, h, w, -((i32)h));

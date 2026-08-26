@@ -39,7 +39,7 @@ typedef struct ShadowUbo {
     vec4 shadowParams;  /* x: bias, y: normalBias, z: mapSize, w: 1/mapSize */
     u32 shadowMapIndex[SHADOW_CASCADE_COUNT];
     u32 cascadeCount;
-    u32 pad0;
+    u32 shadowMaskImageIndex; /* bindless sampled index of the FFX hybrid-shadows mask (0 = off) */
     float lightSize;             /* unused (PCSS removed) */
     u32 temporalActive;          /* 1 when FSR or any temporal upscaler is active */
     u32 contactShadowImageIndex; /* bindless sampled index of contact shadow texture (0 = off) */

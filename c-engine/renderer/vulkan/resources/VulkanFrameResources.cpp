@@ -20,6 +20,7 @@ struct VulkanFrameResources {
     VulkanImage depth;
     VulkanImage velocity;
     VulkanImage viewNormal;
+    VulkanImage worldNormal;
     u32 width;
     u32 height;
 };
@@ -105,6 +106,10 @@ VulkanImage* vulkanFrameResourcesGetVelocity(void) {
 
 VulkanImage* vulkanFrameResourcesGetViewNormal(void) {
     return frameResources.viewNormal.img ? &frameResources.viewNormal : nullptr;
+}
+
+VulkanImage* vulkanFrameResourcesGetWorldNormal(void) {
+    return frameResources.worldNormal.img ? &frameResources.worldNormal : nullptr;
 }
 
 static void swapchainCreated(void* _) {
@@ -244,6 +249,21 @@ frameResources.depth =
                           .width  = window.renderWidth,
                           .height = window.renderHeight);
 
+    /* Full 3-component world-space normal, written by the depth pre-pass
+     * (scene / heightmap / props / water).  Consumed by the FFX shadow
+     * classifier (backfacing test) and the shadow denoiser (reprojection
+     * z-alignment).  Cleared to 0: a zero normal fails the classifier's
+     * facing test, so sky / unrendered pixels stay out of the shadow
+     * work (the denoiser's prepare pass excludes depth-0 pixels anyway). */
+    frameResources.worldNormal =
+        vulkanCreateImage(.name   = "WorldNormal",
+                          .format = VK_FORMAT_R16G16B16A16_SFLOAT,
+                          .usage  = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+                                    VK_IMAGE_USAGE_SAMPLED_BIT |
+                                    VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+                          .width  = window.renderWidth,
+                          .height = window.renderHeight);
+
     transitionInitialLayouts();
 }
 
@@ -270,6 +290,7 @@ static void destroyAll(void) {
     destroyImage(&frameResources.depth);
     destroyImage(&frameResources.velocity);
     destroyImage(&frameResources.viewNormal);
+    destroyImage(&frameResources.worldNormal);
 
     frameResources.width  = 0;
     frameResources.height = 0;
@@ -315,6 +336,7 @@ static void transitionInitialLayouts(void) {
     vulkanTransition(cmd, &frameResources.depth, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, 0, 1);
     vulkanTransition(cmd, &frameResources.velocity, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, 0, 1);
     vulkanTransition(cmd, &frameResources.viewNormal, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, 0, 1);
+    vulkanTransition(cmd, &frameResources.worldNormal, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, 0, 1);
 
     vulkanTransientEnd(cmd, 1);
 }

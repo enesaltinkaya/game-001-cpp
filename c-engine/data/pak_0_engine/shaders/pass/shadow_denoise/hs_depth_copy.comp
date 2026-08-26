@@ -1,0 +1,34 @@
+#version 460
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_nonuniform_qualifier : require
+#extension GL_EXT_samplerless_texture_functions : require
+#extension GL_ARB_shading_language_include : enable
+
+#include "../../includes/utils.shader"
+#include "../../includes/globalset.shader"
+
+/* Copy the scene depth (D32_SFLOAT) into an R32_SFLOAT image.
+ *
+ * The FFX shadow denoiser's internal history copy is a D32->R32 image copy,
+ * which the FFX VK backend rejects (it only copies depth<->depth or
+ * color<->color).  The hybridshadows sample solves this with a small
+ * compute "copy depth" pass; we do the same so the denoiser can be fed an
+ * R32 depth buffer. */
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(push_constant) uniform PushConstants {
+    uint depthIndex; /* scene depth (sampled, D32_SFLOAT) */
+    uint outIndex;   /* R32 depth copy (storage)          */
+    uint width;
+    uint height;
+} pc;
+
+void main() {
+    ivec2 p = ivec2(gl_GlobalInvocationID.xy);
+    if (p.x >= int(pc.width) || p.y >= int(pc.height)) return;
+
+    float d = texelFetch(textures[nonuniformEXT(pc.depthIndex)], p, 0).r;
+    imageStore(storageImages[nonuniformEXT(pc.outIndex)], p, vec4(d, 0.0, 0.0, 0.0));
+}

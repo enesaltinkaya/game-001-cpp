@@ -53,6 +53,7 @@ layout(location = 2) out flat uint outMaterialId;
 layout(location = 3) out vec3 outViewNormal;
 layout(location = 4) out vec4 outClipPrev;
 layout(location = 5) out flat uint outEntity;
+layout(location = 6) out vec3 outWorldNormal;
 
 void main() {
     CulledBuffer culledBuf = CulledBuffer(culledBufferAddress);
@@ -90,5 +91,6 @@ void main() {
     outUV         = inUV;
     outMaterialId = inst.materialId;
     outViewNormal = normalize((sceneBuffer.cameras[0].view * vec4(worldNormal, 0.0)).xyz);
+    outWorldNormal = worldNormal;
     outEntity     = inst.entity;
 }

@@ -249,6 +249,7 @@ static void recreatePipelines(void) {
         .fs                   = "shaders/pass/azgaar_props/spv/azgaar_props_depth.frag.spv",
         .colorFormat1         = VK_FORMAT_R16G16_SFLOAT,
         .colorFormat2         = VK_FORMAT_R16G16_SNORM,
+        .colorFormat3         = VK_FORMAT_R16G16B16A16_SFLOAT,
         .depthFormat          = VK_FORMAT_D32_SFLOAT,
         .noCull               = 1,
         .vertexAttributes     = depthPrepassAttrs,

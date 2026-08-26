@@ -14,9 +14,11 @@
 layout(location = 0) in vec4 inClipCurrent;
 layout(location = 1) in vec3 inViewNormal;
 layout(location = 2) in vec4 inClipPrev;
+layout(location = 3) in vec3 inWorldNormal;
 
 layout(location = 0) out vec2 outVelocity;
 layout(location = 1) out vec2 outViewNormalXY;
+layout(location = 2) out vec3 outWorldNormal;
 
 void main() {
     vec2 ndcCurrent  = inClipCurrent.xy / inClipCurrent.w;
@@ -27,4 +29,5 @@ void main() {
 
     vec3 n = normalize(inViewNormal);
     outViewNormalXY = n.xy;
+    outWorldNormal  = normalize(inWorldNormal);
 }

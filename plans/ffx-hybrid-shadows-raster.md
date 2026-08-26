@@ -256,19 +256,24 @@ view-space XY (R16G16 SNORM). Add a full-res R16G16B16_SFLOAT
 
 ## Phases
 
-- [ ] **Phase 0 — SDK build**: classifier registry block; re-enable
+- [x] **Phase 0 — SDK build**: classifier registry block; re-enable
       `denoiser`; patch round (context size, qualifiers); rebuild both
       archives; `./scripts/build.sh` + `play log 5000` smoke (no engine
       consumer yet — visually a no-op).
-- [ ] **Phase 1 — world normal**: `worldNormal` frame resource + pre-pass
+- [x] **Phase 1 — world normal**: `worldNormal` frame resource + pre-pass
       attachment across all depth variants; dump-verify against
       `frameResources.normals` (oct-decoded) for sanity.
-- [ ] **Phase 2 — `VulkanShadowDenoisePass`**: FFX contexts + scratch
+- [x] **Phase 2 — `VulkanShadowDenoisePass`**: FFX contexts + scratch
       resources, classifier + denoiser dispatches, env toggle +
-      `ENGINE_HYBRID_SHADOWS_DUMP`; no shader changes yet (visually a
-      no-op; inspect the dumped mask).
-- [ ] **Phase 3 — consume the mask**: ShadowUbo index + `sampleShadowMask` + settings toggle; A/B screenshots (PCF vs mask) at the parked
-      camera, sun 0° and 0.5–2°; verify OIT/terrain/props parity.
+      `ENGINE_HS_DUMP` (per-frame `hs_rayhit_*.jpg` + `hs_mask_*.jpg`);
+      verified the dumped mask shows coherent soft sun-shadow patterns.
+- [x] **Phase 3 — consume the mask**: `shadowMaskImageIndex` in `ShadowUbo`
+      (repurposed `pad0`, mirrored in `globalset.shader`) +
+      `sampleShadowMask()` + `sampleShadowFull()` early-return in
+      `shadow.shader` + `vulkanResourceSetShadowMaskImageIndex` published by
+      the pass; settings `hybridShadowsEnabled` / `hybridShadowsSun` +
+      Graphics GUI toggle + sun-size slider; A/B screenshots at the parked
+      camera confirm PCF vs denoised-mask look.
 - [ ] **Phase 4 — tuning + validation**: sun-size / blocker / sigma
       sweeps; FSR on/off (jitter interaction); fast camera moves (ghosting
       check at cascade splits + disocclusion); perf profile before/after
@@ -279,6 +284,37 @@ view-space XY (R16G16 SNORM). Add a full-res R16G16B16_SFLOAT
       classifier/denoiser (registry block, patches, shader lists);
       update `plans/fidelityfx-sdk-expansion.md` out-of-scope bullets;
       win + linux release builds.
+
+## Implementation notes (as built)
+
+- **Env knobs** (final names, per `VulkanShadowDenoisePass.h`):
+  `ENGINE_HYBRID_SHADOWS=1` master toggle (default off); `ENGINE_HS_SUN_ANGLE`
+  (deg, default 1.0); `ENGINE_HS_BLOCKER_OFFSET` (default 0.00015, matches
+  the CSM receiver bias); `ENGINE_HS_DEPTH_SIGMA`; `ENGINE_HS_DUMP=<dir>`
+  (per-frame `hs_rayhit_*.jpg` + `hs_mask_*.jpg` in the dir). The plan's
+  `ENGINE_HYBRID_SHADOWS_SUN` / `_BLOCKER` / `_DUMP` names were superseded
+  by these.
+- **Sun-size floor**: the classifier's Poisson-disk PCF degenerates when the
+  sun disc (in shadow-map texels) exceeds the cascade extent — most taps
+  fall out of range, `maxD` stays 0 and every pixel classifies
+  "definitely lit" (all-red mask). The settings slider maps 0–100% to
+  0.1°–4.0° and `vulkanShadowDenoisePassSetSunAngle` clamps to
+  [0.1°, 10°]; an initially large default (45°) produced the degenerate
+  mask and was corrected to 1°.
+- **FFX VK backend quirks worked around in the pass**:
+  (a) single-layer cascade D32 images are copied from the CSM 2D-array
+  layers per frame (`vkCmdCopyImage` + manual per-layer
+  `VkImageMemoryBarrier2`, since `vulkanTransition` ignores `baseLayer`);
+  (b) the denoiser's internal history copy rejects D32→R32, so a small
+  compute pass (`hs_depth_copy.comp`) copies the frame D32 into an R32
+  `depthCopyImage` fed to the denoiser; (c) a 1×1 dummy D32 image fills
+  the two inactive `shadowMaps[]` slots (FFX requires non-null resources).
+- **Raster-only fallback look** (the documented risk, confirmed by A/B):
+  indeterminate tiles (sun-disc PCF found mixed depths) are never
+  ray-traced (work queue is allocated but never dispatched), so the
+  denoiser starts them shadow-biased; object canopies read dark, soft
+  penumbras read wider than the 3×3 hardware-bilinear PCF. Tunable via
+  sun size / blocker offset.
 
 ## Risks / open items
 

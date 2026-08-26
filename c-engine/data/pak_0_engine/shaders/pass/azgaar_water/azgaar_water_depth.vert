@@ -36,6 +36,7 @@ layout(location = 3) in vec2 inUV;
 layout(location = 0) out vec4 outClipCurrent;
 layout(location = 1) out vec3 outViewNormal;
 layout(location = 2) out vec4 outClipPrev;
+layout(location = 3) out vec3 outWorldNormal;
 
 // Must match the fragment shader's WaterPushConstants (same push-constant
 // payload is pushed once per draw and read by both stages).
@@ -155,6 +156,7 @@ void main() {
         outClipCurrent = gl_Position;
         outClipPrev    = gl_Position;
         outViewNormal  = vec3(0.0, 1.0, 0.0);
+        outWorldNormal = vec3(0.0, 1.0, 0.0);
         return;
     }
 
@@ -165,4 +167,5 @@ void main() {
     outClipCurrent   = sceneBuffer.cameras[0].viewProjectionNoJitter * vec4(worldPosCur, 1.0);
     outClipPrev      = sceneBuffer.cameras[0].prevViewProjectionNoJitter * vec4(worldPosPrev, 1.0);
     outViewNormal    = normalize((sceneBuffer.cameras[0].view * vec4(nCur, 0.0)).xyz);
+    outWorldNormal   = nCur;
 }

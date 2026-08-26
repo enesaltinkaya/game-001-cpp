@@ -27,6 +27,7 @@ layout(set = 1, binding = 0) uniform sampler2D heightTex;
 layout(location = 0) out vec4 outClipCurrent;
 layout(location = 1) out vec3 outViewNormal;
 layout(location = 2) out vec4 outClipPrev;
+layout(location = 3) out vec3 outWorldNormal;
 
 void main() {
     float size   = pc.tile.z;
@@ -104,4 +105,5 @@ void main() {
     outClipCurrent = sceneBuffer.cameras[0].viewProjectionNoJitter * worldPos4;
     outClipPrev    = sceneBuffer.cameras[0].prevViewProjectionNoJitter * worldPos4;
     outViewNormal  = normalize((sceneBuffer.cameras[0].view * vec4(normal, 0.0)).xyz);
+    outWorldNormal = normal;
 }
