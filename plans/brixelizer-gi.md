@@ -12,7 +12,7 @@ FFX passes (`VulkanFsrPass`, CACAO in `VulkanAOPass`, `VulkanLpmPass`, `VulkanLe
 
 ## Status
 
-- [ ] Step 0 — SDK side verified (library + sample run as reference)
+- [x] Step 0 — SDK side verified (library + sample run as reference)
 - [ ] Step 1 — Engine plumbing: FFX device, voxelizer context + resources (no instances)
 - [ ] Step 2 — Voxelizer smoke test: one instance + SDF debug visualization
 - [ ] Step 3 — Real scene meshes registered (static world)
@@ -61,8 +61,12 @@ colored ambient + specular GI.
   `build-brixgi-sample.sh` cross-building a Wine-runnable `FFX_BrixelizerGI_VK.exe`
   (`git/bin/`). Config: `samples/brixelizergi/config/brixelizergiconfig.json`
   (resource formats: HistoryDepth R32F, HistoryNormals/GI outputs RGBA16F).
-  Note: `git/bin/` is currently **empty** — the exe has never been built in this
-  tree; Step 0.3 does that.
+  Note: `git/bin/` is **built and verified** (2026-08-26, Step 0.3 done):
+  `build-brixgi-sample.sh` produces `FFX_BrixelizerGI_VK.exe` (Wine, radeon
+  ICD); all four GI output modes + debug visualization render without FFX
+  errors; reference frames in `git/bin/screenshots/ref-*.jpg`. See
+  `docs/fsr3.1.md` → "Brixelizer GI sample cross-build" for the fork patches
+  and test hooks. Media fetched to `git/media/` (Step 0.2).
 
 **Engine:**
 
@@ -87,7 +91,7 @@ colored ambient + specular GI.
     sky pixels read `depth == 0.0` (`composite.comp` `isSky`). No gl_FragDepth override.
   - `worldNormal` R16G16B16A16_SFLOAT — full 3-component **world-space** normals,
     written by the depth pre-pass for all geometry (terrain included).
-  - `normals` R16G16 — oct-encoded *view* normals (NOT usable by GI's affine unpack).
+  - `normals` R16G16 — oct-encoded _view_ normals (NOT usable by GI's affine unpack).
   - `material` R8G8B8A8: .r roughness (perceptual), .g metallic, .b alphaMask, .a 0.
     **No albedo in the G-buffer.**
   - `velocity` R16G16 — pixel units, `current − previous` (y flipped), written by the
@@ -119,7 +123,7 @@ These were checked against the fork's actual code, not the docs:
    for `proj`. The `ffx_brixelizergi.h` comment "row major order" is **wrong**.
    Evidence: the sample `memcpy`s Cauldron's `Mat4` (Sony VectorMath `Matrix4`,
    stored as `mCol0..mCol3` = column-major); the host's `matrixMul(view, projection,
-   out)` only yields the correct `P·V` when inputs are column-major (its
+out)` only yields the correct `P·V` when inputs are column-major (its
    `a[row*4+i]*b[i*4+col]` loop is the row-major formula, which on column-major
    data computes `B·A`); the GLSL UBO `mat4` is column-major in memory, so a
    byte-identical memcpy is correct. If GI reprojection is ever wrong, this is the
@@ -127,7 +131,7 @@ These were checked against the fork's actual code, not the docs:
 2. **Voxelizer instance transforms
    (`FfxBrixelizerInstanceDescription.transform[16]`) are ROW-MAJOR** — opposite
    convention from (1)! The GLSL `LoadInstanceTransform` explicitly transposes:
-   *"Instance transforms as stored in rows, so load in the 3 rows"*. The sample
+   _"Instance transforms as stored in rows, so load in the 3 rows"_. The sample
    writes `transform[row*4+col] = mat.getCol(col)[row]`. Build the 4×4 from the
    engine quat/pos/scale in row-major (or transpose the cglm mat4).
    **Same API, two different conventions — do not mix them up.**
@@ -195,13 +199,13 @@ These were checked against the fork's actual code, not the docs:
 
 Voxelizer (Step 1):
 
-| Resource | Type | Size |
-| --- | --- | --- |
-| `sdfAtlas` | 3D image R8_UNORM, STORAGE\|SAMPLED | 512³ |
-| `brickAABBs` | buffer (u32) | `FFX_BRIXELIZER_BRICK_AABBS_SIZE` |
-| `cascadeAABBTrees[24]` | buffer | `FFX_BRIXELIZER_CASCADE_AABB_TREE_SIZE` |
-| `cascadeBrickMaps[24]` | buffer | `FFX_BRIXELIZER_CASCADE_BRICK_MAP_SIZE` |
-| `gpuScratch` | buffer | start 256 MiB; assert `outScratchBufferSize` fits |
+| Resource               | Type                                | Size                                              |
+| ---------------------- | ----------------------------------- | ------------------------------------------------- |
+| `sdfAtlas`             | 3D image R8_UNORM, STORAGE\|SAMPLED | 512³                                              |
+| `brickAABBs`           | buffer (u32)                        | `FFX_BRIXELIZER_BRICK_AABBS_SIZE`                 |
+| `cascadeAABBTrees[24]` | buffer                              | `FFX_BRIXELIZER_CASCADE_AABB_TREE_SIZE`           |
+| `cascadeBrickMaps[24]` | buffer                              | `FFX_BRIXELIZER_CASCADE_BRICK_MAP_SIZE`           |
+| `gpuScratch`           | buffer                              | start 256 MiB; assert `outScratchBufferSize` fits |
 
 GI (Steps 6–7): `outputDiffuseGI` / `outputSpecularGI` (R16F RGBA, render res),
 `historyDepth` (R32F — sample convention; engine has `vulkanCopyDepthToColorImage`; clear 0.0 = background since reverse-Z, pitfall #3),
@@ -228,11 +232,11 @@ cd /home/enes/Projects/c/cpp-thirdparty/fsr3.1 && ./build.sh
 - If `build.sh` output changed (new permutation headers are expected to reorder),
   note it in `docs/fsr3.1.md`.
 
-0.2 **Fetch the sample media** (not in the tree — the sample loads the Toyshop
-scene, IBL textures, and 16 `LDR_RG01_*.png` noise maps from `media/`; without
-the noise maps the render module never becomes ready). Needs network access to
-AMD's MediaDelivery server — no offline fallback; if the fetch fails, Step 0 is
-blocked:
+  0.2 **Fetch the sample media** (not in the tree — the sample loads the Toyshop
+  scene, IBL textures, and 16 `LDR_RG01_*.png` noise maps from `media/`; without
+  the noise maps the render module never becomes ready). Needs network access to
+  AMD's MediaDelivery server — no offline fallback; if the fetch fails, Step 0 is
+  blocked:
 
 ```bash
 cd /home/enes/Projects/c/cpp-thirdparty/fsr3.1/git
@@ -251,12 +255,18 @@ cd git/bin && wine FFX_BrixelizerGI_VK.exe
   and "Radiance Cache" / "Irradiance Cache"; take screenshots of each.
 - These screenshots are the **visual reference** for Step 7's gates.
 
-0.4 (Optional, if time permits) run the sample under the validation layer or RenderDoc
-(`docs/renderdoc-capture.md`) to capture a known-good frame for later comparison.
+  0.4 (Optional, if time permits) run the sample under the validation layer or RenderDoc
+  (`docs/renderdoc-capture.md`) to capture a known-good frame for later comparison.
 
-**Gate 0:** library symbols present in both `.a`s; sample runs under Wine and renders
-all four GI output modes without FFX errors. If the sample itself is broken on VK,
-fix that first — it validates the entire library + shader path.
+**Gate 0 (met 2026-08-26):** library symbols present in both `.a`s
+(`ffxBrixelizer{ContextCreate,RegisterBuffers,GIContext{Create,Dispatch,
+DebugVisualization}}…` verified via `nm` on build-linux + build-win);
+sample runs under Wine (RADV NAVI31, 2558×1413) and renders all four GI
+output modes (diffusegi/speculargi/radiance/irradiance, + debugvis) with
+zero FFX ERROR/WARNING lines in any run log. Reference frames:
+`git/bin/screenshots/ref-{diffusegi,speculargi,radiance,irradiance,debugvis}.jpg`.
+If the sample itself is broken on VK, fix that first — it validates the
+entire library + shader path.
 
 ## Step 1 — Engine plumbing: FFX device + voxelizer context + resources
 
@@ -288,7 +298,7 @@ New System: `c-engine/renderer/vulkan/pass/brixelizer/VulkanBrixelizerPass.{h,cp
   - `FfxBrixelizerContextDescription.backendInterface = iface`.
 - **Wrap helpers**: extract `wrapImageResource` / `makeImageCreateInfo` from
   `VulkanFsrPass.cpp` and a new `wrapBufferResource(VulkanBuffer*, usage, state,
-  name)` (uses `ffxGetBufferResourceDescriptionVK` — synthesize the
+name)` (uses `ffxGetBufferResourceDescriptionVK` — synthesize the
   `VkBufferCreateInfo` from `VulkanBuffer.size` + usage) into a shared
   `VulkanFfxUtils.h` (the FSR/AO passes keep working unchanged or get migrated in a
   follow-up; do not block on it). The image side must also synthesize create
@@ -317,6 +327,7 @@ Prove the voxelizer actually bakes geometry through our resources.
 `ffxBrixelizerRegisterBuffers` (wrap `VulkanBuffer` with
 `FFX_RESOURCE_STATE_PIXEL_COMPUTE_READ`, as the sample's `GetBufferIndex` does).
 Create **one static instance**:
+
 - `aabb` = world-space bounds (for the cube: parked-player-relative, e.g. 10 m
   ahead of the camera spawn so the parked view sees it),
 - `transform` = **row-major** 4×4 (pitfall #2) — for the cube, translation only,
@@ -324,19 +335,19 @@ Create **one static instance**:
   `vertexFormat = FFX_SURFACE_FORMAT_R32G32B32_FLOAT`, `vertexStride = 12`,
   `triangleCount`, `maxCascade = 0` (near cascades only), `flags = NONE`.
 
-2.2 **SDF debug visualization**: add a `VulkanImage` `BrixelSdfDebug`
-(R16F RGBA, render res, STORAGE|SAMPLED) + fill `FfxBrixelizerDebugVisualizationDescription`
-(`FFX_BRIXELIZER_TRACE_DEBUG_MODE_DISTANCE`, then `..._GRAD`, `..._BRICK_ID`;
-`inverseViewMatrix`/`inverseProjectionMatrix` = cglm inverses, **column-major
-memcpy** — pitfall #1 applies to these too; `tMin/tMax/sdfSolveEps` from the
-sample; `renderWidth/Height` = render res; `output` = the debug image,
-`FFX_RESOURCE_STATE_UNORDERED_ACCESS`). Pass it via
-`updateDesc.debugVisualizationDesc`.
+  2.2 **SDF debug visualization**: add a `VulkanImage` `BrixelSdfDebug`
+  (R16F RGBA, render res, STORAGE|SAMPLED) + fill `FfxBrixelizerDebugVisualizationDescription`
+  (`FFX_BRIXELIZER_TRACE_DEBUG_MODE_DISTANCE`, then `..._GRAD`, `..._BRICK_ID`;
+  `inverseViewMatrix`/`inverseProjectionMatrix` = cglm inverses, **column-major
+  memcpy** — pitfall #1 applies to these too; `tMin/tMax/sdfSolveEps` from the
+  sample; `renderWidth/Height` = render res; `output` = the debug image,
+  `FFX_RESOURCE_STATE_UNORDERED_ACCESS`). Pass it via
+  `updateDesc.debugVisualizationDesc`.
 
-2.3 **Dump hook**: extend the `ENGINE_DEBUG_DUMP_IMAGES` token table in
-`Vulkan.cpp` with `brixelSdf` (and later `giDiffuse` / `giSpecular`).
+  2.3 **Dump hook**: extend the `ENGINE_DEBUG_DUMP_IMAGES` token table in
+  `Vulkan.cpp` with `brixelSdf` (and later `giDiffuse` / `giSpecular`).
 
-2.4 **Verify**: with the parked player (do not move it):
+  2.4 **Verify**: with the parked player (do not move it):
 
 ```bash
 ENGINE_DEBUG_DUMP_IMAGES=brixelSdf ./scripts/run.sh play screenshot /tmp/brix_sdf.jpg
@@ -366,6 +377,7 @@ flag the validation layer rejects the bind.
 
 3.2 **Instance creation**: one instance per (entity, primitive) where the entity
 is **not skinned** (`Skin` component / `DRAW_FLAG_SKINNED` — skip in v1):
+
 - `aabb` = `GpuDrawInstance.boundingSphere` (local center + radius) transformed to
   world by the entity's `WorldTransform` (fall back to `Transform`),
 - `transform` = row-major 4×4 from quat/pos/scale (cglm: quat → 3×3, compose;
@@ -392,6 +404,7 @@ The heightmap terrain has no mesh — generate one per tile for the voxelizer.
 4.1 **Per-tile SDF mesh**: when a `HeightmapTile` reaches `HEIGHTMAP_TILE_READY`
 (hook into the heightmap system's readiness, same place `AzgaarProps` polls
 tiles), generate a decimated grid from `tile.heights` (512², metres):
+
 - resolution `N` (default **65** → 32 m spacing for a 2048 m tile; env override
   `ENGINE_BRIXEL_TERRAIN_RES`), world-space positions
   `(originX + i*step, heights[i][j], originZ + j*step)`, positions-only 12 B
@@ -406,7 +419,7 @@ tiles), generate a decimated grid from `tile.heights` (512², metres):
   camera; the sample's `m_SdfCenterFollowCamera` behavior).
 
 **Gate 4:** SDF debug shows terrain under the player; tile streaming works —
-with a *temporary* camera move (ask the user; never move the parked player) the
+with a _temporary_ camera move (ask the user; never move the parked player) the
 SDF follows and new tiles appear / evicted ones disappear without permanent
 "UNINIT holes" in the brick map (the fork's clamp patches should prevent
 wedge-locks); per-tile bake cost logged; total instances (25 tiles + scene
@@ -425,11 +438,12 @@ distance-to-camera then species (canopy species / buildings first; grass tufts
 last — they add little SDF value at cascade resolutions). Transform =
 T(pos)·R_y(yaw)·S(scale), row-major. `maxCascade` by species size (trees high,
 grass low). The 65536 cap (pitfall #9) is **shared** — scene instances (Step 3)
-+ props + Step 10's dynamic all draw from one table (static grows up from 0,
-dynamic grows down from the top): pick the budget so scene + props stay well
-under it, leaving headroom for Step 10 (Step 3's instance-count log decides the
-number).
-5.3 Log accepted vs dropped counts.
+
+- props + Step 10's dynamic all draw from one table (static grows up from 0,
+  dynamic grows down from the top): pick the budget so scene + props stay well
+  under it, leaving headroom for Step 10 (Step 3's instance-count log decides the
+  number).
+  5.3 Log accepted vs dropped counts.
 
 **Gate 5:** SDF debug shows trees/rocks/buildings around the player; budget
 respected (log line); bake cost with props included measured (the fork's
@@ -449,19 +463,21 @@ static texture is fine for v1 — revisit if banding shows up.)
 6.2 **Environment cube**: one-shot compute dispatch evaluating the procedural sky
 (factor the sky color + sun function out of `skybox.frag` into a shared include,
 `includes/sky.shader`) into a **128×128×6 R16F cube** (`VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT`
-+ `VK_IMAGE_VIEW_TYPE_CUBE` — the engine already does this for `dummyCubeImage`;
-the FFX backend maps it to a cube view, pitfall #7). When wrapping it for FFX,
-the synthesized `VkImageCreateInfo` must carry the `CUBE_COMPATIBLE` flag
-(pitfall #14) or the backend wraps it as a plain 2D array. Re-render on
-swapchain create (v1: also fine at load only).
-6.3 **History buffers** (render res, all STORAGE|SAMPLED|TRANSFER):
-- `HistoryDepth` **R32F** (sample convention — D32→R32F via
+
+- `VK_IMAGE_VIEW_TYPE_CUBE` — the engine already does this for `dummyCubeImage`;
+  the FFX backend maps it to a cube view, pitfall #7). When wrapping it for FFX,
+  the synthesized `VkImageCreateInfo` must carry the `CUBE_COMPATIBLE` flag
+  (pitfall #14) or the backend wraps it as a plain 2D array. Re-render on
+  swapchain create (v1: also fine at load only).
+  6.3 **History buffers** (render res, all STORAGE|SAMPLED|TRANSFER):
+
+* `HistoryDepth` **R32F** (sample convention — D32→R32F via
   `vulkanCopyDepthToColorImage`; clear **0.0** = background, since the engine is
   reverse-Z — see pitfall #3; do NOT clear to 1.0),
-- `HistoryNormal` R16F RGBA (copy of `worldNormal`; clear 0),
-- `HistoryLitOutput` R16F RGBA (copy of the composited color **after** GI
+* `HistoryNormal` R16F RGBA (copy of `worldNormal`; clear 0),
+* `HistoryLitOutput` R16F RGBA (copy of the composited color **after** GI
   compositing — Step 8 adds the copy; for now copy the plain composite; clear 0).
-- Copies run at end of frame (new tiny step in the brixelizer pass's
+* Copies run at end of frame (new tiny step in the brixelizer pass's
   `postUpdate`, or a dedicated `VulkanBrixelizerHistoryPass` if ordering gets
   awkward — decide in Step 8).
 
@@ -483,6 +499,7 @@ RGBA render-res images (STORAGE|SAMPLED).
 before composite — i.e. register between `vulkanAOPass` and
 `vulkanCompositePass`; transition inputs to SHADER_READ_ONLY, outputs to GENERAL
 around the call — pitfall #11):
+
 - matrices: `view` / `projection` = `camera->cameraUbo.view/.projection`
   (**jittered**, matching the depth buffer — column-major memcpy, pitfall #1);
   `prevView` / `prevProjection` = our own saved previous-frame copies of the same
@@ -505,22 +522,23 @@ around the call — pitfall #11):
   all-fresh rays (slightly noisier than the sample, which warms up by running
   one GI-disabled lighting pass and copying its output into the history,
   `m_InitColorHistory`). Note: the sample's `m_FrameIndex == 0 ? 0 : 1`
-  "MultiBounce" is a constant in the *sample's own* lighting shader, not a GI
+  "MultiBounce" is a constant in the _sample's own_ lighting shader, not a GI
   context parameter — the GI context has no such flag; its radiance cache is
   maintained incrementally via the voxelizer's brick-clear counter (the
   `clear_cache` pass is an indirect dispatch sized by the `CLEAR_BRICKS`
   counter).
-7.3 **Debug cache views**: `ffxBrixelizerGIContextDebugVisualization` into
+  7.3 **Debug cache views**: `ffxBrixelizerGIContextDebugVisualization` into
   `BrixelGIDebug` (R16F) — `FFX_BRIXELIZER_GI_DEBUG_MODE_RADIANCE_CACHE` /
   `_IRRADIANCE_CACHE`; add dump tokens `giDiffuse`, `giSpecular`, `giCache`.
 
 **Gate 7 (the big one):** with the parked player:
+
 - `giDiffuse` dump: bright where sky is visible, dark under/inside geometry,
   plausible color tint (bluish sky) — **compare against the Step 0 sample
   screenshots** (different scene, same character);
 - `giSpecular` dump: sun glint + sky reflection pattern, not uniform white;
 - `giCache` views coherent (no garbage/NaN — a NaN fill shows as flat color);
-- **mv-scale check**: a short *user-approved* camera-move run (or a temporary
+- **mv-scale check**: a short _user-approved_ camera-move run (or a temporary
   `ENGINE_`-driven camera path) shows no temporal smearing/ghosting proportional
   to motion — if it ghosts, `motionVectorScale` is wrong (sign or units);
 - validation layer clean; GPU cost of the 19 GI passes recorded (profile).
@@ -530,6 +548,7 @@ around the call — pitfall #11):
 8.1 **Albedo G-buffer**: the composite needs per-pixel albedo to weight the
 diffuse GI (`L += albedo * E_diffuse`). The G-buffer has none. Add a 4th color
 attachment:
+
 - extend the pipe infra with `colorFormat4` / `clearColor4(Enabled)`
   (`VulkanPipe`, render-pass creation, `vulkanBeginRender` — a generic,
   default-off change),
@@ -540,9 +559,10 @@ attachment:
 - (Alternative, if the 4th attachment is too invasive: encode albedo into
   `material.a` + two spare bits — rejected: 3 channels needed; do it properly.)
 
-8.2 **Composite**: extend `composite.comp` (absent-sentinel pattern, like
-`aoIndex` — when GI is disabled the term is skipped entirely so frames stay
-pixel-identical):
+  8.2 **Composite**: extend `composite.comp` (absent-sentinel pattern, like
+  `aoIndex` — when GI is disabled the term is skipped entirely so frames stay
+  pixel-identical):
+
 - `composite += albedo.rgb * diffuseGI.rgb * diffuseFactor` (non-sky pixels only,
   `diffuseFactor` default 1.5 — sample default),
 - `composite += specularGI.rgb * specularFactor * (1 - roughness) * (1 - metallic-ish mask)`
@@ -553,6 +573,7 @@ pixel-identical):
   the next frame's `prevLitOutput` — the sample's `CopyHistoryResources` order).
 
 **Gate 8:** parked-player A/B screenshots (`ENGINE_BRIXGI=0` vs `1`):
+
 - shadowed areas (interior of structures, under trees, terrain crevices) gain
   soft **colored** ambient — red walls get red-tinted ambient, not white;
 - no white-wash on colored surfaces (albedo weighting correct);
@@ -577,7 +598,7 @@ pixel-identical):
   than they contribute), voxel size base (2 m), `tMax`, `sdfSolveEps`,
   `maxBricksPerBake`, terrain SDF resolution, props budget.
 - **Gate 9:** per-frame cost at the parked scene recorded and accepted (fill in
-  measured numbers: voxelizer ___ ms, GI ___ ms); settings persist across
+  measured numbers: voxelizer **_ ms, GI _** ms); settings persist across
   restarts; GUI toggles work; `docs/fsr3.1.md` updated with the final
   configuration.
 
@@ -591,8 +612,8 @@ pixel-identical):
   (GI denoiser re-converges cleanly instead of smearing from the old position).
 - Jitter on/off toggle (upscaler/TAA): the depth buffer flips between
   jittered/non-jittered projection between frames, so `prevView/prevProjection`
-  + velocity are inconsistent for one frame → detect the toggle in the pass and
-  clear the GI history (same mechanism as teleports).
+  - velocity are inconsistent for one frame → detect the toggle in the pass and
+    clear the GI history (same mechanism as teleports).
 - Verify resize recreation end-to-end (both contexts).
 
 ## Per-step validation protocol
@@ -601,7 +622,7 @@ pixel-identical):
 2. Run: `./scripts/run.sh play screenshot /tmp/<name>.jpg` (parked player —
    **never move it**; ask the user for any other vantage point).
 3. Buffer dumps: `ENGINE_DEBUG_DUMP_IMAGES=<tokens> ./scripts/run.sh play
-   screenshot /tmp/x.jpg` → `<x>_<token>.jpg` next to the screenshot.
+screenshot /tmp/x.jpg` → `<x>_<token>.jpg` next to the screenshot.
 4. Validation layer / debug: `ENGINE_DEBUG=1` (or the `renderdoc` variant for
    frame captures — `docs/renderdoc-capture.md`).
 5. Log check: `./scripts/run.sh play log 5000 && cat build/c-game/data/game.log`

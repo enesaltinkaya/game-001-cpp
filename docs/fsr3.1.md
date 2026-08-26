@@ -593,3 +593,84 @@ function-pointer variables. Without this, the compiler would emit direct
 `call` instructions to Vulkan symbols, but at link time those symbols resolve
 to volk's global variables (data, not code), causing a segfault when the CPU
 tries to execute raw pointer data as instructions.
+
+## Brixelizer GI sample cross-build (Wine reference)
+
+`build-brixgi-sample.sh` (in `fsr3.1/`) cross-compiles the Cauldron-based
+Brixelizer GI sample (`git/samples/brixelizergi`) for Windows x64 + Vulkan
+with llvm-mingw, links it against `sdk/build-win/libffx_fsr3upscaler_vk.a`
+(run `./build.sh` first), and assembles a runnable tree in `git/bin/`
+(exe + `dxcompiler.dll`/`dxil.dll` + `configs/` + `shaders/`). Run it with
+Wine against the host's radeon ICD:
+
+```bash
+cd /home/enes/Projects/c/cpp-thirdparty/fsr3.1 && ./build-brixgi-sample.sh
+cd git/bin && VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/radeon_icd.json \
+  wine FFX_BrixelizerGI_VK.exe
+```
+
+Scene/IBL/noise media lives in `git/media/` (fetched via
+`sdk/tools/media_delivery/MediaDelivery.exe`, see the brixelizer-gi plan).
+
+### Test hooks (fork additions in `brixelizergirendermodule.cpp`)
+
+- `BRIXGI_OUTPUT_MODE` — force the Output Mode: `diffusegi` / `speculargi` /
+  `radiance` / `irradiance` / `debugvis` / `example` / `none` (otherwise the
+  ImGui combo drives it).
+- `BRIXGI_EXIT_FRAMES=N` — `PostQuitMessage` after N frames so the run is
+  headless; with a screenshot-enabled config the framework's `PostRun` dumps
+  the last swapchain frame to `git/bin/screenshots/`.
+- FFX messages (`ffxSetPrintMessageCallback`) are mirrored to stdout as
+  `[FFX ERROR|WARNING|INFO] …` — a run is "FFX-clean" when the log has no
+  ERROR/WARNING lines.
+
+`enable-brixgi-screenshot.sh` (in `fsr3.1/`) flips
+`configs/brixelizergiconfig.json` → `"FidelityFX Brixelizer GI" →
+"Screenshot": true` (the sample loads that file, NOT cauldronconfig.json;
+re-run it after every build — the build re-copies stock configs). Reference
+captures (2558×1413, RADV, 1200 frames each, 2026-08-26) are in
+`git/bin/screenshots/ref-{diffusegi,speculargi,radiance,irradiance,debugvis}.jpg`.
+
+### Fork patches the sample build relies on (clang-on-MinGW, in `git/framework/…`)
+
+MSVC-tolerant idioms that clang rejects — all patched with `[clang patch]`
+comments in-tree:
+
+- **Volk dispatch for the whole sample** — same root cause as the library
+  build (Volk integration above): all sources compile with
+  `VK_NO_PROTOTYPES` + force-included `volk.h` (+ `VK_USE_PLATFORM_WIN32_KHR`
+  for the Win32 surface entry points, which volk only generates under that
+  define), and the link **drops `vulkan-1.lib`** — every `vk*` symbol
+  resolves to a volk function-pointer variable, and `volkInitialize()` /
+  `volkLoadInstance()` / `volkLoadDevice()` (hooks in `device_vk.cpp`)
+  populate them. `VMA_STATIC_VULKAN_FUNCTIONS=1` is also defined so
+  vk_mem_alloc copies the volk variables instead of its dynamic-import path
+  (which would dereference unpopulated proc-addr members).
+- `volkInitialize()` runs **before** the `InstanceCreator` ctor in
+  `device_vk.cpp` (its ctor calls volk-dispatched `vkEnumerate*`).
+- Copy-queue fallback: RADV exposes no dedicated transfer-only family
+  (family 0 is GRAPHICS|COMPUTE|TRANSFER, family 1 COMPUTE|TRANSFER); the
+  copy-queue search falls back to any family with the transfer flag.
+- `RenderModuleInfo::InitOptions` is null for name-only config entries and
+  the modules call `.value()` on it (nlohmann throws `type_error.306`);
+  the framework's init loop now hands them an empty object.
+- MSVC-isms fixed in-tree: `L#shift` wide-string stringification macro and
+  `x##/` include-path pasting (sample.cpp), `##` in `CHECK_FEATURE_SUPPORT`
+  feature macros, `UISlider` out-of-class virtual specializations needing
+  `template<>`, `AddShaderDesc`/`AddTask` by value (temp bindings),
+  address-of-temporary `GetResourceView()`/`Barrier::Transition` call
+  sites, `auto&` iterator temporaries in for-loops, non-const
+  `operator float()` used by `std::sort`, `__uuidof` for the DXC COM
+  interfaces (generated `dxc_uuids` shim in `git/build/brixgi-compat/`),
+  missing `<share.h>`/`<cfloat>`/`<experimental/filesystem>` includes,
+  `_WIN32_WINNT=0x0A00` (DPI + shellscaling APIs), a compat `Xinput.h`
+  (MinGW lacks it; fields are `BYTE bLeftTrigger/bRightTrigger`, not WORD),
+  and a lowercase include for `lightingrendermodule.h` (case-sensitive fs).
+- The FFX lib build has no frame-interpolation component, so the five
+  `ffx*Frameinterpolation*VK` entry points the VK backend references at
+  static-init time are stubbed in
+  `samples/brixelizergi/ffx_frameinterpolation_stubs.cpp` (they fail loudly
+  if ever called; the GI sample never enables FG).
+
+The build is incremental (`src -nt obj`); changes to the script's defines
+need a `rm -rf git/build/brixgi-win` first.
