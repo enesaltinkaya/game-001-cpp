@@ -83,6 +83,19 @@ void main() {
     vec3 worldPosPrev = inPos + local;
     worldPosPrev.xz  += wind.xy * swayPrev;
 
+    // Player reaction: same radial push as azgaar_props.vert (must match
+    // exactly, the pre-pass writes the depth the colour pass tests against).
+    // The CURRENT player position is used for both the cur and prev clips —
+    // a 1-frame lag in the reaction is invisible, and it keeps the motion
+    // vector consistent with the depth write.
+    vec4  player = sceneBuffer.props.playerPos;
+    float pDist  = length(vec3(inPos) - player.xyz);
+    float pFall  = 1.0 - smoothstep(0.0, PROPS_PLAYER_REACH, pDist);
+    float pAmp   = (PROPS_PLAYER_BASE + PROPS_PLAYER_SPEED_SCALE * player.w) * pFall * swayW;
+    vec2  pDir   = (inPos.xz - player.xz) / max(pDist, 1e-3);
+    worldPosCur.xz  += pDir * pAmp;
+    worldPosPrev.xz += pDir * pAmp;
+
     vec4 worldPos4     = vec4(worldPosCur, 1.0);
     vec4 prevWorldPos4 = vec4(worldPosPrev, 1.0);
     gl_Position    = sceneBuffer.cameras[0].viewProjection * worldPos4;

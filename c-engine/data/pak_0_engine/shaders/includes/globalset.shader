@@ -190,11 +190,23 @@ struct WaterData {
 //   lod:     x = hard LOD switch distance (m): near LOD inside, far LOD
 //            outside.  The vertex shader does a hard distance switch (no
 //            cross-fade blend); the hidden side collapses to a point.
+//   playerPos: xyz = player ground position (world metres), w = horizontal
+//            speed (m/s).  Drives the vertex-shader reaction that pushes the
+//            vegetation radially away from the player (amplitude = standing
+//            base + speed-scaled term), so grass parts as the player runs.
+//            When the player is absent, xyz sits far away so the falloff is
+//            ~0 everywhere.
 struct AzgaarPropsData {
     vec4 wind;
     vec4 density;
     vec4 lod;
+    vec4 playerPos;
 };
+
+// Player vegetation-reaction tuning (azgaar_props vertex shaders, workstream B).
+#define PROPS_PLAYER_REACH        2.0   // metres, radial falloff around the player
+#define PROPS_PLAYER_BASE         0.15  // metres, static push amplitude while standing
+#define PROPS_PLAYER_SPEED_SCALE  0.05  // metres per (m/s), extra amplitude while moving
 
 // GPU weather particles (azgaar_weather pass, plans/azgaar-weather-gpu-
 // particles.md).  Single source of truth read by the simulate compute, the

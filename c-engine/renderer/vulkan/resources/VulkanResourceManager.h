@@ -162,6 +162,9 @@ struct VulkanAzgaarPropsData {
     vec4 wind = {};    // xy = dir (unit), z = speed (rad/s), w = strength (m)
     vec4 density = {}; // xyz = global multipliers (grass / tree / rock), w = enabled
     vec4 lod = {};     // x = hard LOD switch distance (m): near inside, far outside
+    // xyz = player ground position (m), w = horizontal speed (m/s).  Far away
+    // (1e9) when the player is absent, so the shader falloff is ~0.
+    vec4 playerPos = {};
 };
 void vulkanResourceSetAzgaarPropsData(const VulkanAzgaarPropsData* params);
 VulkanAzgaarPropsData vulkanResourceGetAzgaarPropsData(void);

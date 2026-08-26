@@ -14,6 +14,7 @@
 #include "ecs/Ecs.h"
 #include "renderer/vulkan/pass/azgaar_props/VulkanAzgaarPropsPass.h"
 #include "renderer/vulkan/resources/VulkanResourceManager.h"
+#include "player/Player.h"
 #include "renderer/vulkan/scene/VulkanScene.h"
 #include "renderer/material/MaterialManager.h"
 #include "renderer/material/Material.h"
@@ -3414,6 +3415,13 @@ namespace game {
 
     // ── Per-frame poll: enqueue READY tiles not yet built, push wind ─────────
 
+    // Player-vegetation reaction state: the horizontal speed fed to the props
+    // data is a per-frame position delta (the character controller's desired
+    // velocity is not exposed), clamped so teleports (playerTeleportTo, world
+    // respawn) cannot create a one-frame mega-push.
+    static vec3 propsPrevPlayerPos = {};
+    static bool propsHavePrevPlayerPos = false;
+
     static void propsPushWind(const AzgaarWorld* world) {
         // v1 uses winds[0] (plan F: seasons later).  Falls back to a default
         // direction when the map has no authored wind.  When the weather module
@@ -3444,6 +3452,38 @@ namespace game {
             .density = {1.0f, 1.0f, 1.0f, enabled},
             .lod     = {PROPS_LOD_SWITCH, PROPS_LOD_SWITCH, 0.0f, 0.0f},
         };
+
+        // Player reaction: push the ground position + horizontal speed into the
+        // props data; the vertex shader displaces the vegetation away from it.
+        // With no loaded player (or push disabled, see below) the position sits
+        // far away so the falloff is 0.
+        // Test override: ENGINE_PROPS_PLAYER_PUSH=0 disables the reaction.
+        const char* pushEnv = getenv("ENGINE_PROPS_PLAYER_PUSH");
+        bool pushOn = !(pushEnv && *pushEnv && atof(pushEnv) <= 0.0f);
+        vec3 pPos = {};
+        if (pushOn && playerGetPosition(pPos)) {
+            float pSpeed = 0.0f;
+            if (propsHavePrevPlayerPos && utils::timer.dt > 0.0f) {
+                float dx = pPos[0] - propsPrevPlayerPos[0];
+                float dz = pPos[2] - propsPrevPlayerPos[2];
+                pSpeed = sqrtf(dx * dx + dz * dz) / utils::timer.dt;
+                if (pSpeed > 30.0f) pSpeed = 30.0f;
+            }
+            propsPrevPlayerPos[0] = pPos[0];
+            propsPrevPlayerPos[1] = pPos[1];
+            propsPrevPlayerPos[2] = pPos[2];
+            propsHavePrevPlayerPos = true;
+            data.playerPos[0] = pPos[0];
+            data.playerPos[1] = pPos[1];
+            data.playerPos[2] = pPos[2];
+            data.playerPos[3] = pSpeed;
+        } else {
+            propsHavePrevPlayerPos = false;
+            data.playerPos[0] = 1.0e9f;
+            data.playerPos[1] = 1.0e9f;
+            data.playerPos[2] = 1.0e9f;
+            data.playerPos[3] = 0.0f;
+        }
         engine::vulkanResourceSetAzgaarPropsData(&data);
     }
 
@@ -3722,7 +3762,8 @@ namespace game {
         engine::VulkanAzgaarPropsData off = {
             .wind    = {0, 0, 0, 0},
             .density = {0, 0, 0, 0},
-            .lod     = {PROPS_LOD_SWITCH, PROPS_LOD_SWITCH, 0.0f, 0.0f}};
+            .lod     = {PROPS_LOD_SWITCH, PROPS_LOD_SWITCH, 0.0f, 0.0f},
+            .playerPos = {1.0e9f, 1.0e9f, 1.0e9f, 0.0f}};
         engine::vulkanResourceSetAzgaarPropsData(&off);
 
         if (g_deciduousScene) {

@@ -84,6 +84,20 @@ void main() {
     vec3 worldPos = inPos + local;
     worldPos.xz += wind.xy * sway; // world-space drift (independent of yaw)
 
+    // Player reaction (v1, stateless): radial push away from the player's
+    // ground position.  Amplitude = standing base + speed-scaled term, so the
+    // grass parts around a standing player and swishes harder while running.
+    // Weighted by swayW (height² x species sway factor) so the base stays
+    // anchored and static species (rocks, buildings) are unaffected.  The
+    // falloff uses the 3D distance to the player, so grass on a hill below
+    // the player does not react; the push itself is horizontal (xz).
+    vec4  player = sceneBuffer.props.playerPos;
+    float pDist  = length(vec3(inPos) - player.xyz);
+    float pFall  = 1.0 - smoothstep(0.0, PROPS_PLAYER_REACH, pDist);
+    float pAmp   = (PROPS_PLAYER_BASE + PROPS_PLAYER_SPEED_SCALE * player.w) * pFall * swayW;
+    vec2  pDir   = (inPos.xz - player.xz) / max(pDist, 1e-3);
+    worldPos.xz += pDir * pAmp;
+
     gl_Position = sceneBuffer.cameras[0].viewProjection * vec4(worldPos, 1.0);
 
     outWorldPos = worldPos;

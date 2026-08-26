@@ -68,6 +68,15 @@ void main() {
     vec3 worldPos = inPos + local;
     worldPos.xz += wind.xy * sway; // world-space drift (independent of yaw)
 
+    // Player reaction: same radial push as azgaar_props.vert, so the cast
+    // geometry matches the colour pass this frame.
+    vec4  player = sceneBuffer.props.playerPos;
+    float pDist  = length(vec3(inPos) - player.xyz);
+    float pFall  = 1.0 - smoothstep(0.0, PROPS_PLAYER_REACH, pDist);
+    float pAmp   = (PROPS_PLAYER_BASE + PROPS_PLAYER_SPEED_SCALE * player.w) * pFall * swayW;
+    vec2  pDir   = (inPos.xz - player.xz) / max(pDist, 1e-3);
+    worldPos.xz += pDir * pAmp;
+
     gl_Position = sceneBuffer.shadow.shadowViewProjection[pc.cascadeIndex]
                   * vec4(worldPos, 1.0);
     outUV    = inUV;
