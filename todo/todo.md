@@ -5,3 +5,4 @@
 - @plans/ffx-hybrid-shadows-raster.md better shadows.
 - cacao why ghosting? compare with sample. check defaults.
 - grass planes are not touching the terrain sometimes.
+- big tree close to origin, leaves are not transparent.
