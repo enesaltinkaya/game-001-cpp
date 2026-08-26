@@ -58,13 +58,25 @@ void main() {
     // Without this the G-buffer keeps the front-face normal on back faces,
     // which breaks normal-based consumers (decal GROUND_ONLY check, SSR, ...).
     if (!gl_FrontFacing) N = -N;
+    // Thin double-sided vegetation (grass cards, reed blades, palm fronds,
+    // flower heads — species 0/6/9/12, see AzgaarPropSpecies in
+    // c-game/game/azgaar/AzgaarProps.h): both faces of a blade face the sky,
+    // so both must catch the sun.  The flip above would leave back faces with
+    // a down-facing normal (NdotL == 0) and render half of every tuft
+    // near-black; light those species with the stored (unflipped) normal on
+    // both sides.  Closed solids keep the flipped normal so slab undersides
+    // (roof undersides, canopy bottoms) stay unsunlit.
+    vec3 Nlight =
+        (inSpecies == 0u || inSpecies == 6u || inSpecies == 9u || inSpecies == 12u)
+            ? normalize(inNormal)
+            : N;
     vec3 V = normalize(sceneBuffer.cameras[0].position.xyz - inWorldPos);
 
     vec3 sunDir   = normalize(-sceneBuffer.directionalLight.direction.xyz);
     vec3 sunColor = sceneBuffer.directionalLight.color.rgb
                   * sceneBuffer.directionalLight.direction.w;
 
-    float NdotL = max(dot(N, sunDir), 0.0);
+    float NdotL = max(dot(Nlight, sunDir), 0.0);
 
     // Shadows: cascaded directional (trees / props cast onto the vegetation)
     // multiplied by screen-space contact shadows.  Same sources as the
@@ -127,7 +139,7 @@ void main() {
     // matte, so the specular GGX term is skipped).  Same light-grid source
     // as the terrain / scene passes, so a torch near some trees reads as
     // lit canopies instead of sun-lit green.
-    color += evaluateForwardPlusLightsDiffuse(inWorldPos, N, albedo);
+    color += evaluateForwardPlusLightsDiffuse(inWorldPos, Nlight, albedo);
 
     if (any(isnan(color)) || any(isinf(color))) color = vec3(0.0);
     outColor    = vec4(color, 1.0); // opaque: the LOD hard switch is resolved in the vertex shader

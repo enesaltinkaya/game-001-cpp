@@ -254,13 +254,6 @@ namespace engine {
         /* The engine's normal buffer is oct-encoded (.rg), which CACAO's affine
          * unpack (mul/add) cannot decode — reconstruct normals from depth. */
         settings.generateNormals = true;
-        /* Tuned down from the CACAO defaults (radius 1.2, multiplier 1.0, power
-         * 1.5, clamp 0.98): obscurance = multiplier * 4.3, then occlusion =
-         * pow(1 - min(obscurance, clamp), power) — so at the defaults even weak
-         * occlusion multiplies the image by ~0.7 and creases bottom out near
-         * black, reading as an over-dark, too-wide contact band.  The smaller
-         * radius keeps it a believable contact shadow; the linear power and the
-         * clamped floor keep creases from going pitch black. */
         settings.radius           = aoEnvFloat("ENGINE_AO_RADIUS", 0.6f);
         settings.shadowMultiplier = aoEnvFloat("ENGINE_AO_STRENGTH", 1.5f);
         settings.shadowPower      = aoEnvFloat("ENGINE_AO_POWER", 1.50f);
