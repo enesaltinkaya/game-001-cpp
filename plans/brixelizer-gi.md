@@ -14,7 +14,7 @@ FFX passes (`VulkanFsrPass`, CACAO in `VulkanAOPass`, `VulkanLpmPass`, `VulkanLe
 
 - [x] Step 0 — SDK side verified (library + sample run as reference)
 - [x] Step 1 — Engine plumbing: FFX device, voxelizer context + resources (no instances)
-- [ ] Step 2 — Voxelizer smoke test: one instance + SDF debug visualization
+- [x] Step 2 — Voxelizer smoke test: one instance + SDF debug visualization
 - [ ] Step 3 — Real scene meshes registered (static world)
 - [ ] Step 4 — Terrain SDF meshes (streaming tiles)
 - [ ] Step 5 — Props (vegetation / buildings) SDF, budgeted
@@ -383,6 +383,34 @@ boundaries); `stats` shows allocated bricks/triangles > 0 and no "failed voxel"
 behavior; validation layer clean. If the SDF looks transposed/mirrored, the
 transform convention (pitfall #2) or matrix convention (pitfall #1) is wrong —
 fix before moving on.
+
+**Done (2026-08-26).** All sub-steps landed in
+`c-engine/renderer/vulkan/pass/brixelizer/`:
+- 2.1 `createTestInstance()` registers the generated 8-vertex/36-index cube
+  (`cubeVertBuf`/`cubeIdxBuf`, `vulkanCreateGpuBuffer` + transient `vulkanCopy`
+  upload) via `ffxBrixelizerRegisterBuffers` (PIXEL_COMPUTE_READ) and creates
+  one static instance (`maxCascade=0`, row-major translation-only transform,
+  UINT16 indices) placed 10 m ahead of the camera.
+- 2.2 `sdfDebug` (R16F RGBA, render-res, STORAGE|SAMPLED|TRANSFER_SRC) +
+  `FfxBrixelizerDebugVisualizationDescription` (mode via `ENGINE_BRIX_SDF_DEBUG`
+  = distance|grad|brick|cascade|uvw|iter|off, default distance; `tMax` via
+  `ENGINE_BRIX_SDF_TMAX`, default 10000). `brixelSdf` / `brixelSdfRaw` dump
+  tokens in `Vulkan.cpp`.
+
+**Gate 2 verified:** distance dump shows a clean SDF of the cube (cyan zero
+level set, dark-red brick halo); grad view is a coherent normal field; brick-ID
+view shows brick boundaries; `stats` = 240 staticTris / 85 staticRefs /
+27 staticBricks (> 0); no failed-voxel / scratch-overflow. The only
+validation CRIT is the known deferred FFX shutdown leak at `vkDestroyDevice`
+(Step 1) — no per-frame validation errors.
+
+**Known artifact (not a Gate 2 failure):** the cube is baked relative to the
+camera at instance-creation (frame 0). The camera drifts during the first few
+frames before settling at the parked position, so the clipmap scroll leaves a
+small ghost copy of the cube's SDF at the earlier offset (a second, tiny cube
+in the dump). Harmless for the smoke test; real Step-3 meshes sit at fixed
+world positions, so no ghost. If it ever affects the GI (Step 7), re-create the
+instance once the camera is settled, or pin the cube to a fixed world pos.
 
 ## Step 3 — Register the real scene meshes (static world)
 

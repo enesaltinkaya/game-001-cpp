@@ -175,6 +175,8 @@ static void vulkanDebugDumpFrameImages(const char* shotPath) {
             img = vulkanDofPassGetOutput();
         } else if (!strcmp(tok, "bloom")) {
             img = vulkanBloomPassGetBloomImage();
+        } else if (!strcmp(tok, "brixelSdf")) {
+            img = vulkanBrixelizerPassGetSdfDebug();
         } else if (strstr(tok, "Raw")) {
             /* <name>Raw: raw byte dump of the image named <name> (dispatches
              * through the regular token table by stripping the suffix). */
@@ -204,6 +206,8 @@ static void vulkanDebugDumpFrameImages(const char* shotPath) {
                 rawImg = vulkanDofPassGetOutput();
             } else if (!strcmp(sub, "bloom")) {
                 rawImg = vulkanBloomPassGetBloomImage();
+            } else if (!strcmp(sub, "brixelSdf")) {
+                rawImg = vulkanBrixelizerPassGetSdfDebug();
             }
             if (!rawImg) {
                 continue;

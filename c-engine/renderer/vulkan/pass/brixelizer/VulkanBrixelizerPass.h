@@ -30,4 +30,7 @@ extern VulkanBrixelizerPass vulkanBrixelizerPass;
 char vulkanBrixelizerPassGetInterface(FfxInterface* out);
 /* Voxelizer context created (resources + ffxBrixelizerContextCreate done). */
 char vulkanBrixelizerPassIsReady(void);
+/* SDF debug visualization image (R16F RGBA, render res, Step 2). Null until
+ * the first update after swapchain creation. */
+struct VulkanImage* vulkanBrixelizerPassGetSdfDebug(void);
 }  // namespace engine

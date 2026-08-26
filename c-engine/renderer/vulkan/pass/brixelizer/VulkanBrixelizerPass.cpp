@@ -2,6 +2,7 @@
 #include "ecs/Ecs.h"
 #include "ecs/system/camera/CameraComponent.h"
 #include "ecs/system/camera/CameraSystem.h"
+#include "ecs/system/window/WindowSystem.h"
 #include "events/Events.h"
 #include "renderer/vulkan/Vulkan.h"
 #include "renderer/vulkan/command/VulkanCommand.h"
@@ -18,6 +19,7 @@
 #include <FidelityFX/host/backends/vk/ffx_vk.h>
 #pragma GCC diagnostic pop
 #include <stdlib.h>
+#include <string.h>
 #include <wchar.h>
 
 namespace engine {
@@ -40,6 +42,8 @@ namespace engine {
     static void destroyContext(void);
     static char createResources(void);
     static char ensureContext(void);
+    static char createTestInstance(Camera* camera);
+    static FfxBrixelizerTraceDebugModes getSdfDebugMode(void);
 
     static double elapsedCPU;
     static double elapsedGPU;
@@ -60,6 +64,53 @@ namespace engine {
     static VulkanBuffer cascadeAABBTrees[FFX_BRIXELIZER_MAX_CASCADES];
     static VulkanBuffer cascadeBrickMaps[FFX_BRIXELIZER_MAX_CASCADES];
     static VulkanBuffer gpuScratch;
+    /* Step 2: SDF debug visualization target (render-res R16F RGBA, written
+     * by the FFX debug pass as a UAV, dumped via brixelSdf). */
+    static VulkanImage sdfDebug;
+
+    /* Step 2 smoke-test instance: a generated cube proves the voxelizer bakes
+     * geometry through our resources (replaced by real scene meshes in Step
+     * 3). Positions-only 12 B vertices + u16 indices; placed 10 m in front of
+     * the current camera (the parked player) so the parked view sees it. */
+    static const float CUBE_HALF_EXTENT = 2.0f;
+    static const float CUBE_DISTANCE    = 10.0f;
+    static const float cubeVertexData[8 * 3] = {
+        /* 8 corners (±CUBE_HALF_EXTENT), CCW-from-outside faces below */
+        -1.0f * CUBE_HALF_EXTENT, -1.0f * CUBE_HALF_EXTENT, -1.0f * CUBE_HALF_EXTENT,
+         1.0f * CUBE_HALF_EXTENT, -1.0f * CUBE_HALF_EXTENT, -1.0f * CUBE_HALF_EXTENT,
+         1.0f * CUBE_HALF_EXTENT,  1.0f * CUBE_HALF_EXTENT, -1.0f * CUBE_HALF_EXTENT,
+        -1.0f * CUBE_HALF_EXTENT,  1.0f * CUBE_HALF_EXTENT, -1.0f * CUBE_HALF_EXTENT,
+        -1.0f * CUBE_HALF_EXTENT, -1.0f * CUBE_HALF_EXTENT,  1.0f * CUBE_HALF_EXTENT,
+         1.0f * CUBE_HALF_EXTENT, -1.0f * CUBE_HALF_EXTENT,  1.0f * CUBE_HALF_EXTENT,
+         1.0f * CUBE_HALF_EXTENT,  1.0f * CUBE_HALF_EXTENT,  1.0f * CUBE_HALF_EXTENT,
+        -1.0f * CUBE_HALF_EXTENT,  1.0f * CUBE_HALF_EXTENT,  1.0f * CUBE_HALF_EXTENT,
+    };
+    static const u16 cubeIndexData[36] = {
+        0, 1, 4, 4, 1, 5,  /* -Y */
+        2, 3, 7, 2, 7, 6,  /* +Y */
+        0, 4, 7, 0, 7, 3,  /* -X */
+        1, 6, 5, 1, 2, 6,  /* +X */
+        0, 3, 2, 0, 2, 1,  /* -Z */
+        4, 6, 7, 4, 5, 6,  /* +Z */
+    };
+    static VulkanBuffer cubeVertBuf;
+    static VulkanBuffer cubeIdxBuf;
+    static u32 cubeVertBufIdx;
+    static u32 cubeIdxBufIdx;
+    static FfxBrixelizerInstanceID cubeInstanceID;
+    static char testInstanceReady;
+
+    /* Debug visualization mode (ENGINE_BRIX_SDF_DEBUG=distance|grad|brick|
+     * cascade|uvw|iter; default distance). Step 9 moves this to the GUI. */
+    static FfxBrixelizerTraceDebugModes sdfDebugMode;
+    static char sdfDebugModeSet;
+    static char sdfDebugEnabled = 1;
+    static char statsTrisLogged;
+    /* Debug ray-march range (ENGINE_BRIX_SDF_TMAX, default the sample's
+     * 10000). The distance view normalizes hit distance by tMax, so near
+     * objects need a smaller value to show a visible band. */
+    static float sdfDebugTMax;
+    static char sdfDebugTMaxSet;
     /* ~8 MB (wchar-inflated on Linux) — file scope, not stack. */
     static FfxBrixelizerBakedUpdateDescription bakedUpdateDesc;
     static u32 frameIndex;
@@ -93,12 +144,29 @@ namespace engine {
         frameIndex      = 0;
         stats           = FfxBrixelizerStats{};
         statsLiveLogged = 0;
+        statsTrisLogged = 0;
+        /* The registered-buffer table + instance table live inside the FFX
+         * context — both are recreated with it. */
+        testInstanceReady = 0;
+        cubeInstanceID    = 0;
     }
 
     static void destroyResources(void) {
         if (sdfAtlas.img) {
             vulkanDestroyImage(&sdfAtlas, NULL);
             sdfAtlas = VulkanImage{};
+        }
+        if (sdfDebug.img) {
+            vulkanDestroyImage(&sdfDebug, NULL);
+            sdfDebug = VulkanImage{};
+        }
+        if (cubeVertBuf.buf) {
+            vulkanDestroyBuffer(&cubeVertBuf, NULL);
+            cubeVertBuf = VulkanBuffer{};
+        }
+        if (cubeIdxBuf.buf) {
+            vulkanDestroyBuffer(&cubeIdxBuf, NULL);
+            cubeIdxBuf = VulkanBuffer{};
         }
         if (brickAABBs.buf) {
             vulkanDestroyBuffer(&brickAABBs, NULL);
@@ -180,10 +248,47 @@ namespace engine {
             }
         }
 
-        /* One-time clear so pre-bake dumps are predictable (0 = no brick
-         * allocated yet); the FFX clear-bricks pass only rewrites bricks that
-         * were previously allocated. */
+        /* Step 2 test cube: positions-only 12 B vertices + u16 indices.
+         * STORAGE usage: the FFX backend binds vertex/index buffers as shader
+         * storage (plan pitfall #13). TRANSFER_DST: the one-time staging
+         * upload below (vkCmdCopyBuffer requires it). */
+        cubeVertBuf = vulkanCreateGpuBuffer("BrixelCubeVerts",
+                                           sizeof(cubeVertexData),
+                                           VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+        cubeIdxBuf = vulkanCreateGpuBuffer("BrixelCubeIdx",
+                                           sizeof(cubeIndexData),
+                                           VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+
+        /* SDF debug visualization target (Step 2.2): STORAGE (the FFX debug
+         * pass writes it as a UAV) + SAMPLED (dumps / later sampling) +
+         * TRANSFER_SRC (vulkanSaveImage dumps it). */
+        u32 renderW = window.renderWidth > 0 ? (u32)window.renderWidth : (u32)window.width;
+        u32 renderH = window.renderHeight > 0 ? (u32)window.renderHeight : (u32)window.height;
+        sdfDebug    = vulkanCreateImage(.name   = "BrixelSdfDebug",
+                                        .format = VK_FORMAT_R16G16B16A16_SFLOAT,
+                                        .usage  = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
+                                                  VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+                                        .width  = (int)renderW,
+                                        .height = (int)renderH);
+        if (!cubeVertBuf.buf || !cubeIdxBuf.buf || !sdfDebug.img) {
+            utils::error("vulkanBrixelizerPass: brixelizer test-cube/debug resource creation failed");
+            destroyResources();
+            return 0;
+        }
+
+        /* One-time: cube upload (staging pattern) + SDF atlas clear so pre-bake
+         * dumps are predictable (0 = no brick allocated yet); the FFX
+         * clear-bricks pass only rewrites bricks that were previously
+         * allocated. */
         VulkanCommand* cmd = vulkanTransientBegin();
+        vulkanCopy(.cmd         = cmd,
+                   .source.data = (void*)cubeVertexData,
+                   .target.buf  = &cubeVertBuf,
+                   .size        = (u32)sizeof(cubeVertexData));
+        vulkanCopy(.cmd         = cmd,
+                   .source.data = (void*)cubeIndexData,
+                   .target.buf  = &cubeIdxBuf,
+                   .size        = (u32)sizeof(cubeIndexData));
         vulkanTransition(cmd, &sdfAtlas, VK_IMAGE_LAYOUT_GENERAL, 0, 1);
         VkClearColorValue black = {};
         vulkanClearColorImage(cmd, &sdfAtlas, black);
@@ -268,6 +373,136 @@ namespace engine {
         return 1;
     }
 
+    /* Step 2.1: register the cube buffers and create one static instance.
+     * Runs once (retried while it fails); the instance is baked by the next
+     * ffxBrixelizerUpdate (CPU-side job table, flushed inside the update). */
+    static char createTestInstance(Camera* camera) {
+        if (testInstanceReady) {
+            return 1;
+        }
+        /* PIXEL_COMPUTE_READ like the sample's GetBufferIndex — the FFX
+         * backend binds every SRV buffer as a shader storage buffer. */
+        FfxResource vertRes =
+            vulkanFfxWrapBufferResource(&cubeVertBuf,
+                                        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                                        FFX_RESOURCE_STATE_PIXEL_COMPUTE_READ,
+                                        L"BrixelCubeVerts");
+        FfxResource idxRes =
+            vulkanFfxWrapBufferResource(&cubeIdxBuf,
+                                        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                                        FFX_RESOURCE_STATE_PIXEL_COMPUTE_READ,
+                                        L"BrixelCubeIdx");
+        FfxBrixelizerBufferDescription bufDescs[2] = {};
+        bufDescs[0].buffer   = vertRes;
+        bufDescs[0].outIndex = &cubeVertBufIdx;
+        bufDescs[1].buffer   = idxRes;
+        bufDescs[1].outIndex = &cubeIdxBufIdx;
+        FfxErrorCode regResult = ffxBrixelizerRegisterBuffers(&brixelizerContext, bufDescs, 2);
+        if (regResult != FFX_OK) {
+            utils::error("vulkanBrixelizerPass: ffxBrixelizerRegisterBuffers failed: %d", regResult);
+            return 0;
+        }
+
+        /* One static instance: the cube 10 m in front of the camera (parked
+         * player) so the parked view sees it. The transform is a ROW-major 3x4
+         * (plan pitfall #2 — the GLSL LoadInstanceTransform loads 3 rows):
+         * identity rotation + translation in column 3 of each row. */
+        vec3 dir;
+        glm_vec3_copy(camera->cameraUbo.renderDirection, dir);
+        float dirLen = glm_vec3_norm(dir);
+        if (dirLen < 1e-6f) {
+            dir[0] = 1.0f;
+            dir[1] = 0.0f;
+            dir[2] = 0.0f;
+        } else {
+            glm_vec3_scale(dir, 1.0f / dirLen, dir);
+        }
+        const float cx = camera->cameraUbo.renderLocation[0] + dir[0] * CUBE_DISTANCE;
+        const float cy = camera->cameraUbo.renderLocation[1] + dir[1] * CUBE_DISTANCE;
+        const float cz = camera->cameraUbo.renderLocation[2] + dir[2] * CUBE_DISTANCE;
+
+        FfxBrixelizerInstanceDescription inst = {};
+        inst.maxCascade                        = 0; /* near cascade only (detail) */
+        const float center[3] = {cx, cy, cz};
+        for (u32 i = 0; i < 3; i++) {
+            inst.aabb.min[i] = center[i] - CUBE_HALF_EXTENT;
+            inst.aabb.max[i] = center[i] + CUBE_HALF_EXTENT;
+        }
+        inst.transform[0]  = 1.0f;
+        inst.transform[4]  = 1.0f;
+        inst.transform[8]  = 1.0f;
+        inst.transform[3]  = center[0]; /* row 0, col 3 */
+        inst.transform[7]  = center[1]; /* row 1, col 3 */
+        inst.transform[11] = center[2]; /* row 2, col 3 */
+        inst.indexFormat   = FFX_INDEX_TYPE_UINT16;
+        inst.indexBuffer   = cubeIdxBufIdx;
+        inst.indexBufferOffset = 0;
+        inst.triangleCount = 12;
+        inst.vertexBuffer  = cubeVertBufIdx;
+        inst.vertexStride  = 12;
+        inst.vertexBufferOffset = 0;
+        inst.vertexCount   = 8;
+        inst.vertexFormat  = FFX_SURFACE_FORMAT_R32G32B32_FLOAT;
+        inst.flags         = FFX_BRIXELIZER_INSTANCE_FLAG_NONE;
+        inst.outInstanceID = &cubeInstanceID;
+        FfxErrorCode instResult = ffxBrixelizerCreateInstances(&brixelizerContext, &inst, 1);
+        if (instResult != FFX_OK) {
+            utils::error("vulkanBrixelizerPass: ffxBrixelizerCreateInstances failed: %d", instResult);
+            return 0;
+        }
+
+        testInstanceReady = 1;
+        /* Diagnostics: the cube's cascade-0 local voxel coord (grid is 64^3,
+         * 2 m/voxel, centered on sdfCenter) is (center - (sdfCenter - 64)) / 2
+         * = 32 + dir * 5, so it should sit near voxel 32 (grid center), never
+         * near an edge. If the debug dump shows the cube at a wrapped / second
+         * position, this is the reference to diff against. */
+        utils::info(
+            "vulkanBrixelizerPass: test cube instance created at (%.1f, %.1f, %.1f) "
+            "(cam=(%.1f, %.1f, %.1f) dir=(%.2f, %.2f, %.2f) id=%u buf %u/%u)",
+            cx,
+            cy,
+            cz,
+            camera->cameraUbo.renderLocation[0],
+            camera->cameraUbo.renderLocation[1],
+            camera->cameraUbo.renderLocation[2],
+            dir[0],
+            dir[1],
+            dir[2],
+            cubeInstanceID,
+            cubeVertBufIdx,
+            cubeIdxBufIdx);
+        return 1;
+    }
+
+    static FfxBrixelizerTraceDebugModes getSdfDebugMode(void) {
+        if (!sdfDebugModeSet) {
+            sdfDebugModeSet = 1;
+            const char* env = getenv("ENGINE_BRIX_SDF_DEBUG");
+            if (env && !strcmp(env, "grad")) {
+                sdfDebugMode = FFX_BRIXELIZER_TRACE_DEBUG_MODE_GRAD;
+            } else if (env && !strcmp(env, "brick")) {
+                sdfDebugMode = FFX_BRIXELIZER_TRACE_DEBUG_MODE_BRICK_ID;
+            } else if (env && !strcmp(env, "cascade")) {
+                sdfDebugMode = FFX_BRIXELIZER_TRACE_DEBUG_MODE_CASCADE_ID;
+            } else if (env && !strcmp(env, "uvw")) {
+                sdfDebugMode = FFX_BRIXELIZER_TRACE_DEBUG_MODE_UVW;
+            } else if (env && !strcmp(env, "iter")) {
+                sdfDebugMode = FFX_BRIXELIZER_TRACE_DEBUG_MODE_ITERATIONS;
+            } else if (env && !strcmp(env, "off")) {
+                sdfDebugEnabled = 0;
+            } else {
+                sdfDebugMode = FFX_BRIXELIZER_TRACE_DEBUG_MODE_DISTANCE;
+            }
+        }
+        if (!sdfDebugTMaxSet) {
+            sdfDebugTMaxSet = 1;
+            const char* env = getenv("ENGINE_BRIX_SDF_TMAX");
+            sdfDebugTMax    = (env && *env) ? (float)atof(env) : 10000.0f;
+        }
+        return sdfDebugMode;
+    }
+
     void VulkanBrixelizerPass::update() {
         elapsedCPU = utils::nanos();
         if (vulkan.skipFrame) {
@@ -287,10 +522,23 @@ namespace engine {
             return;
         }
 
-        /* The SDF atlas is the only image this update touches; the FFX dispatch
-         * does not manage engine layouts (plan pitfall #11) — stage it for UAV
-         * writes. */
+        /* Step 2: register the test cube's buffers + create its one static
+         * instance (runs once; the instance persists for the context's
+         * lifetime). Must run before the bake so the instance's job is baked
+         * in this frame's update. */
+        createTestInstance(camera);
+
+        /* Step 2.2: read the debug-visualization mode once (ENGINE_BRIX_SDF_DEBUG;
+         * "off" disables the extra dispatch). */
+        getSdfDebugMode();
+
+        /* The SDF atlas (and the debug image, when active) are the images this
+         * update touches; the FFX dispatch does not manage engine layouts
+         * (plan pitfall #11) — stage them for UAV writes. */
         vulkanTransition(cmd, &sdfAtlas, VK_IMAGE_LAYOUT_GENERAL, 0, 1);
+        if (sdfDebugEnabled && sdfDebug.img) {
+            vulkanTransition(cmd, &sdfDebug, VK_IMAGE_LAYOUT_GENERAL, 0, 1);
+        }
 
         FfxBrixelizerUpdateDescription updateDesc = {};
         updateDesc.resources.sdfAtlas =
@@ -326,7 +574,36 @@ namespace engine {
         updateDesc.sdfCenter[1]            = camera->cameraUbo.renderLocation[1];
         updateDesc.sdfCenter[2]            = camera->cameraUbo.renderLocation[2];
         updateDesc.populateDebugAABBsFlags = FFX_BRIXELIZER_POPULATE_AABBS_NONE;
-        updateDesc.debugVisualizationDesc  = NULL;
+
+        /* Step 2.2: SDF debug visualization — ray-march the baked SDF into a
+         * render-res R16F image (mode via ENGINE_BRIX_SDF_DEBUG, default
+         * distance; off disables the extra dispatch). The inverse matrices
+         * are the engine's cglm column-major mat4s memcpy'd verbatim (plan
+         * pitfall #1 — the GLSL unprojection expects them column-major). The
+         * static-only cascade layout puts the detail cascade at index 0. */
+        FfxBrixelizerDebugVisualizationDescription debugVisDesc = {};
+        if (sdfDebugEnabled && sdfDebug.img) {
+            memcpy(debugVisDesc.inverseViewMatrix,
+                   camera->cameraUbo.invView,
+                   sizeof(debugVisDesc.inverseViewMatrix));
+            memcpy(debugVisDesc.inverseProjectionMatrix,
+                   camera->cameraUbo.invProjection,
+                   sizeof(debugVisDesc.inverseProjectionMatrix));
+            debugVisDesc.debugState        = getSdfDebugMode();
+            debugVisDesc.startCascadeIndex = 0;
+            debugVisDesc.endCascadeIndex   = BRIX_NUM_CASCADES - 1;
+            debugVisDesc.sdfSolveEps       = 0.5f;
+            debugVisDesc.tMin              = 0.0f;
+            debugVisDesc.tMax              = sdfDebugTMax;
+            debugVisDesc.renderWidth       = (u32)sdfDebug.extent.width;
+            debugVisDesc.renderHeight      = (u32)sdfDebug.extent.height;
+            debugVisDesc.output            = vulkanFfxWrapImageResource(&sdfDebug,
+                                                                        FFX_RESOURCE_USAGE_UAV,
+                                                                        FFX_RESOURCE_STATE_UNORDERED_ACCESS,
+                                                                        L"BrixelSdfDebug");
+            updateDesc.debugVisualizationDesc = &debugVisDesc;
+        }
+
         updateDesc.maxReferences           = BRIX_MAX_REFERENCES;
         updateDesc.triangleSwapSize        = BRIX_TRIANGLE_SWAP_SIZE;
         updateDesc.maxBricksPerBake        = BRIX_MAX_BRICKS_PER_BAKE;
@@ -361,8 +638,12 @@ namespace engine {
         }
         vulkanEndProfile(cmd, &profile, 1);
 
-        /* The GI ray-march (Step 7) samples the atlas — leave it readable. */
+        /* The GI ray-march (Step 7) samples the atlas — leave it readable.
+         * The debug image is a dump target — leave it readable too. */
         vulkanTransition(cmd, &sdfAtlas, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
+        if (sdfDebugEnabled && sdfDebug.img) {
+            vulkanTransition(cmd, &sdfDebug, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
+        }
 
         /* outStats is a lagged GPU readback (filled a few updates later). */
         if (stats.contextStats.freeBricks && !statsLiveLogged) {
@@ -372,6 +653,20 @@ namespace engine {
                 "bricksCleared=%u",
                 stats.contextStats.freeBricks,
                 stats.contextStats.bricksCleared);
+        }
+        /* Gate 2: the test cube actually baked (triangles/bricks allocated in
+         * a static cascade) — fires once, lagged. */
+        if ((stats.staticCascadeStats.trianglesAllocated || stats.staticCascadeStats.bricksAllocated) &&
+            !statsTrisLogged) {
+            statsTrisLogged = 1;
+            utils::info(
+                "vulkanBrixelizerPass: test instance baked (lagged): cascade=%u staticTris=%u "
+                "staticRefs=%u staticBricks=%u freeBricks=%u",
+                stats.cascadeIndex,
+                stats.staticCascadeStats.trianglesAllocated,
+                stats.staticCascadeStats.referencesAllocated,
+                stats.staticCascadeStats.bricksAllocated,
+                stats.contextStats.freeBricks);
         }
         if (frameIndex % 120 == 0) {
             utils::info(
@@ -428,5 +723,9 @@ namespace engine {
 
     char vulkanBrixelizerPassIsReady(void) {
         return contextReady;
+    }
+
+    struct VulkanImage* vulkanBrixelizerPassGetSdfDebug(void) {
+        return sdfDebug.img ? &sdfDebug : NULL;
     }
 }  // namespace engine
