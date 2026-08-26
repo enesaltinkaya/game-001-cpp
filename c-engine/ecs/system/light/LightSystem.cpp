@@ -73,9 +73,9 @@ static void applySun(void* _) {
     }
     vec4 colorVec = {normalizedColor[0], normalizedColor[1], normalizedColor[2], 0.0f};
     glm_vec4_copy(colorVec, sunUbo.color);
-    /* Fixed slight ambient (sky tint): lifts shadowed areas just above
-     * black.  IBL was removed; this is a constant, not a per-frame value. */
-    vec4 ambientVec = {0.03f, 0.04f, 0.05f, 0.0f};
+    /* Zero ambient: shadowed areas are pure black; only direct light
+     * contributes.  IBL was removed; this is a constant, not a per-frame value. */
+    vec4 ambientVec = {0.0f, 0.0f, 0.0f, 0.0f};
     glm_vec4_copy(ambientVec, sunUbo.ambient);
     rendererUploadSun(&sunUbo);
 }

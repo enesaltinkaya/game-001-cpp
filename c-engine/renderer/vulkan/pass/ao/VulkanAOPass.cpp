@@ -255,7 +255,7 @@ namespace engine {
          * unpack (mul/add) cannot decode — reconstruct normals from depth. */
         settings.generateNormals = true;
         settings.radius           = aoEnvFloat("ENGINE_AO_RADIUS", 0.6f);
-        settings.shadowMultiplier = aoEnvFloat("ENGINE_AO_STRENGTH", 1.5f);
+        settings.shadowMultiplier = aoEnvFloat("ENeINE_AO_STRENGTH", 1.5f);
         settings.shadowPower      = aoEnvFloat("ENGINE_AO_POWER", 1.50f);
         settings.shadowClamp      = aoEnvFloat("ENGINE_AO_CLAMP", 0.75f);
         /* Debug knobs: ENGINE_AO_ANGLE_OFF / ENGINE_AO_DETAIL / ENGINE_AO_QUALITY

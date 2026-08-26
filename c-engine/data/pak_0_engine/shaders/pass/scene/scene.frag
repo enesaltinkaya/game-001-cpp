@@ -133,8 +133,9 @@ void main() {
     vec3 kD = (1.0 - kS) * (1.0 - metallic);
     vec3 Lo = (kD * baseColor.rgb / PI + specular) * lightColor * NdotL * shadow;
 
-    // Fixed slight ambient (from the sun UBO): lifts shadowed areas just
-    // above black.  Scaled by kD for energy conservation with specular.
+    // Ambient (from the sun UBO): zeroed, so shadowed areas are pure black.
+    // Kept in the lighting equation for easy tuning.  Scaled by kD for
+    // energy conservation with specular.
     vec3 ambient = dirLight.ambient.rgb;
     vec3 color   = Lo + ambient * kD * baseColor.rgb;
 

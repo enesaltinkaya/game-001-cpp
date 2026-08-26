@@ -126,8 +126,8 @@ void main() {
         albedo = mix(inVertColor, inColor, tintable);
     }
 
-    // Fixed slight ambient (from the sun UBO): shadowed vegetation is
-    // lifted just above black instead of staying pure black.
+    // Ambient (from the sun UBO): zeroed, so shadowed vegetation is
+    // pure black.
     //
     // Energy-consistent with the PBR passes: the Lambert diffuse integrates
     // to 1/PI, so the direct sun term carries the same /PI that scene.frag
