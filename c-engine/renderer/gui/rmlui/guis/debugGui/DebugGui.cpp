@@ -53,6 +53,16 @@ static void syncLpmParams(void) {
     lpmExposure              = p->lpmExposure;
 }
 
+static int resetLpm(void* _) {
+    (void)_; /* restore the pass defaults, pull them into the GUI floats
+              * (update() pushes them back every frame, so the sliders
+              * stay put), then refresh the document */
+    vulkanLpmPassResetParams();
+    syncLpmParams();
+    rmlUpdateDirtyAll(model);
+    return 0;
+}
+
 static char* aaPolicyLabel;
 static char aaPolicyLabelText[192];
 static float casStrengthPercent;
@@ -174,6 +184,7 @@ void DebugGui::added() {
     luaRegisterFunction("debugToggleVolumetricFog", toggleVolumetricFog);
     luaRegisterFunction("debugAaCasPrev", aaCasPrev);
     luaRegisterFunction("debugAaCasNext", aaCasNext);
+    luaRegisterFunction("debugResetLpm", resetLpm);
     document = rmlNewDocument("gui/debug/debug.html");
     model    = rmlCreateModel("debug");
 

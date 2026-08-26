@@ -53,13 +53,15 @@ static VkImageCreateInfo makeImageCreateInfo(VulkanImage* image);
 static FfxResource wrapImageResource(VulkanImage* image, FfxResourceUsage usage,
                                      FfxResourceStates state, const wchar_t* name);
 
-static VulkanLpmParams lpmParams = {
-    .contrast         = 0.3f,  /* FFX sample default */
-    .hdrMax           = 4.0f,  /* scene HDR scale (sun radiance ~2.6) */
+static const VulkanLpmParams lpmParamsDefault = {
+    .contrast         = 0.6f,  /* FFX sample default */
+    .hdrMax           = 3.0f,  /* scene HDR scale (sun radiance ~2.6) */
     .shoulderContrast = 1.0f,
     .saturation       = 0.0f,
     .lpmExposure      = 1.0f,
 };
+
+static VulkanLpmParams lpmParams = lpmParamsDefault;
 
 static double elapsedCPU;
 static double elapsedGPU;
@@ -196,6 +198,10 @@ void vulkanLpmPassSetParams(const VulkanLpmParams* params) {
     if (params) {
         lpmParams = *params;
     }
+}
+
+void vulkanLpmPassResetParams(void) {
+    lpmParams = lpmParamsDefault;
 }
 
 void vulkanLpmPassMarkRendered(void) {

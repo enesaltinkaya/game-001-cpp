@@ -40,6 +40,8 @@ struct VulkanLpmParams {
 
 const VulkanLpmParams* vulkanLpmPassGetParams(void);
 void vulkanLpmPassSetParams(const VulkanLpmParams* params);
+/* Restore the built-in defaults (FFX sample values, scene HDR scale). */
+void vulkanLpmPassResetParams(void);
 
 /* Called by the Final pass right after it rendered into the LPM input.
  * The LPM pass only dispatches on frames where this was called — e.g.
