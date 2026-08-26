@@ -7,6 +7,7 @@
 // #include "renderer/vulkan/pass/ssr/VulkanSsrPass.h"
 #include "renderer/vulkan/pass/shadow/VulkanShadowPass.h"
 #include "renderer/vulkan/pass/contact_shadow/VulkanContactShadowPass.h"
+#include "renderer/vulkan/pass/lpm/VulkanLpmPass.h"
 // #include "renderer/vulkan/pass/skybox/VulkanSkyboxPass.h"
 #include "renderer/vulkan/pass/volumetric/VulkanVolumetricPass.h"
 // #include "renderer/vulkan/pass/grid/VulkanGridPass.h"
@@ -33,6 +34,24 @@ static char contactShadowEnabled;
 static char volumetricFogEnabled;
 
 static char* tonemapLabel;
+
+/* LPM tone/gamut-mapping tuning (TONEMAP section of the debug GUI).
+ * Bound two-way to the document model: slider input updates the float,
+ * update() pushes it into the LPM pass every frame. */
+static float lpmContrast;
+static float lpmHdrMax;
+static float lpmShoulderContrast;
+static float lpmSaturation;
+static float lpmExposure;
+
+static void syncLpmParams(void) {
+    const VulkanLpmParams* p = vulkanLpmPassGetParams();
+    lpmContrast              = p->contrast;
+    lpmHdrMax                = p->hdrMax;
+    lpmShoulderContrast      = p->shoulderContrast;
+    lpmSaturation            = p->saturation;
+    lpmExposure              = p->lpmExposure;
+}
 
 static char* aaPolicyLabel;
 static char aaPolicyLabelText[192];
@@ -143,6 +162,7 @@ static int aaCasNext(void* _) {
 
 void DebugGui::added() {
     syncFromPasses();
+    syncLpmParams();
 
     luaRegisterFunction("debugToggleShadows", toggleShadows);
     luaRegisterFunction("debugToggleReflection", toggleReflection);
@@ -166,6 +186,11 @@ void DebugGui::added() {
     rmlBind(model, "contactShadowEnabled", &contactShadowEnabled);
     rmlBind(model, "volumetricFogEnabled", &volumetricFogEnabled);
     rmlBind(model, "tonemapLabel", &tonemapLabel);
+    rmlBind(model, "lpmContrast", &lpmContrast);
+    rmlBind(model, "lpmHdrMax", &lpmHdrMax);
+    rmlBind(model, "lpmShoulderContrast", &lpmShoulderContrast);
+    rmlBind(model, "lpmSaturation", &lpmSaturation);
+    rmlBind(model, "lpmExposure", &lpmExposure);
     rmlBind(model, "aaPolicyLabel", &aaPolicyLabel);
     rmlBind(model, "casStrengthPercent", &casStrengthPercent);
 
@@ -181,6 +206,16 @@ void DebugGui::removed() {
 
 void DebugGui::update() {
     syncFromPasses();
+    /* Push the slider values into the LPM pass — the dispatch reads them
+     * every frame, so slider changes show up within a frame or two. */
+    VulkanLpmParams params = {
+        .contrast         = lpmContrast,
+        .hdrMax           = lpmHdrMax,
+        .shoulderContrast = lpmShoulderContrast,
+        .saturation       = lpmSaturation,
+        .lpmExposure      = lpmExposure,
+    };
+    vulkanLpmPassSetParams(&params);
     rmlUpdateDirtyAll(model);
 }
 

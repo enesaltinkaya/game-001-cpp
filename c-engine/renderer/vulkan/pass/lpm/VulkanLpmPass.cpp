@@ -40,7 +40,10 @@ namespace engine {
  * shoulder=1, softGap=0, contrast=0.3, shoulderContrast=1, saturation=0,
  * crosstalk=(1, 1/2, 1/32), REC709 working space, LDR display mode.
  * hdrMax defines the tone curve's input range and is tuned to the scene's
- * HDR scale (sun radiance ~2.6, sun disc ~80 pre-bloom). */
+ * HDR scale (sun radiance ~2.6, sun disc ~80 pre-bloom). All five
+ * tuning knobs are runtime parameters (vulkanLpmPassGetParams/SetParams),
+ * live-tunable from the debug GUI.
+ */
 
 static void swapchainCreated(void* _);
 static void createImages(void);
@@ -50,8 +53,13 @@ static VkImageCreateInfo makeImageCreateInfo(VulkanImage* image);
 static FfxResource wrapImageResource(VulkanImage* image, FfxResourceUsage usage,
                                      FfxResourceStates state, const wchar_t* name);
 
-static const float LPM_HDR_MAX    = 4.0f;
-static const float LPM_CONTRAST   = 0.3f;
+static VulkanLpmParams lpmParams = {
+    .contrast         = 0.3f,  /* FFX sample default */
+    .hdrMax           = 4.0f,  /* scene HDR scale (sun radiance ~2.6) */
+    .shoulderContrast = 1.0f,
+    .saturation       = 0.0f,
+    .lpmExposure      = 1.0f,
+};
 
 static double elapsedCPU;
 static double elapsedGPU;
@@ -180,6 +188,16 @@ struct VulkanImage* vulkanLpmPassGetInput(void) {
     return lpmInput.img ? &lpmInput : NULL;
 }
 
+const VulkanLpmParams* vulkanLpmPassGetParams(void) {
+    return &lpmParams;
+}
+
+void vulkanLpmPassSetParams(const VulkanLpmParams* params) {
+    if (params) {
+        lpmParams = *params;
+    }
+}
+
 void vulkanLpmPassMarkRendered(void) {
     renderedSeq = frameSeq;
 }
@@ -252,15 +270,15 @@ void VulkanLpmPass::update() {
                                               FFX_RESOURCE_STATE_UNORDERED_ACCESS, L"lpm_output");
     dispatch.shoulder         = 1;
     dispatch.softGap          = 0.0f;
-    dispatch.hdrMax           = LPM_HDR_MAX;
+    dispatch.hdrMax           = lpmParams.hdrMax;
     /* Exposure is already applied to the HDR composite in the Final pass
      * (sceneBuffer.cameras[0].exposure). */
-    dispatch.lpmExposure      = 1.0f;
-    dispatch.contrast         = LPM_CONTRAST;
-    dispatch.shoulderContrast = 1.0f;
-    dispatch.saturation[0]    = 0.0f;
-    dispatch.saturation[1]    = 0.0f;
-    dispatch.saturation[2]    = 0.0f;
+    dispatch.lpmExposure      = lpmParams.lpmExposure;
+    dispatch.contrast         = lpmParams.contrast;
+    dispatch.shoulderContrast = lpmParams.shoulderContrast;
+    dispatch.saturation[0]    = lpmParams.saturation;
+    dispatch.saturation[1]    = lpmParams.saturation;
+    dispatch.saturation[2]    = lpmParams.saturation;
     dispatch.crosstalk[0]     = 1.0f;
     dispatch.crosstalk[1]     = 1.0f / 2.0f;
     dispatch.crosstalk[2]     = 1.0f / 32.0f;
