@@ -61,11 +61,14 @@ colored ambient + specular GI.
   `build-brixgi-sample.sh` cross-building a Wine-runnable `FFX_BrixelizerGI_VK.exe`
   (`git/bin/`). Config: `samples/brixelizergi/config/brixelizergiconfig.json`
   (resource formats: HistoryDepth R32F, HistoryNormals/GI outputs RGBA16F).
+  Note: `git/bin/` is currently **empty** — the exe has never been built in this
+  tree; Step 0.3 does that.
 
 **Engine:**
 
-- No brixelizer code remains from the earlier attempt (only empty
-  `shaders/pass/{brixgi,gi}/spv` dirs). This plan rebuilds the engine side from
+- No brixelizer code remains from the earlier attempt (only leftover `.spv.debug`
+  artifacts in `shaders/pass/{brixgi,gi}/spv` — no sources, harmless; delete the
+  dirs when the new pass lands). This plan rebuilds the engine side from
   scratch in small steps.
 - Patterns to copy:
   - FFX backend interface creation + resource wrapping: `VulkanFsrPass.cpp`
@@ -168,6 +171,25 @@ These were checked against the fork's actual code, not the docs:
     `ffxGetScratchMemorySizeVK(pdev, 2)` / `ffxGetInterfaceVK(..., 2)` shared by the
     brixelizer + GI contexts (sample pattern). The FSR pass keeps its own
     (count 1) — separate scratch, no conflict.
+13. **The voxelizer reads vertex AND index data through SSBs, not hardware vertex
+    binding** — the GLSL fetches both (`LoadVertexBuffer*` and
+    `FFX_Fetch_Face_Indices_*`) from a `std430` `r_vertex_buffers[8192]` array, and
+    the FFX VK backend binds every SRV buffer as `VK_DESCRIPTOR_TYPE_STORAGE_BUFFER`.
+    ⇒ Every registered buffer must have been created with
+    `VK_BUFFER_USAGE_STORAGE_BUFFER_BIT`. The engine's `VulkanScene.vertexBuffer`
+    (VERTEX|TRANSFER) / `indexBuffer` (INDEX|TRANSFER) currently lack it — add the
+    flag at creation in `vulkanSceneCreate` (Step 3.1; one line, no VRAM cost).
+    Cauldron's own VK backend adds exactly this flag to vertex/index buffers
+    (`framework/cauldron/framework/src/render/vk/helpers.cpp`), which is why the
+    sample never hit it. The new position-only buffers (Steps 2, 4, 5) get it from
+    the Step 1 resource table.
+14. **Wrapping the cube env map: the synthesized `VkImageCreateInfo` must carry
+    `VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT`** — the FFX backend decides
+    `FFX_RESOURCE_TYPE_TEXTURE_CUBE` (→ `VK_IMAGE_VIEW_TYPE_CUBE`) from that flag;
+    without it the 6-layer array is wrapped as a plain 2D array and the GI
+    `textureCube` binding breaks. The FSR pass's `makeImageCreateInfo` omits
+    `info.flags` and `VulkanImage` doesn't store create flags, so derive the flag
+    from `viewType == VK_IMAGE_VIEW_TYPE_CUBE` in the shared wrap helper (Step 1).
 
 ## Resources the engine must provide (from the sample's `Init()`)
 
@@ -208,7 +230,9 @@ cd /home/enes/Projects/c/cpp-thirdparty/fsr3.1 && ./build.sh
 
 0.2 **Fetch the sample media** (not in the tree — the sample loads the Toyshop
 scene, IBL textures, and 16 `LDR_RG01_*.png` noise maps from `media/`; without
-the noise maps the render module never becomes ready):
+the noise maps the render module never becomes ready). Needs network access to
+AMD's MediaDelivery server — no offline fallback; if the fetch fails, Step 0 is
+blocked:
 
 ```bash
 cd /home/enes/Projects/c/cpp-thirdparty/fsr3.1/git
@@ -256,13 +280,20 @@ New System: `c-engine/renderer/vulkan/pass/brixelizer/VulkanBrixelizerPass.{h,cp
     redundant), `voxelSize = 2.0f * (2.0f ^ i)` (2 m … 256 m; far cascade spans
     256 m × 64 = 16.4 km — covers the 10.24 km streaming window; document this
     choice), `sdfCenter = {0,0,0}` at creation (updated per frame later).
+  - `flags = FFX_BRIXELIZER_CONTEXT_FLAG_ALL_DEBUG` (sample's choice). The two
+    readback flags inside it are **required for `outStats`**: the context/cascade
+    readback buffers are only allocated when set, and `outStats` is filled from
+    that (lagged) GPU readback — without them Gate 1's stats check would always
+    read zeros.
   - `FfxBrixelizerContextDescription.backendInterface = iface`.
 - **Wrap helpers**: extract `wrapImageResource` / `makeImageCreateInfo` from
   `VulkanFsrPass.cpp` and a new `wrapBufferResource(VulkanBuffer*, usage, state,
   name)` (uses `ffxGetBufferResourceDescriptionVK` — synthesize the
   `VkBufferCreateInfo` from `VulkanBuffer.size` + usage) into a shared
   `VulkanFfxUtils.h` (the FSR/AO passes keep working unchanged or get migrated in a
-  follow-up; do not block on it).
+  follow-up; do not block on it). The image side must also synthesize create
+  **flags** (`VulkanImage` doesn't store them): `VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT`
+  when `viewType == VK_IMAGE_VIEW_TYPE_CUBE` — pitfall #14.
 - **Per-frame** (`update()`): `ffxBrixelizerBakeUpdate` (with
   `updateDesc.outScratchBufferSize` checked against the scratch buffer size,
   `sdfCenter` = camera position, `maxReferences` / `triangleSwapSize` /
@@ -328,6 +359,10 @@ offset per-draw `vertexOffset * 56`, `R32G32B32_FLOAT`) and
 `VulkanScene.indexBuffer` once (u32, offset `firstIndex * 4`). Re-register on
 scene create/destroy (`rendererSceneCreate` / `rendererSceneDestroy` hooks —
 subscribe like the FSR pass subscribes to `swapchainCreated`).
+**Prerequisite (pitfall #13):** add `VK_BUFFER_USAGE_STORAGE_BUFFER_BIT` to the
+creation usage of `vs->vertexBuffer` / `vs->indexBuffer` in `vulkanSceneCreate`
+(one line, no VRAM cost) — the voxelizer binds both as SSBs, and without the
+flag the validation layer rejects the bind.
 
 3.2 **Instance creation**: one instance per (entity, primitive) where the entity
 is **not skinned** (`Skin` component / `DRAW_FLAG_SKINNED` — skip in v1):
@@ -360,8 +395,8 @@ tiles), generate a decimated grid from `tile.heights` (512², metres):
 - resolution `N` (default **65** → 32 m spacing for a 2048 m tile; env override
   `ENGINE_BRIXEL_TERRAIN_RES`), world-space positions
   `(originX + i*step, heights[i][j], originZ + j*step)`, positions-only 12 B
-  buffer + u16 index buffer (N² < 65536 vertices), `N²*2` triangles (8192 for
-  N=65).
+  buffer + u16 index buffer (N² < 65536 vertices), `2(N−1)²` triangles (8192
+  for N=65).
 - Upload with the engine's staging pattern (`vulkanCreateCpuToGpuBuffer` +
   `vulkanCopy`), register with the voxelizer (position-only buffer, stride 12),
   create **one static instance per tile**: AABB = tile bounds (min/max height),
@@ -389,7 +424,11 @@ receives it), create one static instance per `PropInstance` that survives a
 distance-to-camera then species (canopy species / buildings first; grass tufts
 last — they add little SDF value at cascade resolutions). Transform =
 T(pos)·R_y(yaw)·S(scale), row-major. `maxCascade` by species size (trees high,
-grass low).
+grass low). The 65536 cap (pitfall #9) is **shared** — scene instances (Step 3)
++ props + Step 10's dynamic all draw from one table (static grows up from 0,
+dynamic grows down from the top): pick the budget so scene + props stay well
+under it, leaving headroom for Step 10 (Step 3's instance-count log decides the
+number).
 5.3 Log accepted vs dropped counts.
 
 **Gate 5:** SDF debug shows trees/rocks/buildings around the player; budget
@@ -399,17 +438,22 @@ streaming in/out of tiles with props.
 
 ## Step 6 — GI inputs: blue noise, environment cube, history buffers
 
-6.1 **Blue noise**: generate a 256×256 RG8 blue-noise texture on the CPU (standard
-best-candidate Poisson-disk algorithm; or port a known 256² blue noise generator),
-upload once as a sampled `VulkanImage` (`BrixelBlueNoise`). (The sample loads 16
-`LDR_RG01_*.png` from `media/` and cycles by frame; a single static texture is
-fine for v1 — revisit if banding shows up.)
+6.1 **Blue noise**: generate a **128×128** RG8 blue-noise texture on the CPU
+(the GI shader masks pixel coords with `& 127` and reads `.xy` — 128² is the
+native tile size; the sample's `LDR_RG01_*.png` are 8-bit RG), standard
+best-candidate Poisson-disk algorithm, upload once as a sampled `VulkanImage`
+(`BrixelBlueNoise`). (The sample cycles 16 host-side textures by frame — the
+GLSL's per-sample offset is commented out, so any de-banding lever is host-side:
+cycle a small set of generated textures or offset the UV per frame. A single
+static texture is fine for v1 — revisit if banding shows up.)
 6.2 **Environment cube**: one-shot compute dispatch evaluating the procedural sky
 (factor the sky color + sun function out of `skybox.frag` into a shared include,
 `includes/sky.shader`) into a **128×128×6 R16F cube** (`VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT`
 + `VK_IMAGE_VIEW_TYPE_CUBE` — the engine already does this for `dummyCubeImage`;
-the FFX backend maps it to a cube view, pitfall #7). Re-render on swapchain create
-(v1: also fine at load only).
+the FFX backend maps it to a cube view, pitfall #7). When wrapping it for FFX,
+the synthesized `VkImageCreateInfo` must carry the `CUBE_COMPATIBLE` flag
+(pitfall #14) or the backend wraps it as a plain 2D array. Re-render on
+swapchain create (v1: also fine at load only).
 6.3 **History buffers** (render res, all STORAGE|SAMPLED|TRANSFER):
 - `HistoryDepth` **R32F** (sample convention — D32→R32F via
   `vulkanCopyDepthToColorImage`; clear **0.0** = background, since the engine is
@@ -456,11 +500,16 @@ around the call — pitfall #11):
 - `noiseTexture` = `BrixelBlueNoise` (frame-independent for v1);
 - all SDF resources wrapped COMPUTE_READ; `brixelizerContext` =
   `ffxBrixelizerGetRawContext(&brixelizerContext, &rawPtr)`;
-- frame 0 after context creation: zeroed history (Step 6.3) + first frame runs
-  with multi-bounce disabled (sample's `m_FrameIndex == 0 ? 0 : 1` pattern — the
-  GI context has no explicit multiBounce flag; it is implied by the radiance
-  cache being cleared, so a one-frame warmup with cleared caches is the
-  equivalent; note it in the code).
+- Frame 0 after context creation: zeroed history (Step 6.3) is acceptable — the
+  GI context's internal radiance cache is zero at creation, so frame 0 is
+  all-fresh rays (slightly noisier than the sample, which warms up by running
+  one GI-disabled lighting pass and copying its output into the history,
+  `m_InitColorHistory`). Note: the sample's `m_FrameIndex == 0 ? 0 : 1`
+  "MultiBounce" is a constant in the *sample's own* lighting shader, not a GI
+  context parameter — the GI context has no such flag; its radiance cache is
+  maintained incrementally via the voxelizer's brick-clear counter (the
+  `clear_cache` pass is an indirect dispatch sized by the `CLEAR_BRICKS`
+  counter).
 7.3 **Debug cache views**: `ffxBrixelizerGIContextDebugVisualization` into
   `BrixelGIDebug` (R16F) — `FFX_BRIXELIZER_GI_DEBUG_MODE_RADIANCE_CACHE` /
   `_IRRADIANCE_CACHE`; add dump tokens `giDiffuse`, `giSpecular`, `giCache`.
@@ -521,7 +570,8 @@ pixel-identical):
 - Debug GUI section (settings GUI): SDF debug mode selector (distance/gradient/
   brick ID), GI cache view toggle, stats (free bricks, static/dynamic
   triangles/refs/bricks from `FfxBrixelizerStats`).
-- Performance: profile the voxelizer update (24 cascade ops) + 19 GI passes;
+- Performance: profile the voxelizer update (8 cascade ops in the Steps 1–9
+  layout, 24 after Step 10) + 19 GI passes;
   RenderDoc capture (`docs/renderdoc-capture.md`) to inspect individual passes
   when optimizing. Tune: cascade count (8 → fewer if far cascades cost more
   than they contribute), voxel size base (2 m), `tMax`, `sdfSolveEps`,
@@ -539,6 +589,10 @@ pixel-identical):
   cascades (offset 16).
 - Teleport / scene-cut handling: clear history buffers + reset frame counters
   (GI denoiser re-converges cleanly instead of smearing from the old position).
+- Jitter on/off toggle (upscaler/TAA): the depth buffer flips between
+  jittered/non-jittered projection between frames, so `prevView/prevProjection`
+  + velocity are inconsistent for one frame → detect the toggle in the pass and
+  clear the GI history (same mechanism as teleports).
 - Verify resize recreation end-to-end (both contexts).
 
 ## Per-step validation protocol
@@ -568,3 +622,9 @@ pixel-identical):
 5. `maxReferences` / `triangleSwapSize` / `maxBricksPerBake` (sample: 32 M /
    300 M / 16384) may need scaling for the azgaar world's density — the fork's
    clamp patches make failures non-fatal, but the stats should stay green.
+6. Instance budget: the 65536 cap (pitfall #9) is shared across scene meshes
+   (Step 3), props (Step 5) and dynamic (Step 10) — the Step 5 default (40 k)
+   only fits if the scene count is moderate; Step 3's log line decides the
+   budget. (The registered-buffer cap is effectively 8192 from the FFX bindless
+   pool, not the 65535 the 16-bit buffer-ID field allows — irrelevant in
+   practice, but know it.)
