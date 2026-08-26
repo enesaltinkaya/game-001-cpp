@@ -5,6 +5,7 @@
 #include "azgaar/AzgaarWater.h"
 #include "azgaar/AzgaarWeather.h"
 #include "ecs/system/heightmap/HeightmapTerrain.h"
+#include "renderer/gui/rmlui/GuiManagerRmlUi.h"
 #include "renderer/vulkan/pass/debug_physics/VulkanDebugPhysicsPass.h"
 
 // ── Animation names ──────────────────────────────────────────────────────────
@@ -530,6 +531,7 @@ void PlayerSystem::preUpdate() {
     float rawDy         = 0.0f;
     bool anyDragNow     = false;
     bool anyDragBefore  = false;
+    char overMenuGui    = 0;
 
     // In top-down mode, delegate camera to TopDownCamera system
     if (gCameraMode == CAM_MODE_ISO) {
@@ -566,11 +568,17 @@ void PlayerSystem::preUpdate() {
     anyDragNow  = playerInput.rightMouse || playerInput.leftMouse;
     anyDragBefore = piPrevRightMouse || piPrevLeftMouse;
 
+    /* A press that lands on a menu-style gui (debug gui, settings) is a
+     * UI click, not a camera drag: no cursor hide, no delta accumulation
+     * (SDL's relative accumulator runs in absolute mode too, so a held
+     * gui click would otherwise rotate the camera). */
+    overMenuGui = engine::guiManagerIsMouseOverMenuGui();
+
     // Cursor show/hide on mouse-button transitions.
     // Use SDL relative mouse mode — it works on Wayland (where warping
     // is not supported) and automatically restores the cursor position
     // when the mode is exited.
-    if (anyDragNow && !anyDragBefore) {
+    if (anyDragNow && !anyDragBefore && !overMenuGui) {
         engine::windowSystemHideCursor();
         // Drain any stale delta from the mode switch.
         engine::windowSystemGetRelativeMouseDelta(&rawDx, &rawDy);
@@ -579,7 +587,7 @@ void PlayerSystem::preUpdate() {
     }
 
     // Accumulate relative mouse only during an ongoing drag.
-    if (anyDragNow && anyDragBefore) {
+    if (anyDragNow && anyDragBefore && !overMenuGui) {
         playerInput.mouseDx += rawDx;
         playerInput.mouseDy += rawDy;
     }

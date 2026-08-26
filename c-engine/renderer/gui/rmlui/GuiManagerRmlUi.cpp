@@ -194,6 +194,19 @@ void guiManagerAddGuiNextFrame(System* gui) {
     utils::futureTaskAdd(0, addGui, gui);
 }
 
+char guiManagerIsMouseOverMenuGui(void) {
+    /* A hidden cursor means relative-mouse mode (an in-flight camera
+     * drag) — the absolute position is frozen, so nothing can be
+     * "over" a menu. */
+    if (!windowSystemIsCursorVisible()) return 0;
+
+    for (System* gui : rmluiGuis) {
+        if (!gui->menuGui || !gui->rmlDocument) continue;
+        if (rmlDocumentIsMouseOver(gui->rmlDocument, input.xpos, input.ypos)) return 1;
+    }
+    return 0;
+}
+
 void guiManagerRemoveGuiNextFrame(System* gui) {
     utils::futureTaskAdd(0, removeGui, gui);
 }

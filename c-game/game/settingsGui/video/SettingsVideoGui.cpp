@@ -15,7 +15,9 @@ namespace game {
 
 SettingsVideoGui settingsVideoGui;
 
-SettingsVideoGui::SettingsVideoGui() : engine::System("settingsVideoGui") {}
+SettingsVideoGui::SettingsVideoGui() : engine::System("settingsVideoGui") {
+    menuGui = 1;
+}
 
 static void* document;
 static void* model;
@@ -60,6 +62,7 @@ void SettingsVideoGui::added() {
     cursorScale     = utils::settingsGetDouble("cursorScale");
 
     document = rmlNewDocument("gui/settings/video/video.html");
+    rmlDocument = document;
     model    = rmlCreateModel("video");
     rmlBindBool(model, "fullScreen", &fullScreen);
     rmlBindBool(model, "vsync", &vsync);
@@ -77,6 +80,7 @@ void SettingsVideoGui::removed() {
     rmlUnloadModel(model);
     document = nullptr;
     model    = nullptr;
+    rmlDocument = nullptr;
     utils::signalRemoveSubscription("windowResized", windowResized);
 }
 

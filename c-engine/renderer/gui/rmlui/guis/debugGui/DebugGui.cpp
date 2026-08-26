@@ -19,7 +19,11 @@ namespace engine {
 
 DebugGui debugGui;
 
-DebugGui::DebugGui() : System("debugGui") {}
+DebugGui::DebugGui() : System("debugGui") {
+    /* Click-hold-rotate is a gameplay input — while the cursor is over
+     * this panel the click belongs to the gui (guiManagerIsMouseOverMenuGui). */
+    menuGui = 1;
+}
 
 static void* document;
 static void* model;
@@ -175,6 +179,7 @@ void DebugGui::added() {
     luaRegisterFunction("debugAaCasPrev", aaCasPrev);
     luaRegisterFunction("debugAaCasNext", aaCasNext);
     document = rmlNewDocument("gui/debug/debug.html");
+    rmlDocument = document;
     model    = rmlCreateModel("debug");
 
     rmlBind(model, "shadowsEnabled", &shadowsEnabled);
@@ -202,6 +207,7 @@ void DebugGui::removed() {
     rmlUnloadDocument(document);
     rmlUnloadModel(model);
     document = nullptr;
+    rmlDocument = nullptr;
 }
 
 void DebugGui::update() {
