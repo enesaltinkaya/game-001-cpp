@@ -309,11 +309,42 @@ view-space XY (R16G16 SNORM). Add a full-res R16G16B16_SFLOAT
   original "INVERTED_DEPTH=0" choice was the right outcome for the wrong
   reason (it assumed zero-to-one scene depth; the scene depth is actually
   reversed-Z).
+- **Sun-disc radius bug (found when the tree shadow read all-dark, fixed)**:
+  the FFX classifier computes the sun-disc PCF radius as
+  `radius = sunSizeLightSpace * lightViewSpacePos.z` — i.e. the disc at the
+  receiver's distance from the *light origin* (z=0 of the light view). The
+  FFX sample's light view carries a translation that places the light at a
+  finite distance, so that z is a meaningful sun-receiver distance. Our CSM
+  light view (`cascadeLightView`) is a **pure rotation (zero translation)**,
+  so `lightViewSpacePos.z = dot(lightDir, worldPos)` is the receiver's
+  absolute offset from the **world origin** along the sun axis (≈ −2025 m in
+  this world). That made the disc radius ≈ 18 000 texels — ~9× the 2048 map —
+  so every Poisson tap fell out of bounds, `maxD`/`minD` stayed at their
+  initial values, and *no lane was ever "definitely lit"* → all-shadow tile
+  mask → dark scene (the "tree shadow not working" symptom). Fixed by giving
+  the light view a z-translation so the reference receiver (the camera) sits
+  at `z = HS_SUN_REF_DISTANCE` (1.0), and subtracting `tz * cascadeScale.z`
+  from each cascade's `offset.z` so the receiver depth (and the XY UVs, which
+  are unaffected because the translation has no x/y component) is exactly what
+  the CSM writes. Verified: the expanded rayHit + denoised mask now show the
+  correct dappled tree shadow, matching the hybrid-off PCF.
+- **Matching the hybrid-off (PCF) look** (Phase 4 goal): the raster-only path
+  has two differences from the hardware-bilinear PCF — (1) no texel-scaled
+  normal bias, so foliage canopies (tree leaves) self-shadow and read darker;
+  (2) the denoiser's 16×16 normal/depth-guided filter blurs the fine
+  dapples. Tuned to compensate: `sunAngleDeg` default **0.1°** (a ~1-texel
+  sun disc, matching the PCF's sharpness; the slider's 0% end) and
+  `blockerOffset` default **0.001** (a few × the CSM receiver bias 0.00015,
+  compensating for the missing normal bias so the canopy doesn't read as
+  solid shadow). The residual coarseness/darkness of the penumbra is the
+  documented raster-only boundary bias, not a defect.
 - **Env knobs** (final names, per `VulkanShadowDenoisePass.h`):
   `ENGINE_HYBRID_SHADOWS=1` master toggle (default off); `ENGINE_HS_SUN_ANGLE`
-  (deg, default 1.0); `ENGINE_HS_BLOCKER_OFFSET` (default 0.00015, matches
-  the CSM receiver bias); `ENGINE_HS_DEPTH_SIGMA`; `ENGINE_HS_DUMP=<dir>`
-  (per-frame `hs_rayhit_*.jpg` + `hs_mask_*.jpg` in the dir). The plan's
+  (deg, default 0.1 — a ~1-texel disc matching the hybrid-off PCF sharpness;
+  raise for softer penumbras); `ENGINE_HS_BLOCKER_OFFSET` (default 0.001,
+  a few × the CSM receiver bias 0.00015 to compensate for the classifier's
+  missing normal bias); `ENGINE_HS_DEPTH_SIGMA`; `ENGINE_HS_DUMP=<dir>`
+  (per-frame `hs_lit_*.jpg` + `hs_mask_*.jpg` in the dir). The plan's
   `ENGINE_HYBRID_SHADOWS_SUN` / `_BLOCKER` / `_DUMP` names were superseded
   by these.
 - **Sun-size floor**: the classifier's Poisson-disk PCF degenerates when the

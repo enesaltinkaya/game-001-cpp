@@ -72,8 +72,37 @@ static char         hsDebugPipeReady = 0;
 static char         hsDebugEnabled   = 0;
 
 /* env params */
-static float sunAngleDeg   = 1.0f;   /* sun angular diameter, degrees (plan: 0.5-1) */
-static float blockerOffset = 0.00015f; /* receiver bias, zero-to-one depth units */
+static float sunAngleDeg   = 0.1f;  /* sun angular diameter, degrees.  0.1 deg
+                                      * matches the hardware-bilinear 3x3 PCF
+                                      * (hybrid-off) look — a sharp sun shadow;
+                                      * raise for softer penumbras. */
+/* Receiver (blocker) depth bias.  The PCF path also applies a texel-scaled
+ * normal bias to prevent self-shadowing; the FFX classifier has no normal
+ * bias, only this fixed depth bias.  A value a few x the CSM receiver bias
+ * (0.00015) compensates for the missing normal bias so foliage canopies
+ * (e.g. trees) don't read as solid shadow, matching the hybrid-off look. */
+static float blockerOffset = 0.001f;
+
+/* The FFX classifier computes the sun-disc radius as
+ *     radius = sunSizeLightSpace * lightViewSpacePos.z
+ * i.e. the disc at the receiver's distance from the *light origin* (z=0 of the
+ * light view).  The FFX sample's light view carries a translation that places
+ * the light at a finite distance, so that z is a meaningful sun-receiver
+ * distance.  Our CSM light view has ZERO translation (it is a pure rotation,
+ * shared by every cascade), so lightViewSpacePos.z = dot(lightDir, worldPos)
+ * is the receiver's absolute offset from the WORLD ORIGIN along the sun axis
+ * (thousands of metres in this world).  That made the disc radius ~2000x too
+ * large (far beyond the 2048 shadow map), so every Poisson tap fell out of
+ * bounds and the classifier degenerated to "not lit" everywhere (all-shadow
+ * mask, dark scene).
+ *
+ * Fix: give the light view a z-translation so the reference point (the camera)
+ * sits at z = HS_SUN_REF_DISTANCE, making the disc radius
+ * sunSizeLightSpace * HS_SUN_REF_DISTANCE — a small, sensible value.  The
+ * translation shifts shadowCoord by T*scale, so we subtract T*zScale from
+ * each cascade's offset.z to keep the receiver depth (and the XY UVs, which
+ * are unaffected because T.x = T.y = 0) exactly as the CSM writes them. */
+#define HS_SUN_REF_DISTANCE 1.0f
 
 /* The sun's angular size is a *full* solid angle (degrees). The FFX
  * classifier converts it to a light-space disc radius with tan of the
@@ -528,6 +557,26 @@ static void hsDispatch(VulkanCommand* cmd,
     vulkanShadowPassGetCascadeData(&cascade);
     if (cascade.cascadeCount < 1) return;
 
+    /* Corrected light view for the FFX classifier (and the GLSL replica):
+     * the CSM light view is a pure rotation (zero translation), so its z is the
+     * receiver's absolute offset from the world origin along the sun axis —
+     * far too large to drive the classifier's sun-disc radius (see
+     * HS_SUN_REF_DISTANCE).  Add a z-translation so the camera (the reference
+     * receiver) sits at z = HS_SUN_REF_DISTANCE.  The per-cascade offset.z is
+     * compensated (below) so the receiver depth is unchanged. */
+    mat4 hsLightView;
+    glm_mat4_copy(cascade.cascadeLightView[0], hsLightView);
+    float hsLightViewTz = 0.0f;
+    if (cameraTransform) {
+        vec4 camLS;
+        glm_mat4_mulv(cascade.cascadeLightView[0], cameraTransform->pos, camLS);
+        hsLightViewTz = HS_SUN_REF_DISTANCE - camLS[2];
+        hsLightView[3][0] = 0.0f;
+        hsLightView[3][1] = 0.0f;
+        hsLightView[3][2] = hsLightViewTz;
+        hsLightView[3][3] = 1.0f;
+    }
+
     /* TEMP DIAG: log the classifier's sun-disk radius in cascade texels for a
      * receiver at the camera position.  The classifier's PCF radius is
      * slope * lightViewSpaceZ, so with a zero-translation light view the
@@ -684,7 +733,7 @@ static void hsDispatch(VulkanCommand* cmd,
             .pad               = 0.0f,
             .lightView         = {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
         };
-        memcpy(dpc.lightView, cascade.cascadeLightView[0], sizeof(dpc.lightView));
+        memcpy(dpc.lightView, hsLightView, sizeof(dpc.lightView));
         vulkanTransition(cmd, &hsDebugImage, VK_IMAGE_LAYOUT_GENERAL, 0, 1);
         vulkanBindPipe(cmd, &hsDebugPipe);
         vulkanPush(cmd, &hsDebugPipe, sizeof(dpc), &dpc);
@@ -781,6 +830,8 @@ static void hsDispatch(VulkanCommand* cmd,
             cdesc.cascadeScale[i][3] = 0.0f;
             cdesc.cascadeOffset[i][0] = 0.5f * pm[3][0] + 0.5f;
             cdesc.cascadeOffset[i][1] = 0.5f - 0.5f * pm[3][1];
+            /* offset.z is compensated for the light-view z-translation below
+             * (see the lightView setup) so the receiver depth is unchanged. */
             cdesc.cascadeOffset[i][2] = pm[3][2];
             cdesc.cascadeOffset[i][3] = 0.0f;
         } else {
@@ -792,9 +843,16 @@ static void hsDispatch(VulkanCommand* cmd,
     }
     /* Matrices. */
     memcpy(cdesc.viewToWorld, camera->cameraUbo.invViewProjectionNoJitter, sizeof(cdesc.viewToWorld));
-    memcpy(cdesc.lightView, cascade.cascadeLightView[0], sizeof(cdesc.lightView));
+
+    /* Compensate the per-cascade offset.z for the light-view z-translation so
+     * the receiver depth (shadowCoord.z) is exactly what the CSM writes.  The
+     * XY UVs are unaffected (the translation has no x/y component). */
+    for (int i = 0; i < cascade.cascadeCount; i++) {
+        cdesc.cascadeOffset[i][2] -= hsLightViewTz * cdesc.cascadeScale[i][2];
+    }
+    memcpy(cdesc.lightView, hsLightView, sizeof(cdesc.lightView));
     mat4 invLightView;
-    glm_mat4_inv(cascade.cascadeLightView[0], invLightView);
+    glm_mat4_inv(hsLightView, invLightView);
     memcpy(cdesc.inverseLightView, invLightView, sizeof(cdesc.inverseLightView));
 
     vulkanBeginProfile(cmd, &hsProfile, 0);
