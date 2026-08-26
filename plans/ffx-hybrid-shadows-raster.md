@@ -347,6 +347,34 @@ view-space XY (R16G16 SNORM). Add a full-res R16G16B16_SFLOAT
   (per-frame `hs_lit_*.jpg` + `hs_mask_*.jpg` in the dir). The plan's
   `ENGINE_HYBRID_SHADOWS_SUN` / `_BLOCKER` / `_DUMP` names were superseded
   by these.
+- **Dump readback ordering bug (found during A/B validation, fixed)**: `hsReadbackPixels`
+  memcpy'd the mapped readback buffer *before* `vulkanTransientEnd` (submit +
+  fence-wait), i.e. before the GPU `vkCmdCopyImageToBuffer` had even been
+  submitted — every `hs_lit_*.jpg` / `hs_mask_*.jpg` dump was uninitialised
+  host memory (all-zero → the tile view read all-white "all lit" and the mask
+  read all-black). The memcpy now runs after the fence wait; dumps verified
+  to show real tile/mask patterns.
+- **Gap-filling validation (parked tree, A/B screenshots + frame-500 dumps)**:
+  the raster-only path fills the dappled gaps between tree-branch shadows even
+  at the 0.1° floor (slider 0%), and dramatically more at the 0.997° the GUI
+  had persisted (`hybridShadowsSun`). Root causes, in order of impact:
+  (1) the classifier's "definitely lit" verdict needs *all 24* Poisson taps
+  clear inside the sun disc — dappled gaps narrower than the disc (≈3–4
+  texel radius at 0.1°, ≈10+ texel at 0.997° in the near cascade, growing
+  with receiver depth) classify indeterminate; the hybrid-off 3×3 tent PCF
+  gives partial light to any 1-texel gap, so it stays dappled;
+  (2) raster-only boundary bias: indeterminate tiles are never RT-resolved,
+  so the denoiser starts them shadow and the temporal accumulator locks them
+  there;
+  (3) the denoiser's three EAW passes (steps 1/2/4) + contrast remap smear the
+  residual lit specks and widen the penumbra ("puffed up");
+  (4) no texel-scaled normal bias in the classifier (fixed 0.001 blocker
+  offset only) so canopies self-shadow. Raising `ENGINE_HS_BLOCKER_OFFSET`
+  to 0.01 does NOT reopen the gaps at 0.997° (the disc is simply too wide);
+  the sun angle is the dominant lever. The 0.1° look is still closer to PCF
+  than 0.997°, but the dapple filling is structural to the raster-only
+  design (all-taps-lit test + indeterminate shadow bias + blur), not just the
+  sun size.
 - **Sun-size floor**: the classifier's Poisson-disk PCF degenerates when the
   sun disc (in shadow-map texels) exceeds the cascade extent — most taps
   fall out of range, `maxD` stays 0 and every pixel classifies

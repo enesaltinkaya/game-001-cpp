@@ -469,9 +469,12 @@ static void* hsReadbackPixels(VulkanImage* img, u64 bytes) {
     vulkanCopy(.cmd = tcmd, .source.img = img, .target.buf = &rb);
     vulkanBarrier(tcmd, DEVICE_WRITE_TO_HOST_READ);
     vulkanTransition(tcmd, img, prevLayout, 0, 1);
+    /* Submit + fence-wait BEFORE reading the mapped host memory: the GPU copy
+     * only executes when the transient command buffer runs, so a memcpy before
+     * the wait reads uninitialised host memory (the dumps came out all-zero). */
+    vulkanTransientEnd(tcmd, 1);
     void* out = malloc((size_t)bytes);
     if (out) memcpy(out, rb.vmaInfo.pMappedData, (size_t)bytes);
-    vulkanTransientEnd(tcmd, 1);
     vulkanDestroyBuffer(&rb, NULL);
     return out;
 }
