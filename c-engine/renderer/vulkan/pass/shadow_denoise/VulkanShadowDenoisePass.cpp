@@ -6,6 +6,7 @@
 #include "ecs/system/window/WindowSystem.h"
 #include "events/Events.h"
 #include "renderer/vulkan/Vulkan.h"
+#include "renderer/vulkan/barrier/VulkanBarrier.h"
 #include "renderer/vulkan/command/VulkanCommand.h"
 #include "renderer/vulkan/pipeline/VulkanProfile.h"
 #include "renderer/vulkan/pipeline/VulkanPipe.h"
@@ -17,6 +18,7 @@
 #include "renderer/vulkan/pass/shadow/VulkanShadowPass.h"
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wmissing-field-initializers"
 #include <FidelityFX/host/ffx_classifier.h>
@@ -62,13 +64,32 @@ static int          cascadeDepthCount = 0;
  * cascade slots (beyond the active count) still need a valid (non-null)
  * resource bound, so a 1x1 dummy depth image fills them. */
 static VulkanImage  dummyCascadeDepth;
+/* Temporary diagnostic (ENGINE_HS_DEBUG): per-pixel replica of the FFX
+ * classifier verdict, to diagnose the shadow-biased ground. */
+static VulkanImage  hsDebugImage;
+static VulkanPipe   hsDebugPipe;
+static char         hsDebugPipeReady = 0;
+static char         hsDebugEnabled   = 0;
 
 /* env params */
 static float sunAngleDeg   = 1.0f;   /* sun angular diameter, degrees (plan: 0.5-1) */
 static float blockerOffset = 0.00015f; /* receiver bias, zero-to-one depth units */
+
+/* The sun's angular size is a *full* solid angle (degrees). The FFX
+ * classifier converts it to a light-space disc radius with tan of the
+ * HALF angle (matching the FFX sample's ComputeSunSizeLightSpace cone
+ * projection, whose |xy|/|z| slope is ~ tan(halfAngle) when the sun axis
+ * is the light-view -Z). Passing the full angle was ~2x too large, widening
+ * the Poisson disc so far more taps straddled terrain undulations and were
+ * classified "indeterminate" (-> shadow) instead of lit. */
+static float hsSunSizeLightSpace(float sunAngleDeg_) {
+    return tanf(0.5f * sunAngleDeg_ * (3.14159265f / 180.0f));
+}
 static float depthSigma    = 1.0f;
 static char  dumpChecked   = 0;
 static char  dumpEnabled   = 0;
+static char  diagEnabled   = 0;
+static u32   dumpFrame     = 0; /* 0 = every frame */
 
 /* frame counter for the denoiser's temporal filter */
 static u32 frameIndex = 0;
@@ -132,6 +153,11 @@ static void hsDestroyResources(void) {
         if (depthCopyImage.inPool) vulkanRemoveImageFromPool(&depthCopyImage);
         vulkanDestroyImage(&depthCopyImage, NULL);
         depthCopyImage = VulkanImage{};
+    }
+    if (hsDebugImage.img) {
+        if (hsDebugImage.inPool) vulkanRemoveImageFromPool(&hsDebugImage);
+        vulkanDestroyImage(&hsDebugImage, NULL);
+        hsDebugImage = VulkanImage{};
     }
     for (int i = 0; i < 2; i++) {
         if (cascadeDepthImages[i].img) {
@@ -246,6 +272,20 @@ static char hsEnsureContexts(u32 width, u32 height) {
         depthCopyPipeReady = 1;
     }
 
+    /* TEMP DIAGNOSTIC: full-res R8A8 output for the classifier replica. */
+    hsDebugImage = vulkanCreateImage(.name   = "hs_debug_classify",
+                                     .format = VK_FORMAT_R8G8B8A8_UNORM,
+                                     .usage  = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT |
+                                                 VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+                                     .width  = (int)width,
+                                     .height = (int)height);
+    if (hsDebugImage.img) vulkanAddImageToPool(&hsDebugImage);
+    if (!hsDebugPipeReady) {
+        hsDebugPipe      = vulkanCreatePipe(.name = "hs_debug_classify",
+                                            .comp  = "shaders/pass/shadow_denoise/spv/hs_debug_classify.comp.spv");
+        hsDebugPipeReady = 1;
+    }
+
     /* Single-layer 2D D32 images for the active cascades (the FFX backend
      * cannot sample a layer of the CSM 2D array directly). */
     ShadowCascadeData cascadeTmp;
@@ -285,6 +325,7 @@ static char hsEnsureContexts(u32 width, u32 height) {
     vulkanTransition(cmd, &rayHitImage, VK_IMAGE_LAYOUT_GENERAL, 0, 1);
     vulkanTransition(cmd, &shadowMaskImage, VK_IMAGE_LAYOUT_GENERAL, 0, 1);
     vulkanTransition(cmd, &depthCopyImage, VK_IMAGE_LAYOUT_GENERAL, 0, 1);
+    vulkanTransition(cmd, &hsDebugImage, VK_IMAGE_LAYOUT_GENERAL, 0, 1);
     vulkanTransition(cmd, &dummyCascadeDepth, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
     for (int i = 0; i < cascadeDepthCount; i++) {
         vulkanTransition(cmd, &cascadeDepthImages[i], VK_IMAGE_LAYOUT_GENERAL, 0, 1);
@@ -293,8 +334,22 @@ static char hsEnsureContexts(u32 width, u32 height) {
 
     /* FFX contexts. */
     FfxClassifierContextDescription cd = {};
+    /* Depth-convention permutations: the engine's scene depth is reversed-Z
+     * ([1=near..0=far], cleared to 0.0 — the DOF/FSR reverse-depth
+     * precedent), but the CSM shadow maps are standard zero-to-one
+     * (near=0/far=1, cleared to 1.0). The FFX INVERTED flag couples both:
+     * its shadow-map compare branch (depthCmp = z + bias, "in shadow" when
+     * the closest blocker is at-or-past the receiver) only works on an
+     * inverted shadow map, so the classifier must run the NON-inverted
+     * permutation to match the zero-to-one CSM maps. The non-inverted scene
+     * empty test (active when depth < 1.0) also treats our empty pixels
+     * (0.0) as active, but that is harmless: their cleared zero world
+     * normal fails the backfacing test, and the denoiser's prepare pass
+     * excludes empty pixels (depth == 0) from the mask anyway. The
+     * denoiser only consumes the scene depth (no shadow-map compare), so it
+     * takes the inverted permutation (its "closest = max depth" velocity
+     * pick must match reversed-Z). */
     cd.flags = FFX_CLASSIFIER_SHADOW | FFX_CLASSIFIER_CLASSIFY_BY_CASCADES;
-    /* NOT FFX_CLASSIFIER_ENABLE_DEPTH_INVERTED — the engine's depth is [0,1]. */
     cd.resolution.width  = width;
     cd.resolution.height = height;
     cd.backendInterface  = ffxInterface;
@@ -306,8 +361,9 @@ static char hsEnsureContexts(u32 width, u32 height) {
     }
 
     FfxDenoiserContextDescription dd = {};
-    dd.flags = FFX_DENOISER_SHADOWS;
-    /* NOT FFX_DENOISER_ENABLE_DEPTH_INVERTED. */
+    dd.flags = FFX_DENOISER_SHADOWS | FFX_DENOISER_ENABLE_DEPTH_INVERTED;
+    /* Inverted scene depth (reversed-Z, empty=0.0); see the classifier's
+     * convention comment above. */
     dd.windowSize.width  = width;
     dd.windowSize.height = height;
     dd.backendInterface  = ffxInterface;
@@ -369,6 +425,91 @@ static FfxResource wrapBufferResource(VulkanBuffer* buffer,
 }
 
 /* ── Dispatch ─────────────────────────────────────────────────────── */
+/* ── Dump helpers (ENGINE_HS_DUMP) ─────────────────────────────────── */
+
+/* Read back a whole image's bytes through a transient command (mirrors the
+ * vulkanSaveImage mechanics).  All dumped images are 4 bytes per texel.
+ * Returns NULL on a null image. */
+static void* hsReadbackPixels(VulkanImage* img, u64 bytes) {
+    if (!img || !img->img) return NULL;
+    VulkanBuffer rb = vulkanCreateReadbackBuffer("hs_dump", bytes, 0);
+    if (!rb.buf) return NULL;
+    VulkanCommand* tcmd = vulkanTransientBegin();
+    VkImageLayout prevLayout = img->layout;
+    vulkanTransition(tcmd, img, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, 0, 1);
+    vulkanCopy(.cmd = tcmd, .source.img = img, .target.buf = &rb);
+    vulkanBarrier(tcmd, DEVICE_WRITE_TO_HOST_READ);
+    vulkanTransition(tcmd, img, prevLayout, 0, 1);
+    void* out = malloc((size_t)bytes);
+    if (out) memcpy(out, rb.vmaInfo.pMappedData, (size_t)bytes);
+    vulkanTransientEnd(tcmd, 1);
+    vulkanDestroyBuffer(&rb, NULL);
+    return out;
+}
+
+/* Save a full-resolution 3-channel grayscale JPEG (gray replicated to RGB —
+ * stbi_write_jpg cannot encode 4-channel images, which is what corrupted the
+ * raw 4-channel dumps of R32_UINT / RGBA8 resources). */
+static void hsWriteGrayJpg(u32 width, u32 height, const u8* gray, const char* path) {
+    u8* jpg = (u8*)malloc((size_t)width * height * 3);
+    if (!jpg) return;
+    for (u64 i = 0; i < (u64)width * height; i++) {
+        jpg[i * 3 + 0] = gray[i];
+        jpg[i * 3 + 1] = gray[i];
+        jpg[i * 3 + 2] = gray[i];
+    }
+    if (stbi_write_jpg(path, (int)width, (int)height, 3, jpg, 80)) {
+        utils::info("vulkanShadowDenoisePass: dumped %s (%ux%u)", path, width, height);
+    } else {
+        utils::warn("vulkanShadowDenoisePass: failed to write %s", path);
+    }
+    free(jpg);
+}
+
+/* Expand the tile-resolution ray-hit mask (one R32 texel per 8x4 tile, bit
+ * set = NOT definitely lit) into a full-resolution per-pixel view that lines
+ * up with the frame screenshot: white = lit, black = shadow / indeterminate
+ * / inactive (sky). */
+static void hsSaveExpandedRayHit(u32 width, u32 height, const char* path) {
+    const u32 xTiles = (width + 7) / 8;
+    const u32 yTiles = (height + 3) / 4;
+    u8* tiles = (u8*)hsReadbackPixels(&rayHitImage, (u64)xTiles * yTiles * 4);
+    if (!tiles) return;
+    u8* gray = (u8*)malloc((size_t)width * height);
+    if (gray) {
+        for (u32 ty = 0; ty < yTiles; ty++) {
+            for (u32 tx = 0; tx < xTiles; tx++) {
+                u32 v;
+                memcpy(&v, tiles + ((u64)ty * xTiles + tx) * 4, 4);
+                for (u32 py = 0; py < 4; py++) {
+                    for (u32 px = 0; px < 8; px++) {
+                        u32 X = tx * 8 + px, Y = ty * 4 + py;
+                        if (X >= width || Y >= height) continue;
+                        /* lane bit layout: bit (py*8+px) of the 8x4 tile. */
+                        gray[(u64)Y * width + X] = (v & (1u << (py * 8 + px))) ? 0 : 255;
+                    }
+                }
+            }
+        }
+        hsWriteGrayJpg(width, height, gray, path);
+        free(gray);
+    }
+    free(tiles);
+}
+
+/* Save channel 0 (lit fraction, 1 = lit) of a full-res RGBA8 image. */
+static void hsSaveMaskChannel0(VulkanImage* img, u32 width, u32 height, const char* path) {
+    u8* px = (u8*)hsReadbackPixels(img, (u64)width * height * 4);
+    if (!px) return;
+    u8* gray = (u8*)malloc((size_t)width * height);
+    if (gray) {
+        for (u64 i = 0; i < (u64)width * height; i++) gray[i] = px[i * 4];
+        hsWriteGrayJpg(width, height, gray, path);
+        free(gray);
+    }
+    free(px);
+}
+
 static void hsDispatch(VulkanCommand* cmd,
                        VulkanImage*   depth,
                        VulkanImage*   worldNormal,
@@ -386,6 +527,63 @@ static void hsDispatch(VulkanCommand* cmd,
     ShadowCascadeData cascade;
     vulkanShadowPassGetCascadeData(&cascade);
     if (cascade.cascadeCount < 1) return;
+
+    /* TEMP DIAG: log the classifier's sun-disk radius in cascade texels for a
+     * receiver at the camera position.  The classifier's PCF radius is
+     * slope * lightViewSpaceZ, so with a zero-translation light view the
+     * radius scales with the receiver's distance from the WORLD ORIGIN along
+     * the sun axis — not with the cascade window. */
+    if (diagEnabled && frameIndex == 0) {
+        vec4 camPos4 = {0, 0, 0, 1};
+        if (cameraTransform) {
+            camPos4[0] = cameraTransform->pos[0];
+            camPos4[1] = cameraTransform->pos[1];
+            camPos4[2] = cameraTransform->pos[2];
+        }
+        vec4 camLS4;
+        glm_mat4_mulv(cascade.cascadeLightView[0], camPos4, camLS4);
+        const float slope = hsSunSizeLightSpace(sunAngleDeg);
+        /* first 24 samples of the FFX Poisson disc (k_poissonDiscSampleCountHigh) */
+        static const float disc[24][2] = {
+            {0.640736f, -0.355205f},  {-0.725411f, -0.688316f}, {-0.185095f, 0.722648f}, {0.770596f, 0.637324f},
+            {-0.921445f, 0.196997f},  {0.076571f, -0.98822f},  {-0.1348f, -0.0908536f}, {0.320109f, 0.257241f},
+            {0.994021f, 0.109193f},   {0.304934f, 0.952374f}, {-0.698577f, 0.715535f}, {0.548701f, -0.836019f},
+            {-0.443159f, 0.296121f},  {0.15067f, -0.489731f}, {-0.623829f, -0.208167f}, {-0.294778f, -0.596545f},
+            {0.334086f, -0.128208f},  {-0.0619831f, 0.311747f}, {0.166112f, 0.61626f}, {-0.289127f, -0.957291f},
+            {-0.98748f, -0.157745f},  {0.637501f, 0.0651571f}, {0.971376f, -0.237545f}, {-0.0170599f, 0.98059f},
+        };
+        for (int i = 0; i < cascade.cascadeCount; i++) {
+            const float (*pm)[4] = cascade.cascadeProj[i];
+            const float extent = 0.5f / pm[0][0]; /* ortho half-extent in light units */
+            const float radius = slope * camLS4[2];
+            const float radiusTex = fabsf(radius) * (0.5f / extent) * 2048.0f + 1.0f;
+            int inRange = 0;
+            for (int s = 0; s < 24; s++) {
+                float x = 1024.0f + disc[s][0] * radiusTex;
+                float y = 1024.0f + disc[s][1] * radiusTex;
+                if (x >= 0.0f && x < 2048.0f && y >= 0.0f && y < 2048.0f) inRange++;
+            }
+            utils::info(
+                "hs DIAG c%d: camLS.z=%.1f slope=%.5f radius=%.2fm -> %.0f texels (map half-size 1024), "
+                "in-range taps at map center: %d/24", i, camLS4[2], slope, radius, radiusTex, inRange);
+        }
+        /* Full matrix dump for offline analysis of the CSM depth convention. */
+        for (int i = 0; i < cascade.cascadeCount; i++) {
+            const float (*pv)[4] = cascade.cascadeProj[i];
+            const float (*vv)[4] = cascade.cascadeLightView[i];
+            utils::info("hs DIAG c%d proj  = [%.5f %.5f %.5f %.5f | %.5f %.5f %.5f %.5f | "
+                        "%.5f %.5f %.5f %.5f | %.5f %.5f %.5f %.5f]",
+                        i, pv[0][0], pv[1][0], pv[2][0], pv[3][0], pv[0][1], pv[1][1], pv[2][1], pv[3][1],
+                        pv[0][2], pv[1][2], pv[2][2], pv[3][2], pv[0][3], pv[1][3], pv[2][3], pv[3][3]);
+            utils::info("hs DIAG c%d lview = [%.5f %.5f %.5f %.5f | %.5f %.5f %.5f %.5f | "
+                        "%.5f %.5f %.5f %.5f | %.5f %.5f %.5f %.5f]",
+                        i, vv[0][0], vv[1][0], vv[2][0], vv[3][0], vv[0][1], vv[1][1], vv[2][1], vv[3][1],
+                        vv[0][2], vv[1][2], vv[2][2], vv[3][2], vv[0][3], vv[1][3], vv[2][3], vv[3][3]);
+        }
+        utils::info("hs DIAG lightDir=(%.4f %.4f %.4f) camPos=(%.2f %.2f %.2f)",
+                    cascade.lightDir[0], cascade.lightDir[1], cascade.lightDir[2],
+                    camPos4[0], camPos4[1], camPos4[2]);
+    }
 
     /* The classifier + denoiser read the depth / normal / shadow maps in
      * SHADER_READ_ONLY; make sure they're staged for compute reads. */
@@ -464,25 +662,60 @@ static void hsDispatch(VulkanCommand* cmd,
         vkCmdPipelineBarrier2(cmd->cmd, &dep2);
     }
 
+    if (hsDebugEnabled && hsDebugImage.img && hsDebugPipeReady) {
+        struct {
+            u32  depthIndex;
+            u32  outIndex;
+            u32  width;
+            u32  height;
+            float sunSizeLightSpace;
+            float blockerOffset;
+            float cascadeSize;
+            float pad;
+            mat4 lightView;
+        } dpc = {
+            .depthIndex        = (u32)depth->sampledPoolIndex,
+            .outIndex          = (u32)hsDebugImage.storagePoolIndex,
+            .width             = width,
+            .height            = height,
+            .sunSizeLightSpace = hsSunSizeLightSpace(sunAngleDeg),
+            .blockerOffset     = blockerOffset,
+            .cascadeSize       = (float)cascade.cascadeSize,
+            .pad               = 0.0f,
+            .lightView         = {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+        };
+        memcpy(dpc.lightView, cascade.cascadeLightView[0], sizeof(dpc.lightView));
+        vulkanTransition(cmd, &hsDebugImage, VK_IMAGE_LAYOUT_GENERAL, 0, 1);
+        vulkanBindPipe(cmd, &hsDebugPipe);
+        vulkanPush(cmd, &hsDebugPipe, sizeof(dpc), &dpc);
+        vulkanDispatch(cmd, &hsDebugPipe, (width + 7) / 8, (height + 7) / 8, 1);
+        if (dumpFrame == 0 || frameIndex == dumpFrame) {
+            char dpath[512];
+            snprintf(dpath, sizeof(dpath), "%s/hs_debug_%06u.jpg", getenv("ENGINE_HS_DUMP"), frameIndex);
+            hsSaveMaskChannel0(&hsDebugImage, width, height, dpath);
+        }
+    }
     /* Reset the work-queue counter to {0,1,1} each frame (the classifier
      * atomicAdds into data[0]; the queue itself is never dispatched in the
      * raster path, but the counter must stay bounded to avoid OOB writes). */
-    u32 wqc[3] = {0, 1, 1};
-    vkCmdUpdateBuffer(cmd->cmd, workQueueCountBuf.buf, 0, sizeof(wqc), wqc);
-    VkBufferMemoryBarrier bmb = {};
-    bmb.sType         = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
-    bmb.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-    bmb.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT;
-    bmb.buffer        = workQueueCountBuf.buf;
-    bmb.offset        = 0;
-    bmb.size          = VK_WHOLE_SIZE;
-    vkCmdPipelineBarrier(cmd->cmd,
-                         VK_PIPELINE_STAGE_TRANSFER_BIT,
-                         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                         0,
-                         0, NULL,   /* memory barriers */
-                         1, &bmb,   /* buffer memory barriers */
-                         0, NULL);  /* image memory barriers */
+    {
+        u32 wqc[3] = {0, 1, 1};
+        vkCmdUpdateBuffer(cmd->cmd, workQueueCountBuf.buf, 0, sizeof(wqc), wqc);
+        VkBufferMemoryBarrier bmb = {};
+        bmb.sType         = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+        bmb.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        bmb.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT;
+        bmb.buffer        = workQueueCountBuf.buf;
+        bmb.offset        = 0;
+        bmb.size          = VK_WHOLE_SIZE;
+        vkCmdPipelineBarrier(cmd->cmd,
+                             VK_PIPELINE_STAGE_TRANSFER_BIT,
+                             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                             0,
+                             0, NULL,   /* memory barriers */
+                             1, &bmb,   /* buffer memory barriers */
+                             0, NULL);  /* image memory barriers */
+    }
 
     /* ── Classifier (shadow mode, classify-by-cascades) ──────────── */
     FfxClassifierShadowDispatchDescription cdesc = {};
@@ -518,7 +751,7 @@ static void hsDispatch(VulkanCommand* cmd,
 
     /* Light direction (toward the scene). */
     glm_vec3_copy(cascade.lightDir, cdesc.lightDir);
-    cdesc.sunSizeLightSpace = sunAngleDeg * (3.14159265f / 180.0f);
+    cdesc.sunSizeLightSpace = hsSunSizeLightSpace(sunAngleDeg);
     cdesc.tileCutOff        = 0;
     cdesc.bRejectLitPixels  = true;
     cdesc.cascadeCount      = (u32)cascade.cascadeCount;
@@ -535,14 +768,19 @@ static void hsDispatch(VulkanCommand* cmd,
     for (int i = 0; i < 4; i++) {
         if (i < cascade.cascadeCount) {
             /* cglm mat4 is column-major: m[col][row].  Diagonal = scale, 4th
-             * column = translation. */
+             * column = translation.  The CSM fragment path remaps clip -> UV as
+             * uv.x = clip.x * 0.5 + 0.5 and uv.y = 0.5 - clip.y * 0.5 (Vulkan
+             * V-down, shadow map row 0 = top).  The classifier feeds the same
+             * shadow maps through texelFetch (row 0 = top), so its
+             * scale/offset must reproduce that exact remap — note the flipped Y.
+             * clip = cascadeProj * lightViewPos, i.e. clip.c = pm[c][c]*p + pm[3][c]. */
             const float (*pm)[4] = cascade.cascadeProj[i];
             cdesc.cascadeScale[i][0] = 0.5f * pm[0][0];
-            cdesc.cascadeScale[i][1] = 0.5f * pm[1][1];
+            cdesc.cascadeScale[i][1] = -0.5f * pm[1][1];
             cdesc.cascadeScale[i][2] = pm[2][2];
             cdesc.cascadeScale[i][3] = 0.0f;
             cdesc.cascadeOffset[i][0] = 0.5f * pm[3][0] + 0.5f;
-            cdesc.cascadeOffset[i][1] = 0.5f * pm[3][1] + 0.5f;
+            cdesc.cascadeOffset[i][1] = 0.5f - 0.5f * pm[3][1];
             cdesc.cascadeOffset[i][2] = pm[3][2];
             cdesc.cascadeOffset[i][3] = 0.0f;
         } else {
@@ -636,14 +874,12 @@ static void hsDispatch(VulkanCommand* cmd,
     }
     vulkanEndProfile(cmd, &hsProfile, 0);
 
-    if (dumpEnabled) {
+    if (dumpEnabled && (dumpFrame == 0 || frameIndex == dumpFrame)) {
         char path[512];
-        snprintf(path, sizeof(path), "%s/hs_rayhit_%06u.jpg", getenv("ENGINE_HS_DUMP"), frameIndex);
-        utils::info("vulkanShadowDenoisePass: dumping rayHit to %s", path);
-        vulkanSaveImage(&rayHitImage, path);
+        snprintf(path, sizeof(path), "%s/hs_lit_%06u.jpg", getenv("ENGINE_HS_DUMP"), frameIndex);
+        hsSaveExpandedRayHit(width, height, path);
         snprintf(path, sizeof(path), "%s/hs_mask_%06u.jpg", getenv("ENGINE_HS_DUMP"), frameIndex);
-        utils::info("vulkanShadowDenoisePass: dumping shadow mask to %s", path);
-        vulkanSaveImage(&shadowMaskImage, path);
+        hsSaveMaskChannel0(&shadowMaskImage, width, height, path);
     }
 
     /* The shadow mask is left in GENERAL (the FFX UAV state); GENERAL allows
@@ -678,6 +914,12 @@ void VulkanShadowDenoisePass::added() {
     if (sigmaEnv && *sigmaEnv) depthSigma = (float)atof(sigmaEnv);
     const char* dumpEnv = getenv("ENGINE_HS_DUMP");
     if (dumpEnv && *dumpEnv) dumpEnabled = 1;
+    const char* diagEnv = getenv("ENGINE_HS_DIAG");
+    if (diagEnv && *diagEnv) diagEnabled = 1;
+    const char* dumpFrameEnv = getenv("ENGINE_HS_DUMP_FRAME");
+    if (dumpFrameEnv && *dumpFrameEnv) dumpFrame = (u32)atoi(dumpFrameEnv);
+    const char* debugEnv = getenv("ENGINE_HS_DEBUG");
+    if (debugEnv && *debugEnv) hsDebugEnabled = 1;
     dumpChecked = 1;
     hsEnvChecked = 1;
 
@@ -696,6 +938,11 @@ void VulkanShadowDenoisePass::removed() {
         vulkanDestroyPipe(&depthCopyPipe);
         depthCopyPipe      = VulkanPipe{};
         depthCopyPipeReady = 0;
+    }
+    if (hsDebugPipeReady) {
+        vulkanDestroyPipe(&hsDebugPipe);
+        hsDebugPipe      = VulkanPipe{};
+        hsDebugPipeReady = 0;
     }
     if (ffxScratch) {
         free(ffxScratch);

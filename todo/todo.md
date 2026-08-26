@@ -3,3 +3,4 @@
 - migrate to /home/enes/Projects/c/cpp-thirdparty/fsr3.1/git/samples/lpm instead of our own tonemapping.
 - investigate /home/enes/Projects/c/cpp-thirdparty/fsr3.1/git/samples/hybridshadows, can we take advantage of their raster shadows? we are not interested in raytracing. already investigated, plans/ffx-hybrid-shadows-raster.md is the plan for better shadows.
 - @plans/ffx-hybrid-shadows-raster.md better shadows.
+- cacao why ghosting? compare with sample. check defaults.

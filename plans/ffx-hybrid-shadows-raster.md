@@ -287,6 +287,28 @@ view-space XY (R16G16 SNORM). Add a full-res R16G16B16_SFLOAT
 
 ## Implementation notes (as built)
 
+- **Depth-permutation bug (found in debug session, fixed)**: the classifier
+  was created with `FFX_CLASSIFIER_ENABLE_DEPTH_INVERTED`. That flag couples
+  two conventions into one permutation: the scene-depth empty test *and* the
+  shadow-map depth-compare branch. Our engine mixes conventions — the scene
+  depth is reversed-Z (near=1/far=0, **cleared to 0.0**) while the CSM shadow
+  maps are zero-to-one (near=0/far=1, **cleared to 1.0**) — so neither pure
+  permutation is exact, but the non-inverted one is the correct one because
+  the shadow-map compare is the core of the verdict: with INVERTED on, the
+  verdicts invert ("definitely lit" requires max(tap depths) <= z+bias, which
+  a single empty tap (1.0) breaks → *no lane is ever lit* → all-shadow mask,
+  all-black denoiser output — the "not working" symptom). Fixed: classifier
+  runs `INVERTED_DEPTH=0` (its `depth < 1.0` empty test misclassifies our
+  empty 0.0 pixels as active, but the cleared zero world normal fails the
+  backfacing test and the denoiser's prepare pass excludes depth-0 pixels,
+  so it is harmless); denoiser keeps `FFX_DENOISER_ENABLE_DEPTH_INVERTED`
+  (scene-depth only: its "closest velocity = max depth" pick matches
+  reversed-Z). Verified: tile rayHit + denoised mask dumps are geometrically
+  coherent, and a non-inverted GLSL replica of the classifier verdicts
+  (TEMP `hs_debug_classify`, `ENGINE_HS_DEBUG=1`) matches the scene. The plan's
+  original "INVERTED_DEPTH=0" choice was the right outcome for the wrong
+  reason (it assumed zero-to-one scene depth; the scene depth is actually
+  reversed-Z).
 - **Env knobs** (final names, per `VulkanShadowDenoisePass.h`):
   `ENGINE_HYBRID_SHADOWS=1` master toggle (default off); `ENGINE_HS_SUN_ANGLE`
   (deg, default 1.0); `ENGINE_HS_BLOCKER_OFFSET` (default 0.00015, matches
