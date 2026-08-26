@@ -326,34 +326,86 @@ static void buildCascadeMatrix(const Camera* cam,
 
 /* ── Image management ─────────────────────────────────────────────────── */
 
-static void destroyShadowMap(void) {
+/* A retired shadow map whose actual destruction is deferred: the views and
+ * image stay alive until the flight command buffer that recorded the last
+ * frame referencing them has completed (see retiredShadowMaps). */
+struct RetiredShadowMap {
+    VulkanImage image;
+    VulkanImage layers[SHADOW_CASCADE_COUNT];
+    int flight; /* flight item that recorded the last referencing frame */
+};
+static std::vector<RetiredShadowMap> retiredShadowMaps;
+
+/* Destroy a retired shadow map.  Only call this when no in-flight command
+ * buffer can reference the image anymore: either the flight item that
+ * recorded the last referencing frame has completed (its fence was waited on
+ * by vulkanSwapchainBegin before this frame's passes ran), or the device was
+ * drained at teardown. */
+static void destroyRetiredShadowMap(RetiredShadowMap& retired) {
+    for (int i = 0; i < SHADOW_CASCADE_COUNT; i++) {
+        if (retired.layers[i].img) {
+            /* Don't vkDestroyImage here — the underlying VkImage belongs to
+             * retired.image (destroyed below).  Only destroy the per-layer view. */
+            vkDestroyImageView(vulkan.device, retired.layers[i].view, NULL);
+        }
+    }
+    if (retired.image.img) {
+        vulkanDestroyImage(&retired.image, NULL);
+    }
+}
+
+/* Retire the live shadow map: re-point its bindless pool entries at the
+ * engine dummy and defer the actual view/image destruction until the flight
+ * command buffer that recorded the last referencing frame (the current
+ * frame) has completed.  In-flight frames (submitted before the current
+ * frame) may still be reading the shadow map, so drain the device first —
+ * same pattern as the DOF / swapchain mid-session recreate.  At teardown the
+ * renderer has already drained, so waitIdleFirst is false there. */
+static void retireShadowMap(char waitIdleFirst) {
     if (!shadowMapReady) return;
 
-    /* The shadow map (and its per-layer views) may still be referenced by
-     * in-flight frames: the shadow pass rendered into it and the lighting
-     * pass sampled it.  A mid-session quality change destroys it while those
-     * frames are queued, so drain the device first (same pattern as the DOF
-     * / swapchain mid-session recreate).  On teardown the renderer has
-     * already drained, so this is a harmless no-op there. */
-    vulkanWaitIdle("shadow map destroy");
+    if (waitIdleFirst) vulkanWaitIdle("shadow map destroy");
+
+    RetiredShadowMap retired = {};
+    retired.image            = shadowMapImage;
+    for (int i = 0; i < SHADOW_CASCADE_COUNT; i++) {
+        retired.layers[i] = shadowMapLayerImages[i];
+    }
+    /* The current frame's flight cmd was already recorded (the shadow pass
+     * rendered into the map, the lighting pass bound the global set with the
+     * per-layer views) and is only submitted at the end of this frame —
+     * AFTER the waitIdle above — so it is the last command buffer that
+     * directly references the image.  It completes when this flight item is
+     * reused, i.e. when renderer.flightIndex wraps back to this value. */
+    retired.flight           = renderer.flightIndex;
+    shadowMapImage           = VulkanImage{};
+    for (int i = 0; i < SHADOW_CASCADE_COUNT; i++) {
+        shadowMapLayerImages[i] = VulkanImage{};
+    }
+    shadowMapReady           = 0;
+    shadowMapSize            = 0;
 
     for (int i = 0; i < SHADOW_CASCADE_COUNT; i++) {
-        if (shadowMapLayerImages[i].img) {
-            vulkanRemoveImageFromPool(&shadowMapLayerImages[i]);
-            /* Don't vkDestroyImage — the underlying VkImage belongs to
-             * shadowMapImage.  Only destroy the per-layer view. */
-            vkDestroyImageView(vulkan.device, shadowMapLayerImages[i].view, NULL);
-            shadowMapLayerImages[i] = VulkanImage{};
+        if (retired.layers[i].img) {
+            /* Every frame binds the global set, whose sampled-image array
+             * still points at these views.  Free the slot and re-point the
+             * entries at the dummy (alive for the whole renderer lifetime) so
+             * the current + future command buffers never reference a view we
+             * are about to destroy. */
+            vulkanRetireSampledPoolEntry(retired.layers[i].sampledPoolIndex,
+                                         &vulkanResources.dummyImage);
+            retired.layers[i].inPool = 0;
         }
     }
 
-    if (shadowMapImage.img) {
-        vulkanDestroyImage(&shadowMapImage, NULL);
-        shadowMapImage = VulkanImage{};
-    }
+    retiredShadowMaps.push_back(retired);
+}
 
-    shadowMapReady = 0;
-    shadowMapSize  = 0;
+/* Destroy the live shadow map after a mid-session change (quality off or map
+ * size) retired it; the actual destruction is deferred until the last
+ * referencing flight command buffer has completed. */
+static void destroyShadowMap(void) {
+    retireShadowMap(1);
 }
 
 /* Create (or recreate, when the quality level's map size changed) the shadow
@@ -569,6 +621,19 @@ static void uploadEmptyShadow(void) {
 void VulkanShadowPass::update() {
     if (vulkan.skipFrame) return;
 
+    /* Flush deferred shadow map destructions.  vulkanSwapchainBegin has
+     * already waited on the current flight item's fence (and skipped frames
+     * return above, before any fence wait), so a retired map whose last
+     * referencing frame used this flight item is now safe to destroy. */
+    for (size_t i = 0; i < retiredShadowMaps.size(); ) {
+        if (retiredShadowMaps[i].flight == renderer.flightIndex) {
+            destroyRetiredShadowMap(retiredShadowMaps[i]);
+            retiredShadowMaps.erase(retiredShadowMaps.begin() + i);
+        } else {
+            i++;
+        }
+    }
+
     if (shadowQuality == SHADOW_QUALITY_OFF) {
         uploadEmptyShadow();
         return;
@@ -663,7 +728,14 @@ void VulkanShadowPass::update() {
 }
 
 void VulkanShadowPass::removed() {
-    destroyShadowMap();
+    /* Teardown: the device was drained by vulkanDestroyDelayed before the
+     * passes are removed, so retire (without waiting) and flush everything
+     * immediately. */
+    retireShadowMap(0);
+    for (RetiredShadowMap& retired : retiredShadowMaps) {
+        destroyRetiredShadowMap(retired);
+    }
+    retiredShadowMaps.clear();
     if (shadowPipe.pipe) {
         vulkanDestroyPipe(&shadowPipe);
         vulkanDestroyPipe(&shadowPipeDoubleSided);

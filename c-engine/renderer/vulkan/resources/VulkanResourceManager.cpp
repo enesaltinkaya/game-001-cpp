@@ -1086,6 +1086,16 @@ void vulkanRemoveImageFromPool(VulkanImage* image) {
     image->inPool = 0;
 }
 
+void vulkanRetireSampledPoolEntry(int poolIndex, VulkanImage* replacement) {
+    utils::threadLock(&sampledImageArrayData.lock);
+    sampledImageArrayData.emptySlots.push_back((u32)poolIndex);
+    for (i32 i = 0, si = FRAMES_IN_FLIGHT; i < si; i++) {
+        VulkanDesc* desc = &vulkanResources.globalSet0[i];
+        vulkanUpdateDesc(desc, VULKAN_BINDING_SAMPLED_IMAGE, replacement, SLOT_IMAGE, poolIndex);
+    }
+    utils::threadUnlock(&sampledImageArrayData.lock);
+}
+
 int vulkanAddImageViewToPool(VkImageView view) {
     utils::threadLock(&sampledImageArrayData.lock);
 

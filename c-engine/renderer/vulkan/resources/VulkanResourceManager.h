@@ -74,6 +74,13 @@ void vulkanResourceUploadLightCounts(ivec4 counts);
 void vulkanResourceUploadMaterial(Material* material);
 void vulkanAddImageToPool(VulkanImage* image);
 void vulkanRemoveImageFromPool(VulkanImage* image);
+/* Frees the sampled pool slot AND re-points its bindless descriptor entries
+ * (all in-flight frames) to a replacement image (usually the engine dummy),
+ * atomically under the pool lock.  Use this before destroying a view that is
+ * currently referenced by a pool slot: every frame binds the global set, so
+ * in-flight and future command buffers must never see a destroyed view in a
+ * bound descriptor. */
+void vulkanRetireSampledPoolEntry(int poolIndex, VulkanImage* replacement);
 
 int vulkanAddImageViewToPool(VkImageView view);
 void vulkanRemoveImageViewFromPool(int poolIndex);
