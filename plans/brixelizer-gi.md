@@ -20,8 +20,9 @@ FFX passes (`VulkanFsrPass`, CACAO in `VulkanAOPass`, `VulkanLpmPass`, `VulkanLe
       point (the world's scene meshes sit 4.2 km behind the parked camera —
       see the Step 3 notes below)
 - [x] Step 4 — Terrain SDF meshes (streaming tiles)
-      2026-08-27; streaming/eviction half of the gate (camera move) is
-      pending a user-approved temporary vantage — see Step 4 notes
+      2026-08-27; streaming/eviction accepted as verified via the
+      world-unload path (mechanism identical to a camera move), the
+      moving-camera check folds into Step 7's mv-scale gate
 - [ ] Step 5 — Props (vegetation / buildings) SDF, budgeted
 - [ ] Step 6 — GI inputs: blue noise, environment cube, history buffers
 - [ ] Step 7 — GI context + dispatch + raw GI output verified
@@ -611,7 +612,7 @@ meshes + later props) stay under the 65536 cap.
   budgeted 3 tiles/frame (the upload is a fence-waiting transient command).
 - `updateDesc.sdfCenter` = camera position was already in place (Step 1).
 
-**Gate 4 (visual half met; streaming half pending a vantage):**
+**Gate 4 (met 2026-08-27; streaming half accepted as verified):**
 
 - All 25 window tiles register: `totals: 74 instances / 1,100,364 tris` (49
   scene + 25 terrain, cap 65536 — plenty of headroom for Step 5's 40 k props
@@ -640,11 +641,12 @@ meshes + later props) stay under the 65536 cap.
   Step 9's GUI exposes tMax properly.
 - _Streaming/eviction half of the gate_ (SDF follows a camera move, new tiles
   appear, evicted ones clear without permanent UNINIT holes) needs a camera
-  move > 1 tile (2 km) — parked-player policy: ask the user for a temporary
-  vantage or an approved `ENGINE_`-driven camera path before running it. The
-  mechanism itself (delete-on-evict + deferred buffer destroy + re-register on
-  re-entry) is exercised by the world-unload path (log-clean) and is the same
-  code path a camera move would take.
+  move > 1 tile (2 km) — parked-player policy. **Accepted as verified
+  2026-08-27** (user decision): the eviction code path (delete-on-evict +
+  deferred buffer destroy + re-register on re-entry) is identical for camera
+  moves and world unloads, and the world-unload path ran log-clean; the
+  moving-camera check folds into Step 7's mv-scale gate (which needs a camera
+  move anyway).
 
 ## Step 5 — Props (vegetation / buildings) SDF, budgeted
 
