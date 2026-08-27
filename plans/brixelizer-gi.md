@@ -15,7 +15,10 @@ FFX passes (`VulkanFsrPass`, CACAO in `VulkanAOPass`, `VulkanLpmPass`, `VulkanLe
 - [x] Step 0 — SDK side verified (library + sample run as reference)
 - [x] Step 1 — Engine plumbing: FFX device, voxelizer context + resources (no instances)
 - [x] Step 2 — Voxelizer smoke test: one instance + SDF debug visualization
-- [ ] Step 3 — Real scene meshes registered (static world)
+- [x] Step 3 — Real scene meshes registered (static world) — mechanism verified
+      2026-08-27; the parked-player _visual_ SDF gate is pending a vantage
+      point (the world's scene meshes sit 4.2 km behind the parked camera —
+      see the Step 3 notes below)
 - [ ] Step 4 — Terrain SDF meshes (streaming tiles)
 - [ ] Step 5 — Props (vegetation / buildings) SDF, budgeted
 - [ ] Step 6 — GI inputs: blue noise, environment cube, history buffers
@@ -482,6 +485,75 @@ is **not skinned** (`Skin` component / `DRAW_FLAG_SKINNED` — skip in v1):
 load time (target: < 200 ms, record actual); `trianglesAllocated` within the
 `maxReferences` budget (the fork's per-voxel clamp patches are in place, but
 watch for "failed voxel" log spam); validation layer clean.
+
+**Done (2026-08-27, mechanism verified).** All sub-steps landed:
+
+- 3.1 `VulkanScene.vertexBuffer` / `indexBuffer` now created with
+  `VK_BUFFER_USAGE_STORAGE_BUFFER_BIT` (pitfall #13, one line in
+  `vulkanSceneCreate`); `VulkanScene.cpuDraws` (CPU copy of the draw list:
+  `GpuDrawInstance` + primitive `vertexCount`) built in `vulkanSceneCreate`
+  so the pass does not duplicate the packing logic.
+- 3.2 `VulkanBrixelizerPass`: `registerScene()` registers a scene's VBO/IBO
+  once and creates one static instance per non-skinned draw (skinned
+  characters skip — Step 10). Instance data: world AABB from the
+  world-transformed `boundingSphere`, row-major 3×4 transform built from the
+  entity hierarchy (each node's local `Transform`, mirroring
+  `transformSetWorld` without the 2-second active-window dependency — the
+  scene's `WorldTransform` components are only computed on the next update
+  after load), u32 index offset `firstIndex*4`, vertex offset
+  `vertexOffset*56`.
+- Hooks: `rendererSceneCreate` → `vulkanBrixelizerPassSceneCreate` — that
+  hook runs on the scene-load **worker thread** (`sceneLoadOffThread`), so
+  the FFX registration is deferred to a main-thread future task; scenes
+  created before the context exists are picked up by `ensureContext`
+  re-registering all `ecs.scenes`. `rendererSceneDestroy` →
+  `vulkanBrixelizerPassSceneDestroy` (main thread): `ffxBrixelizerDeleteInstances`
+  - `ffxBrixelizerUnregisterBuffers` before the VulkanScene goes away.
+- Step 2's test cube + its one-shot diagnostics (brick-map/scratch dumps,
+  settle-wait) are removed — replaced by the real meshes.
+
+**Verified:** all 5 world scenes register (49 instances / 895,564 tris —
+`deciduous.dat` 24/849,815, `deciduous_far.dat` 24/45,737, `debugMarker`
+1/12; `animations.dat` + `eve.dat` are skinned-only → 0 instances, 2 buffers
+still registered); real bake lands (`scene instances baked: cascade=6
+staticTris=8600160 staticRefs=2282 staticBricks=19`, free-brick pool
+262144→262102); first-bake cost (256-update window, full cascade round):
+heaviest single update **2.70 ms**, window total 161 ms — far under the
+200 ms target (the per-update `maxBricksPerBake` spreads the 895 k-tri
+voxelization over several far-cascade turns); unregistration on world unload
+logs clean; validation layer clean during gameplay (only the known Step-1
+shutdown leak at `vkDestroyDevice`).
+
+**Deviations (recorded 2026-08-27):**
+
+- _All scenes, not the frustum-visible set._ Registration iterates
+  `ecs.scenes` (and the create hook registers per scene), not
+  `vulkanGetVisibleScenes()`: the SDF is a world-space representation —
+  keying it on the per-frame frustum set would make SDF contents depend on
+  camera orientation (GI traces in all directions, not just the frustum).
+- _`maxCascade` = all cascades (Step 3 baseline), not a size heuristic._ The
+  azgaar world's scene meshes (24 deciduous trees + far LODs, authored near
+  the world origin) sit ~4.2 km from the parked player — outside every
+  cascade's reach below index 6 (cascade spans 128 m…4096 m). A size-based
+  `maxCascade` (trees → 3–5) puts **zero** scene geometry into the SDF
+  (no cascade 0–5 region reaches the trees, and 6–7 are filtered out) —
+  `numStaticJobs=0` everywhere, empty SDF. The heuristic lands in Step 9
+  with the bake-cost tuning; until then every instance is submitted to every
+  cascade (far cascades carry sub-voxel smears — harmless, budgeted by the
+  fork's clamp patches).
+- _The parked-player SDF dump is black by world content, not a bug._ At the
+  parked player (Phica, 4165, −353, camera facing west) there is no scene
+  geometry within the visible frustum's cascade range: the deciduous trees
+  are ~4.2 km **behind** the camera, and the surrounding geometry (terrain
+  underfoot, props, buildings) comes from Steps 4–5, not from scenes. The
+  dump shows real SDF once the camera/eye looks at the trees — a vantage
+  point decision (parked-player move or dump-only eye override) is pending
+  the user; stats (above) prove the bake in the meantime.
+- _First-bake cost is tracked over 256 updates_ (one full cascade round —
+  cascade 7 updates once per 256 updates, the lowest-set-bit round-robin in
+  `ffxBrixelizerRawGetCascadeToUpdate`), not 8: the far cascades' first
+  turns are where the whole scene voxelize happens. Log:
+  `first-bake cost (256 updates, full cascade round): total=… ms heaviest=… ms`.
 
 ## Step 4 — Terrain SDF meshes (streaming tiles)
 
