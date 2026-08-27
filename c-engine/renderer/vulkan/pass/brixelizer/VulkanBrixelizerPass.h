@@ -47,6 +47,14 @@ struct VulkanImage* vulkanBrixelizerPassGetEnvFace(u32 face);
 struct VulkanImage* vulkanBrixelizerPassGetHistoryDepth(void);
 struct VulkanImage* vulkanBrixelizerPassGetHistoryNormal(void);
 struct VulkanImage* vulkanBrixelizerPassGetHistoryLit(void);
+
+/* Step 7: GI context outputs (R16F RGBA, render res). All null until the
+ * first update after swapchain creation (created with the GI context). */
+struct VulkanImage* vulkanBrixelizerPassGetGiDiffuse(void);
+struct VulkanImage* vulkanBrixelizerPassGetGiSpecular(void);
+/* GI cache debug visualization (radiance / irradiance — ENGINE_BRIXGI_DEBUG),
+ * render-res R16F. Null until the GI context exists. */
+struct VulkanImage* vulkanBrixelizerPassGetGiDebug(void);
 /* Scene hooks (called from rendererSceneCreate/Destroy in Renderer.cpp).
  * Scene create runs on the scene-load worker thread, so the FFX registration
  * is deferred to a main-thread task; a scene created before the context

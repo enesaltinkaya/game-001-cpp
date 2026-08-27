@@ -26,6 +26,8 @@
 #pragma GCC diagnostic ignored "-Wmissing-field-initializers"
 #pragma GCC diagnostic ignored "-Wunused-function" /* ffx_core_cpu.h static inlines */
 #include <FidelityFX/host/ffx_brixelizer.h>
+#include <FidelityFX/host/ffx_brixelizer_raw.h>
+#include <FidelityFX/host/ffx_brixelizergi.h>
 #include <FidelityFX/host/backends/vk/ffx_vk.h>
 #pragma GCC diagnostic pop
 #include <stdlib.h>
@@ -58,6 +60,13 @@ namespace engine {
     static void destroyContext(void);
     static char createResources(void);
     static char ensureContext(void);
+    /* Step 7: GI context + outputs (recreated on resolution change). */
+    static void giDestroyContext(void);
+    static void giCreateOutputs(u32 renderW, u32 renderH);
+    static char giEnsureContext(u32 renderW, u32 renderH);
+    static void giDispatch(VulkanCommand* cmd, Camera* camera);
+    static void giDebugDispatch(VulkanCommand* cmd, Camera* camera);
+    static FfxBrixelizerGIDebugMode getGIDebugMode(void);
     static void entityWorldTransform(Scene* scene, u32 entityId, versor outRot, vec3 outPos, float* outScale);
     static char registerScene(Scene* scene);
     static void brixelizerSceneCreateTask(void* pScene);
@@ -245,6 +254,54 @@ namespace engine {
     static void giHistoryCopy(void);
     static void blueNoiseGenerate(u8* out, u32 width);
 
+    /* ── Step 7: GI context + outputs (plans/brixelizer-gi.md) ──────
+     * - giContext: ffxBrixelizerGIContext (DEPTH_INVERTED, 50% internal,
+     *   displaySize = render res). Holds a raw pointer to the voxelizer
+     *   context, so it is destroyed before it (destroyContext ordering).
+     *   displaySize is fixed at creation → recreated on resolution change
+     *   (giEnsureContext, FSR-pass pattern).
+     * - giDiffuse / giSpecular: outputDiffuseGI / outputSpecularGI (R16F RGBA
+     *   render-res) — written by the GI context's final upsample pass as UAVs.
+     * - giDebug: BrixelGIDebug (R16F render-res) — radiance / irradiance cache
+     *   debug visualization (ENGINE_BRIXGI_DEBUG=radiance|irradiance). Runs as
+     *   a ONE-SHOT on a single frame (ENGINE_BRIXGI_DEBUG_FRAME, default 120)
+     *   rather than every frame — a per-frame second FFX dispatch would halve
+     *   the backend's dynamic-view lifetime. The image persists afterwards so
+     *   a later dump reads that frame's cache.
+     * - giPrevView / giPrevProjection: the engine only keeps the prev view*proj
+     *   product, so the GI's prevView / prevProjection are the pass's own
+     *   saved copies of the previous frame's jittered matrices. */
+    static FfxBrixelizerGIContext giContext;
+    static char        giContextReady;
+    static char        giContextLogged;
+    static VulkanImage giDiffuse;
+    static VulkanImage giSpecular;
+    static VulkanImage giDebug;
+    static VulkanProfile giProfile;
+    static char        giProfileReady;
+    static mat4        giPrevView;
+    static mat4        giPrevProjection;
+    static char        giHavePrev;
+    /* OFF by default: the GI cache debug visualization is a SEPARATE FFX
+     * dispatch (its own fpExecuteGpuJobs), and the FFX VK backend advances its
+     * per-effect-context frame index — destroying that frame's dynamic image
+     * views — on EVERY ExecuteGpuJobs. Two GI dispatches per frame would halve
+     * the view lifetime to ~2 engine frames and destroy views still in flight
+     * (the voxelizer's single per-frame dispatch does not hit this). Enable
+     * explicitly with ENGINE_BRIXGI_DEBUG=radiance|irradiance. */
+    static char        giDebugEnabled = 0;
+    static FfxBrixelizerGIDebugMode giDebugMode;
+    static char        giDebugModeSet;
+    /* One-shot: the cache debug visualization runs on a SINGLE frame
+     * (giDebugFrame, counted from GI-context creation) rather than every
+     * frame — a per-frame second dispatch would keep the FFX frame index at
+     * 2x the engine frame rate, halving the dynamic-view lifetime. The
+     * written giDebug image persists (it is not cleared per frame), so a
+     * later dump reads the one-shot frame's cache. */
+    static u32 giFrameCount = 0;
+    static u32 giDebugFrame = 120;
+    static char giDebugDone = 0;
+
     /* Step 3: registered scene geometry. One entry per scene (its VBO/IBO
      * registered once, one static instance per non-skinned draw). The FFX
      * instance/buffer tables die with the context, so the list is cleared on
@@ -309,6 +366,8 @@ namespace engine {
         if (!envCubePipeReady) {
             utils::warn("vulkanBrixelizerPass: env-cube bake pipeline unavailable, environment cube stays empty");
         }
+        giProfile      = vulkanCreateProfile("brixelizer_gi");
+        giProfileReady = 1;
     }
 
     void VulkanBrixelizerPass::preUpdate() {
@@ -316,6 +375,9 @@ namespace engine {
             /* force: the stats GUI is usually closed, but the brixelizer cost is
              * tracked in the log until Step 9 moves tuning to the GUI. */
             vulkanResetProfile(vulkan.currentCmd, &profile, 1);
+        }
+        if (giProfileReady) {
+            vulkanResetProfile(vulkan.currentCmd, &giProfile, 1);
         }
         /* Deferred GPU buffer destruction (3 frames past the GPU queue depth,
          * like the heightmap pass's deferred descriptors). */
@@ -449,6 +511,20 @@ namespace engine {
             vulkanDestroyImage(&historyLit, NULL);
             historyLit = VulkanImage{};
         }
+        /* Step 7: GI outputs (destroyed with the voxelizer resources; the GI
+         * context is destroyed first in destroyContext). */
+        if (giDiffuse.img) {
+            vulkanDestroyImage(&giDiffuse, NULL);
+            giDiffuse = VulkanImage{};
+        }
+        if (giSpecular.img) {
+            vulkanDestroyImage(&giSpecular, NULL);
+            giSpecular = VulkanImage{};
+        }
+        if (giDebug.img) {
+            vulkanDestroyImage(&giDebug, NULL);
+            giDebug = VulkanImage{};
+        }
         if (brickAABBs.buf) {
             vulkanDestroyBuffer(&brickAABBs, NULL);
             brickAABBs = VulkanBuffer{};
@@ -470,10 +546,28 @@ namespace engine {
     }
 
     static void destroyContext(void) {
+        /* The GI context holds a raw pointer into the voxelizer context, so
+         * destroy it first (the swapchain-recreate / world-unload paths drain
+         * the GPU before this runs). */
+        giDestroyContext();
         if (contextReady) {
             ffxBrixelizerContextDestroy(&brixelizerContext);
             brixelizerContext = FfxBrixelizerContext{};
             contextReady      = 0;
+        }
+    }
+
+    static void giDestroyContext(void) {
+        if (giContextReady) {
+            FfxErrorCode result = ffxBrixelizerGIContextDestroy(&giContext);
+            if (result != FFX_OK) {
+                utils::error("vulkanBrixelizerPass: ffxBrixelizerGIContextDestroy failed: %d", result);
+            }
+            giContext      = FfxBrixelizerGIContext{};
+            giContextReady = 0;
+            /* The temporal prev matrices are only valid across frames of one
+             * GI context — drop them so the next context starts clean. */
+            giHavePrev     = 0;
         }
     }
 
@@ -2008,6 +2102,13 @@ namespace engine {
             return;
         }
 
+        /* Step 7.1: ensure the GI context + outputs exist. displaySize is fixed
+         * at creation, so a resolution change rebuilds them (the swapchain
+         * hook has already torn the old ones down). */
+        u32 giW = window.renderWidth > 0 ? (u32)window.renderWidth : (u32)window.width;
+        u32 giH = window.renderHeight > 0 ? (u32)window.renderHeight : (u32)window.height;
+        giEnsureContext(giW, giH);
+
         /* Step 6.2: re-bake the environment cube after the (re)created
          * resources — one-shot compute in a fence-waiting transient command.
          * The directional light is static for v1, so the swapchain hook is
@@ -2030,6 +2131,10 @@ namespace engine {
         /* Step 2.2: read the debug-visualization mode once (ENGINE_BRIX_SDF_DEBUG;
          * "off" disables the extra dispatch). */
         getSdfDebugMode();
+        /* Step 7.3: parse the GI cache debug mode once (ENGINE_BRIXGI_DEBUG;
+         * off by default — a second per-frame FFX dispatch would halve the FFX
+         * view lifetime). giDebugDispatch checks giDebugEnabled. */
+        getGIDebugMode();
 
         /* The SDF atlas (and the debug image, when active) are the images this
          * update touches; the FFX dispatch does not manage engine layouts
@@ -2143,6 +2248,16 @@ namespace engine {
         if (sdfDebugEnabled && sdfDebug.img) {
             vulkanTransition(cmd, &sdfDebug, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
         }
+
+        /* Step 7.2: GI dispatch — after the voxelizer wrote this frame's SDF
+         * (the GI ray-march reads the atlas the update just produced). */
+        giDispatch(cmd, camera);
+        /* Step 7.3: GI cache debug visualization (radiance / irradiance).
+         * ONE-SHOT on giFrameCount == giDebugFrame (a single extra FFX dispatch,
+         * safe — see the giDebugFrame comment); reads the cache the dispatch
+         * above just updated. */
+        giFrameCount++;
+        giDebugDispatch(cmd, camera);
 
         /* outStats is a lagged GPU readback (filled a few updates later).
          * Track the free-brick pool across updates (lagged readback). */
@@ -2424,8 +2539,392 @@ namespace engine {
         vulkanCopyColorImage(cmd, lit, &historyLit, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     }
 
+    /* ── Step 7: GI context + dispatch (plans/brixelizer-gi.md) ────────────── */
+
+    /* Debug cache visualization mode. OFF by default (see the giDebugEnabled
+     * comment — a second per-frame FFX dispatch halves the view lifetime).
+     * ENGINE_BRIXGI_DEBUG=radiance|irradiance enables it; "off" disables. When
+     * enabled it runs as a ONE-SHOT on frame giDebugFrame (ENGINE_BRIXGI_DEBUG_FRAME,
+     * default 120, counted from GI-context creation) — a single extra FFX
+     * dispatch, after which the main dispatch resumes 1-per-frame (safe). */
+    static FfxBrixelizerGIDebugMode getGIDebugMode(void) {
+        if (!giDebugModeSet) {
+            giDebugModeSet = 1;
+            const char* env = getenv("ENGINE_BRIXGI_DEBUG");
+            if (env && !strcmp(env, "irradiance")) {
+                giDebugMode    = FFX_BRIXELIZER_GI_DEBUG_MODE_IRRADIANCE_CACHE;
+                giDebugEnabled = 1;
+            } else if (env && !strcmp(env, "radiance")) {
+                giDebugMode    = FFX_BRIXELIZER_GI_DEBUG_MODE_RADIANCE_CACHE;
+                giDebugEnabled = 1;
+            } else if (env && !strcmp(env, "off")) {
+                giDebugEnabled = 0;
+            }
+            const char* frameEnv = getenv("ENGINE_BRIXGI_DEBUG_FRAME");
+            if (frameEnv && *frameEnv) giDebugFrame = (u32)atoi(frameEnv);
+            /* No env (or unrecognized) → stays disabled (giDebugEnabled = 0). */
+        }
+        return giDebugMode;
+    }
+
+    /* (Re)creates the three GI output images (outputDiffuseGI / outputSpecularGI
+     * / the debug cache target) at render resolution. The GI context's final
+     * upsample pass writes the two GI outputs as UAVs every frame; the debug
+     * target is written by ffxBrixelizerGIContextDebugVisualization. All three
+     * need STORAGE (UAV write) + SAMPLED (Step 8 composite / dumps) +
+     * TRANSFER_SRC (vulkanSaveImage dumps). Cleared to 0 so a pre-GI dump is
+     * predictable; the wait guarantees the clear lands before the first
+     * dispatch on the frame command buffer. */
+    static void giCreateOutputs(u32 renderW, u32 renderH) {
+        if (giDiffuse.img) {
+            vulkanDestroyImage(&giDiffuse, NULL);
+            giDiffuse = VulkanImage{};
+        }
+        if (giSpecular.img) {
+            vulkanDestroyImage(&giSpecular, NULL);
+            giSpecular = VulkanImage{};
+        }
+        if (giDebug.img) {
+            vulkanDestroyImage(&giDebug, NULL);
+            giDebug = VulkanImage{};
+        }
+        static const VkImageUsageFlags GI_OUT_USAGE =
+            VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+            VK_IMAGE_USAGE_TRANSFER_DST_BIT; /* TRANSFER_DST: vulkanClearColorImage */
+        giDiffuse = vulkanCreateImage(.name   = "BrixelGiDiffuse",
+                                      .format = VK_FORMAT_R16G16B16A16_SFLOAT,
+                                      .usage  = GI_OUT_USAGE,
+                                      .width  = (int)renderW,
+                                      .height = (int)renderH);
+        giSpecular = vulkanCreateImage(.name   = "BrixelGiSpecular",
+                                       .format = VK_FORMAT_R16G16B16A16_SFLOAT,
+                                       .usage  = GI_OUT_USAGE,
+                                       .width  = (int)renderW,
+                                       .height = (int)renderH);
+        giDebug = vulkanCreateImage(.name   = "BrixelGiDebug",
+                                    .format = VK_FORMAT_R16G16B16A16_SFLOAT,
+                                    .usage  = GI_OUT_USAGE,
+                                    .width  = (int)renderW,
+                                    .height = (int)renderH);
+        if (!giDiffuse.img || !giSpecular.img || !giDebug.img) {
+            utils::error("vulkanBrixelizerPass: GI output resource creation failed");
+            return;
+        }
+        VulkanCommand* cmd = vulkanTransientBegin();
+        VkClearColorValue black = {};
+        vulkanTransition(cmd, &giDiffuse, VK_IMAGE_LAYOUT_GENERAL, 0, 1);
+        vulkanClearColorImage(cmd, &giDiffuse, black);
+        vulkanTransition(cmd, &giDiffuse, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
+        vulkanTransition(cmd, &giSpecular, VK_IMAGE_LAYOUT_GENERAL, 0, 1);
+        vulkanClearColorImage(cmd, &giSpecular, black);
+        vulkanTransition(cmd, &giSpecular, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
+        vulkanTransition(cmd, &giDebug, VK_IMAGE_LAYOUT_GENERAL, 0, 1);
+        vulkanClearColorImage(cmd, &giDebug, black);
+        vulkanTransition(cmd, &giDebug, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
+        vulkanTransientEnd(cmd, 1);
+    }
+
+    /* Creates (or, on a resolution change, recreates) the GI context + outputs.
+     * displaySize is fixed at creation, so a render-size mismatch destroys and
+     * rebuilds both (FSR-pass pattern). The GI context holds a raw pointer to
+     * the voxelizer context, so the voxelizer must exist first. */
+    static char giEnsureContext(u32 renderW, u32 renderH) {
+        if (!contextReady || renderW == 0 || renderH == 0) {
+            return 0;
+        }
+        if (giContextReady && giDiffuse.img && (u32)giDiffuse.extent.width == renderW &&
+            (u32)giDiffuse.extent.height == renderH) {
+            return 1;
+        }
+        giDestroyContext();
+        giCreateOutputs(renderW, renderH);
+        if (!giDiffuse.img) {
+            return 0;
+        }
+
+        FfxBrixelizerGIContextDescription desc = {};
+        /* The engine is reverse-Z (1 = near, 0 = far/background) — plan
+         * pitfall #3: the flag flips ffxIsBackground / BackgroundDepth / the
+         * closer-op in the GI shaders to the reverse-Z convention. */
+        desc.flags              = FFX_BRIXELIZER_GI_FLAG_DEPTH_INVERTED;
+        desc.internalResolution = FFX_BRIXELIZER_GI_INTERNAL_RESOLUTION_50_PERCENT;
+        desc.displaySize.width  = renderW;
+        desc.displaySize.height = renderH;
+        desc.backendInterface   = backendInterface; /* shared with the voxelizer */
+
+        FfxErrorCode result = ffxBrixelizerGIContextCreate(&giContext, &desc);
+        if (result != FFX_OK) {
+            if ((u32)result == FFX_ERROR_OUT_OF_MEMORY || (u32)result == FFX_ERROR_INSUFFICIENT_MEMORY) {
+                utils::terminate(
+                    "vulkanBrixelizerPass: not enough GPU memory to create the GI context. "
+                    "Free VRAM by closing other GPU applications and try again.");
+            }
+            utils::error("vulkanBrixelizerPass: ffxBrixelizerGIContextCreate failed: %d", result);
+            giContext = FfxBrixelizerGIContext{};
+            return 0;
+        }
+        giContextReady = 1;
+        giHavePrev     = 0; /* temporal history restarts with the context */
+        giFrameCount   = 0; /* one-shot debug-viz frame counter restarts too */
+        giDebugDone    = 0;
+        if (!giContextLogged) {
+            giContextLogged = 1;
+            utils::info("vulkanBrixelizerPass: created GI context (%ux%u display, 50%% internal, reverse-Z)",
+                        renderW,
+                        renderH);
+        }
+        return 1;
+    }
+
+    /* Per-frame GI dispatch (plan Step 7.2). Runs on the frame command buffer
+     * AFTER the voxelizer update (which wrote this frame's SDF). All wrapped
+     * images are staged by hand — the FFX backend does not manage engine
+     * layouts (plan pitfall #11): inputs → SHADER_READ_ONLY, the two GI
+     * outputs → GENERAL (UAV write), then back to SHADER_READ_ONLY for the
+     * Step-8 composite / dumps. */
+    static void giDispatch(VulkanCommand* cmd, Camera* camera) {
+        if (!giContextReady || !giDiffuse.img) {
+            return;
+        }
+        VulkanImage* depth    = vulkanFrameResourcesGetDepth();
+        VulkanImage* wnorm    = vulkanFrameResourcesGetWorldNormal();
+        VulkanImage* material = vulkanFrameResourcesGetMaterial();
+        VulkanImage* velocity = vulkanFrameResourcesGetVelocity();
+        if (!depth || !wnorm || !material || !velocity) {
+            return;
+        }
+        u32 renderW = (u32)depth->extent.width;
+        u32 renderH = (u32)depth->extent.height;
+        if (renderW != (u32)giDiffuse.extent.width || renderH != (u32)giDiffuse.extent.height) {
+            return; /* size change in flight — giEnsureContext rebuilds next frame */
+        }
+
+        vulkanTransition(cmd, depth, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
+        vulkanTransition(cmd, wnorm, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
+        vulkanTransition(cmd, material, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
+        vulkanTransition(cmd, velocity, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
+        vulkanTransition(cmd, &historyDepth, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
+        vulkanTransition(cmd, &historyNormal, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
+        vulkanTransition(cmd, &historyLit, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
+        vulkanTransition(cmd, &blueNoise, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
+        vulkanTransition(cmd, &envCube, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, envCube.layers);
+        vulkanTransition(cmd, &sdfAtlas, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
+        vulkanTransition(cmd, &giDiffuse, VK_IMAGE_LAYOUT_GENERAL, 0, 1);
+        vulkanTransition(cmd, &giSpecular, VK_IMAGE_LAYOUT_GENERAL, 0, 1);
+
+        FfxBrixelizerGIDispatchDescription desc = {};
+        /* view / projection are the JITTERED matrices (matching the depth
+         * buffer). The engine's cglm mat4 is COLUMN-major — memcpy verbatim
+         * (plan pitfall #1; the GI host inverts them with a column-major GLU
+         * formula and the GLSL UBO is column-major). Do NOT transpose. */
+        memcpy(desc.view, camera->cameraUbo.view, sizeof(desc.view));
+        memcpy(desc.projection, camera->cameraUbo.projection, sizeof(desc.projection));
+        /* prevView / prevProjection: the engine only keeps the prev view*proj
+         * product, so the pass holds its own previous-frame copies of the same
+         * jittered matrices. On the first frame they equal the current ones
+         * (no motion). */
+        if (giHavePrev) {
+            memcpy(desc.prevView, giPrevView, sizeof(desc.prevView));
+            memcpy(desc.prevProjection, giPrevProjection, sizeof(desc.prevProjection));
+        } else {
+            memcpy(desc.prevView, camera->cameraUbo.view, sizeof(desc.prevView));
+            memcpy(desc.prevProjection, camera->cameraUbo.projection, sizeof(desc.prevProjection));
+        }
+        memcpy(&giPrevView, &camera->cameraUbo.view, sizeof(mat4));
+        memcpy(&giPrevProjection, &camera->cameraUbo.projection, sizeof(mat4));
+        giHavePrev = 1;
+
+        desc.cameraPosition[0] = camera->cameraUbo.renderLocation[0];
+        desc.cameraPosition[1] = camera->cameraUbo.renderLocation[1];
+        desc.cameraPosition[2] = camera->cameraUbo.renderLocation[2];
+        /* Static-only cascade layout: the SDF trace loop is
+         * `for (c = start; c <= end; c++)` — INCLUSIVE, so [0, 7] covers all
+         * 8 static cascades (matches the sample's 8-level merged range). */
+        desc.startCascade = 0;
+        desc.endCascade   = BRIX_NUM_CASCADES - 1;
+        desc.rayPushoff           = 0.25f;
+        desc.sdfSolveEps          = 0.5f;
+        desc.specularRayPushoff   = 0.25f;
+        desc.specularSDFSolveEps  = 0.5f;
+        desc.tMin                 = 0.0f;
+        desc.tMax                 = 10000.0f;
+
+        desc.normalsUnpackMul      = 1.0f; /* worldNormal is world-space (pitfall #4) */
+        desc.normalsUnpackAdd      = 0.0f;
+        desc.isRoughnessPerceptual = 1;    /* material .r is perceptual (pitfall #6) */
+        desc.roughnessChannel      = 0;
+        desc.roughnessThreshold    = 0.9f;
+        desc.environmentMapIntensity = 0.1f;
+        /* Engine velocity is (current - previous) in pixels (y-flipped) →
+         * history_uv = uv + mv * scale needs scale = (-1/W, -1/H) (pitfall #5).
+         * ENGINE_BRIX_GI_MV_SCALE multiplies the scale (default 1.0) so a wrong
+         * scale can be forced to test the temporal reprojection (a wrong scale
+         * breaks the temporal filter and shows up as GI noise / smearing when
+         * the camera moves — see the Step 7 mv-scale gate). */
+        static float   giMvScaleOverride = 1.0f;
+        static char    giMvScaleInit     = 0;
+        if (!giMvScaleInit) {
+            giMvScaleInit = 1;
+            const char* s = getenv("ENGINE_BRIX_GI_MV_SCALE");
+            if (s && *s) giMvScaleOverride = (float)atof(s);
+        }
+        desc.motionVectorScale.x = (-1.0f / (float)renderW) * giMvScaleOverride;
+        desc.motionVectorScale.y = (-1.0f / (float)renderH) * giMvScaleOverride;
+
+        /* Current-frame G-buffer inputs (sampled). */
+        desc.depth         = vulkanFfxWrapImageResource(depth, FFX_RESOURCE_USAGE_READ_ONLY, FFX_RESOURCE_STATE_COMPUTE_READ, L"gi_depth");
+        desc.normal        = vulkanFfxWrapImageResource(wnorm, FFX_RESOURCE_USAGE_READ_ONLY, FFX_RESOURCE_STATE_COMPUTE_READ, L"gi_normal");
+        desc.roughness     = vulkanFfxWrapImageResource(material, FFX_RESOURCE_USAGE_READ_ONLY, FFX_RESOURCE_STATE_COMPUTE_READ, L"gi_roughness");
+        desc.motionVectors = vulkanFfxWrapImageResource(velocity, FFX_RESOURCE_USAGE_READ_ONLY, FFX_RESOURCE_STATE_COMPUTE_READ, L"gi_motion");
+        /* Previous-frame (history) inputs — Step 6.3 copies at end of frame. */
+        desc.historyDepth  = vulkanFfxWrapImageResource(&historyDepth, FFX_RESOURCE_USAGE_READ_ONLY, FFX_RESOURCE_STATE_COMPUTE_READ, L"gi_hist_depth");
+        desc.historyNormal = vulkanFfxWrapImageResource(&historyNormal, FFX_RESOURCE_USAGE_READ_ONLY, FFX_RESOURCE_STATE_COMPUTE_READ, L"gi_hist_normal");
+        desc.prevLitOutput = vulkanFfxWrapImageResource(&historyLit, FFX_RESOURCE_USAGE_READ_ONLY, FFX_RESOURCE_STATE_COMPUTE_READ, L"gi_prev_lit");
+        /* Static inputs. */
+        desc.noiseTexture   = vulkanFfxWrapImageResource(&blueNoise, FFX_RESOURCE_USAGE_READ_ONLY, FFX_RESOURCE_STATE_COMPUTE_READ, L"gi_noise");
+        desc.environmentMap = vulkanFfxWrapImageResource(&envCube, FFX_RESOURCE_USAGE_READ_ONLY, FFX_RESOURCE_STATE_COMPUTE_READ, L"gi_env");
+
+        /* SDF resources — the voxelizer's, passed COMPUTE_READ (the GI
+         * ray-march samples the atlas + walks the cascade trees). */
+        desc.sdfAtlas    = vulkanFfxWrapImageResource(&sdfAtlas, FFX_RESOURCE_USAGE_READ_ONLY, FFX_RESOURCE_STATE_COMPUTE_READ, L"gi_sdf_atlas");
+        desc.bricksAABBs = vulkanFfxWrapBufferResource(&brickAABBs, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, FFX_RESOURCE_STATE_COMPUTE_READ, L"gi_brick_aabbs");
+        wchar_t cascadeName[64];
+        for (u32 i = 0; i < FFX_BRIXELIZER_MAX_CASCADES; i++) {
+            swprintf(cascadeName, 64, L"gi_cascade%uAabbTree", i);
+            desc.cascadeAABBTrees[i] =
+                vulkanFfxWrapBufferResource(&cascadeAABBTrees[i], VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, FFX_RESOURCE_STATE_COMPUTE_READ, cascadeName);
+            swprintf(cascadeName, 64, L"gi_cascade%uBrickMap", i);
+            desc.cascadeBrickMaps[i] =
+                vulkanFfxWrapBufferResource(&cascadeBrickMaps[i], VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, FFX_RESOURCE_STATE_COMPUTE_READ, cascadeName);
+        }
+
+        /* Outputs — written by the GI context's final upsample pass (UAV). */
+        desc.outputDiffuseGI  = vulkanFfxWrapImageResource(&giDiffuse, FFX_RESOURCE_USAGE_UAV, FFX_RESOURCE_STATE_UNORDERED_ACCESS, L"gi_out_diffuse");
+        desc.outputSpecularGI = vulkanFfxWrapImageResource(&giSpecular, FFX_RESOURCE_USAGE_UAV, FFX_RESOURCE_STATE_UNORDERED_ACCESS, L"gi_out_specular");
+
+        /* The GI context traces the voxelizer's SDF — pass its raw context
+         * (stable for the lifetime of the voxelizer context). */
+        FfxErrorCode rawResult = ffxBrixelizerGetRawContext(&brixelizerContext, &desc.brixelizerContext);
+        if (rawResult != FFX_OK) {
+            utils::error("vulkanBrixelizerPass: ffxBrixelizerGetRawContext failed: %d", rawResult);
+            vulkanTransition(cmd, &giDiffuse, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
+            vulkanTransition(cmd, &giSpecular, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
+            return;
+        }
+
+        if (giProfileReady) {
+            vulkanBeginProfile(cmd, &giProfile, 1);
+        }
+        FfxErrorCode result = ffxBrixelizerGIContextDispatch(&giContext, &desc, ffxGetCommandListVK(cmd->cmd));
+        if (giProfileReady) {
+            vulkanEndProfile(cmd, &giProfile, 1);
+        }
+        if (result != FFX_OK) {
+            utils::error("vulkanBrixelizerPass: ffxBrixelizerGIContextDispatch failed: %d", result);
+        }
+
+        /* Leave the outputs shader-readable (Step 8 composites them; dumps
+         * sample them). The SDF atlas stays SHADER_READ_ONLY from the
+         * voxelizer transition above. */
+        vulkanTransition(cmd, &giDiffuse, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
+        vulkanTransition(cmd, &giSpecular, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
+
+        if (frameIndex % 120 == 0 && giProfileReady) {
+            utils::info("vulkanBrixelizerPass: GI dispatch gpu=%.3f ms (19 passes, 50%% internal)",
+                        giProfile.elapsed / MILLION);
+        }
+    }
+
+    /* Step 7.3: GI cache debug visualization — ray-march / sample the internal
+     * radiance (debug_type 0) or irradiance (debug_type 1) cache into giDebug
+     * at render resolution. Runs after the main dispatch (it reads the cache
+     * the dispatch just updated). */
+    static void giDebugDispatch(VulkanCommand* cmd, Camera* camera) {
+        if (!giContextReady || !giDebug.img || !giDebugEnabled) {
+            return;
+        }
+        /* ONE-SHOT: run the extra FFX dispatch on exactly one frame. A per-frame
+         * second dispatch would keep the FFX per-effect-context frame index at
+         * 2x the engine frame rate, halving the dynamic-view lifetime below the
+         * in-flight window and tripping a fatal view-in-use validation error.
+         * A single extra dispatch advances the index once; the main dispatch
+         * resumes 1-per-frame and the one-shot frame's views are destroyed 4
+         * FFX frames (2 engine frames) later — well after its command buffer
+         * has completed. The written giDebug image persists for later dumps. */
+        if (giDebugDone || giFrameCount != giDebugFrame) {
+            return;
+        }
+        VulkanImage* depth = vulkanFrameResourcesGetDepth();
+        VulkanImage* wnorm = vulkanFrameResourcesGetWorldNormal();
+        if (!depth || !wnorm) {
+            return;
+        }
+        if ((u32)depth->extent.width != (u32)giDebug.extent.width ||
+            (u32)depth->extent.height != (u32)giDebug.extent.height) {
+            return;
+        }
+        vulkanTransition(cmd, depth, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
+        vulkanTransition(cmd, wnorm, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
+        vulkanTransition(cmd, &sdfAtlas, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
+        vulkanTransition(cmd, &giDebug, VK_IMAGE_LAYOUT_GENERAL, 0, 1);
+
+        FfxBrixelizerGIDebugDescription desc = {};
+        memcpy(desc.view, camera->cameraUbo.view, sizeof(desc.view));
+        memcpy(desc.projection, camera->cameraUbo.projection, sizeof(desc.projection));
+        desc.startCascade = 0;
+        desc.endCascade   = BRIX_NUM_CASCADES - 1;
+        desc.outputSize[0] = (u32)giDebug.extent.width;
+        desc.outputSize[1] = (u32)giDebug.extent.height;
+        desc.debugMode         = getGIDebugMode();
+        desc.normalsUnpackMul  = 1.0f;
+        desc.normalsUnpackAdd  = 0.0f;
+        desc.depth             = vulkanFfxWrapImageResource(depth, FFX_RESOURCE_USAGE_READ_ONLY, FFX_RESOURCE_STATE_COMPUTE_READ, L"gi_dbg_depth");
+        desc.normal            = vulkanFfxWrapImageResource(wnorm, FFX_RESOURCE_USAGE_READ_ONLY, FFX_RESOURCE_STATE_COMPUTE_READ, L"gi_dbg_normal");
+        desc.sdfAtlas          = vulkanFfxWrapImageResource(&sdfAtlas, FFX_RESOURCE_USAGE_READ_ONLY, FFX_RESOURCE_STATE_COMPUTE_READ, L"gi_dbg_sdf_atlas");
+        desc.bricksAABBs       = vulkanFfxWrapBufferResource(&brickAABBs, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, FFX_RESOURCE_STATE_COMPUTE_READ, L"gi_dbg_brick_aabbs");
+        wchar_t cascadeName[64];
+        for (u32 i = 0; i < FFX_BRIXELIZER_MAX_CASCADES; i++) {
+            swprintf(cascadeName, 64, L"gi_dbg_cascade%uAabbTree", i);
+            desc.cascadeAABBTrees[i] =
+                vulkanFfxWrapBufferResource(&cascadeAABBTrees[i], VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, FFX_RESOURCE_STATE_COMPUTE_READ, cascadeName);
+            swprintf(cascadeName, 64, L"gi_dbg_cascade%uBrickMap", i);
+            desc.cascadeBrickMaps[i] =
+                vulkanFfxWrapBufferResource(&cascadeBrickMaps[i], VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, FFX_RESOURCE_STATE_COMPUTE_READ, cascadeName);
+        }
+        desc.outputDebug = vulkanFfxWrapImageResource(&giDebug, FFX_RESOURCE_USAGE_UAV, FFX_RESOURCE_STATE_UNORDERED_ACCESS, L"gi_dbg_out");
+
+        FfxErrorCode rawResult = ffxBrixelizerGetRawContext(&brixelizerContext, &desc.brixelizerContext);
+        if (rawResult != FFX_OK) {
+            utils::error("vulkanBrixelizerPass: ffxBrixelizerGetRawContext (gi debug) failed: %d", rawResult);
+            vulkanTransition(cmd, &giDebug, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
+            return;
+        }
+        FfxErrorCode result = ffxBrixelizerGIContextDebugVisualization(&giContext, &desc, ffxGetCommandListVK(cmd->cmd));
+        if (result != FFX_OK) {
+            utils::error("vulkanBrixelizerPass: ffxBrixelizerGIContextDebugVisualization failed: %d", result);
+        }
+        vulkanTransition(cmd, &giDebug, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
+        giDebugDone = 1;
+        utils::info(
+            "vulkanBrixelizerPass: GI cache debug viz (one-shot, %s cache) written at giFrame %u",
+            getGIDebugMode() == FFX_BRIXELIZER_GI_DEBUG_MODE_IRRADIANCE_CACHE ? "irradiance" : "radiance",
+            giFrameCount);
+    }
+
     struct VulkanImage* vulkanBrixelizerPassGetBlueNoise(void) {
         return blueNoise.img ? &blueNoise : NULL;
+    }
+
+    struct VulkanImage* vulkanBrixelizerPassGetGiDiffuse(void) {
+        return giDiffuse.img ? &giDiffuse : NULL;
+    }
+
+    struct VulkanImage* vulkanBrixelizerPassGetGiSpecular(void) {
+        return giSpecular.img ? &giSpecular : NULL;
+    }
+
+    struct VulkanImage* vulkanBrixelizerPassGetGiDebug(void) {
+        return giDebug.img ? &giDebug : NULL;
     }
 
     struct VulkanImage* vulkanBrixelizerPassGetHistoryDepth(void) {

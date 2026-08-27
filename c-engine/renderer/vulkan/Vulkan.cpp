@@ -197,6 +197,12 @@ static void vulkanDebugDumpFrameImages(const char* shotPath) {
             img = vulkanBrixelizerPassGetHistoryNormal();
         } else if (!strcmp(tok, "giHistLit")) {
             img = vulkanBrixelizerPassGetHistoryLit();
+        } else if (!strcmp(tok, "giDiffuse")) {
+            img = vulkanBrixelizerPassGetGiDiffuse();
+        } else if (!strcmp(tok, "giSpecular")) {
+            img = vulkanBrixelizerPassGetGiSpecular();
+        } else if (!strcmp(tok, "giCache")) {
+            img = vulkanBrixelizerPassGetGiDebug();
         } else if (strstr(tok, "Raw")) {
             /* <name>Raw: raw byte dump of the image named <name> (dispatches
              * through the regular token table by stripping the suffix). */
@@ -236,6 +242,12 @@ static void vulkanDebugDumpFrameImages(const char* shotPath) {
                 rawImg = vulkanBrixelizerPassGetHistoryNormal();
             } else if (!strcmp(sub, "giHistLit")) {
                 rawImg = vulkanBrixelizerPassGetHistoryLit();
+            } else if (!strcmp(sub, "giDiffuse")) {
+                rawImg = vulkanBrixelizerPassGetGiDiffuse();
+            } else if (!strcmp(sub, "giSpecular")) {
+                rawImg = vulkanBrixelizerPassGetGiSpecular();
+            } else if (!strcmp(sub, "giCache")) {
+                rawImg = vulkanBrixelizerPassGetGiDebug();
             }
             if (!rawImg) {
                 continue;

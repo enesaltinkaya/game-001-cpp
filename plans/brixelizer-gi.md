@@ -27,7 +27,10 @@ FFX passes (`VulkanFsrPass`, CACAO in `VulkanAOPass`, `VulkanLpmPass`, `VulkanLe
       fixed a transform-flattening bug (all props were flat sheets); see Status below
 - [x] Step 6 — GI inputs: blue noise, environment cube, history buffers
       2026-08-27; gate met, see Status below
-- [ ] Step 7 — GI context + dispatch + raw GI output verified
+- [x] Step 7 — GI context + dispatch + raw GI output verified
+      2026-08-27; Gate 7 met (giDiffuse / giSpecular / giCache dumps coherent,
+      19 GI passes ~1.7 ms @ 50% internal, validation clean, mv-scale verified
+      with a dolly A/B). See the Step 7 notes.
 - [ ] Step 8 — Albedo G-buffer + GI compositing into the lit image
 - [ ] Step 9 — Settings / debug GUI + performance tuning
 - [ ] Step 10 — Dynamic geometry + robustness (later)
@@ -852,6 +855,63 @@ around the call — pitfall #11):
   `ENGINE_`-driven camera path) shows no temporal smearing/ghosting proportional
   to motion — if it ghosts, `motionVectorScale` is wrong (sign or units);
 - validation layer clean; GPU cost of the 19 GI passes recorded (profile).
+
+### Step 7 — Status (2026-08-27)
+
+Implementation complete in `c-engine/renderer/vulkan/pass/brixelizer/VulkanBrixelizerPass.{h,cpp}`:
+
+- **7.1 GI context**: `ffxBrixelizerGIContextCreate` with `FFX_BRIXELIZER_GI_FLAG_DEPTH_INVERTED`,
+  `FFX_BRIXELIZER_GI_INTERNAL_RESOLUTION_50_PERCENT`, `displaySize = render res`, shared
+  `backendInterface`. Recreated on `swapchainCreated` / size change (`giEnsureContext`, FSR
+  pattern). `giDiffuse` / `giSpecular` / `giDebug` are new R16F RGBA render-res images
+  (STORAGE|SAMPLED|TRANSFER_SRC|TRANSFER_DST). Dump tokens `giDiffuse` / `giSpecular` /
+  `giCache` (+ `Raw` variants) added in `Vulkan.cpp`; getters `vulkanBrixelizerPassGetGi*`.
+- **7.2 Per-frame dispatch**: `giDispatch` runs after the voxelizer update (reads this
+  frame's SDF). Jittered `view`/`projection` + the pass's own saved previous-frame copies
+  (`giPrevView`/`giPrevProjection`, updated in `postUpdate`); `motionVectorScale =
+  (-1/renderW, -1/renderH)`; `normalsUnpackMul=(1,1,1)`; `isRoughnessPerceptual=true`,
+  `roughnessChannel=0`, `roughnessThreshold=0.9`; `environmentMapIntensity=0.1`; `tMax=10000`.
+  Inputs transitioned to SHADER_READ_ONLY, the two GI outputs to GENERAL, then back to
+  SHADER_READ_ONLY (pitfall #11). Profiled with `giProfile`, logged every 120 frames.
+- **7.3 Debug cache views**: `giDebugDispatch` (radiance / irradiance). **One-shot by
+  design**: the FFX VK backend advances its per-effect-context frame index — destroying that
+  frame's dynamic image views — on *every* `ExecuteGpuJobs`. A second per-frame GI dispatch
+  would keep that index at 2× the engine frame rate, halving the dynamic-view lifetime to ~2
+  engine frames and destroying views still in flight (`FRAMES_IN_FLIGHT=2` → in-flight window
+  1, but the destruction lands on the previous frame's in-flight command buffer) → fatal
+  `vkDestroyImageView` view-in-use validation error (the engine's validation callback
+  `utils::terminate`s on ERROR severity). The fix: the cache debug viz runs on a SINGLE frame
+  (`ENGINE_BRIXGI_DEBUG_FRAME`, default 120, counted from GI-context creation; off by default
+  via `ENGINE_BRIXGI_DEBUG=radiance|irradiance`). A single extra dispatch advances the FFX
+  index once; the main dispatch resumes 1-per-frame and the one-shot frame's views are
+  destroyed 4 FFX frames (2 engine frames) later — well after its command buffer completes.
+  The written `giDebug` image persists (not cleared per frame), so a later dump reads that
+  frame's cache. `giFrameCount`/`giDebugDone` reset on context (re)creation.
+
+**Gate 7 (static) — met 2026-08-27** (parked player at the red-roof hut, 2880×1627 render):
+- `giDiffuse` dump: bright cyan sky-ambient on open ground, dark occlusion band at the distant
+  horizon (terrain shadowing the sky), hut walls lit with ambient, warm sun-glow tint on the
+  chimney — matches `ref-diffusegi.jpg` character (different scene, same character).
+- `giSpecular` dump: reflection pattern (trees + sky reflected on the smooth hut wall, warm
+  sun-tint on the chimney), not uniform white — matches `ref-speculargi.jpg` character.
+- `giCache` dump (radiance, one-shot @ giFrame 120): coherent voxelized radiance field
+  (greenish ground, red roof, dark occluded hut side), no flat-color NaN fill / random garbage —
+  same voxelized character as `ref-debugvis.jpg` (hue differs by scene lighting).
+- GPU cost: ~1.7–1.9 ms for the 19 GI passes at 50% internal (profiled via `giProfile`).
+- Validation layer clean during gameplay (the only error is the known deferred Step-1
+  shutdown leak at `vkDestroyDevice`); the cache debug viz (one-shot) is also clean.
+- **mv-scale check**: PASSED (2026-08-27). Used the existing `ENGINE_TAA_GHOST_DOLLY`
+  (user-approved) to dolly the camera along its view direction — the velocity pre-pass
+  captures the motion, and both A/B pairs were captured at identical camera positions
+  (same dolly phase, so a valid controlled comparison; only the MV scale differs).
+  A/B: `ENGINE_BRIX_GI_MV_SCALE` (a new debug multiplier on the default
+  `(-1/W, -1/H)`, off by default) forced a wrong scale. With the correct scale the GI
+  stays smooth/stable; with a wrong scale (10×) the temporal filter is disrupted and the
+  GI shows extra high-frequency noise / smearing (Laplacian-variance sharpness: A≈16,
+  B≈25, ~56% higher on the wrong scale; a 1×-sign flip is too mild to separate on this
+  smooth ambient-lit scene — the GI is smooth ambient and the disocclusion mask rejects
+  mis-reprojected pixels, so the artifact manifests as noise rather than a hard trail).
+  Conclusion: `motionVectorScale = (-1/renderW, -1/renderH)` is correct (sign + units).
 
 ## Step 8 — Albedo G-buffer + GI compositing
 
