@@ -19,6 +19,22 @@ static double     elapsedGPU;
 
 VulkanCompositePass vulkanCompositePass;
 
+/* Step 8: Brixelizer GI composite strength. Live-tunable via env (read once,
+ * so A/B-tunable without a rebuild). Defaults lower than the FFX sample
+ * (1.5 / 3.0): this world is open-sky outdoors, so the raw GI radiance is
+ * bright and the sample factors wash out the sunlit scene. */
+static float giDiffuseFactor = 0.6f;
+static float giSpecularFactor = 1.0f;
+static char  giFactorsResolved = 0;
+static void resolveGiFactors(void) {
+    if (giFactorsResolved) return;
+    giFactorsResolved = 1;
+    const char* d = getenv("ENGINE_BRIXGI_DIFFUSE");
+    if (d && *d) giDiffuseFactor = strtof(d, NULL);
+    const char* s = getenv("ENGINE_BRIXGI_SPECULAR");
+    if (s && *s) giSpecularFactor = strtof(s, NULL);
+}
+
 VulkanCompositePass::VulkanCompositePass() : System("composite") {}
 
 typedef struct CompositePushConstants {
@@ -52,6 +68,7 @@ void VulkanCompositePass::preUpdate() {
 }
 
 void VulkanCompositePass::update() {
+    resolveGiFactors();
     elapsedCPU = utils::nanos();
 
     if (vulkan.skipFrame) {
@@ -137,8 +154,8 @@ void VulkanCompositePass::update() {
         .giSpecularIndex      = (giEnabled && giSpecular)
                                    ? (u32)giSpecular->sampledPoolIndex
                                    : 0xFFFFFFFFu,
-        .diffuseFactor        = 1.5f,
-        .specularFactor       = 3.0f,
+        .diffuseFactor        = giDiffuseFactor,
+        .specularFactor       = giSpecularFactor,
         .width                = composite->extent.width,
         .height               = composite->extent.height,
     };

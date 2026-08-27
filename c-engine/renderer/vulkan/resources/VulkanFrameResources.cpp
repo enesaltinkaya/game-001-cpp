@@ -176,10 +176,14 @@ static void recreate(void) {
      * terrain / props frags; water leaves 0).  Consumed by the Brixelizer GI
      * composite to weight the diffuse GI term (L += albedo * E_diffuse).  No
      * GI on water/roads — the 0 clear is the correct "no diffuse GI" there. */
+    /* TRANSFER_SRC so the ENGINE_DEBUG_DUMP_IMAGES albedo dump (and any
+     * vkCmdCopyImage readback) can transition it to TRANSFER_SRC_OPTIMAL —
+     * the spec requires the usage bit whenever that layout is used. */
     frameResources.albedo =
         vulkanCreateImage(.name   = "Albedo",
                           .format = VK_FORMAT_R8G8B8A8_UNORM,
-                          .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                          .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
+                                    VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
                           .width = window.renderWidth,
                           .height = window.renderHeight);
 
@@ -279,15 +283,6 @@ frameResources.depth =
                                     VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
                           .width  = window.renderWidth,
                           .height = window.renderHeight);
-
-    static char _dbgFrLogged = 0;
-    if (!_dbgFrLogged) {
-        _dbgFrLogged = 1;
-        utils::info("[brix8dbg] frameResources: albedo=%d depth=%d composite=%d",
-                    frameResources.albedo.img ? 1 : 0,
-                    frameResources.depth.img ? 1 : 0,
-                    frameResources.compositeColor.img ? 1 : 0);
-    }
 
     transitionInitialLayouts();
 }

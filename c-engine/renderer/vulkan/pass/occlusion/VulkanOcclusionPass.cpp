@@ -196,6 +196,10 @@ static void recreateDepthPipelines(void) {
         .colorFormat1       = VK_FORMAT_R16G16_SFLOAT,
         .colorFormat2       = VK_FORMAT_R16G16_SNORM,
         .colorFormat3       = VK_FORMAT_R16G16B16A16_SFLOAT,
+        // scene_depth.frag writes outAlbedo (loc 3); bind the shared albedo
+        // attachment (LOAD — the prepass value is kept where phase 2 skips a
+        // pixel; phase 2 rewrites the identical value where it does draw)
+        .colorFormat4       = VK_FORMAT_R8G8B8A8_UNORM,
         .depthFormat        = VK_FORMAT_D32_SFLOAT,
         .vertexAttributes   = sceneVertexAttrs,
         .vertexAttributeCount = 6,
@@ -209,6 +213,7 @@ static void recreateDepthPipelines(void) {
         .colorFormat1       = VK_FORMAT_R16G16_SFLOAT,
         .colorFormat2       = VK_FORMAT_R16G16_SNORM,
         .colorFormat3       = VK_FORMAT_R16G16B16A16_SFLOAT,
+        .colorFormat4       = VK_FORMAT_R8G8B8A8_UNORM,
         .depthFormat        = VK_FORMAT_D32_SFLOAT,
         .noCull             = 1,
         .vertexAttributes   = sceneVertexAttrs,
@@ -249,7 +254,8 @@ void VulkanOcclusionPass::update() {
     VulkanImage* velocityImg     = vulkanFrameResourcesGetVelocity();
     VulkanImage* viewNormalImg   = vulkanFrameResourcesGetViewNormal();
     VulkanImage* worldNormalImg  = vulkanFrameResourcesGetWorldNormal();
-    if (!depthImg || !earlyHiZImage.img || !velocityImg) return;
+    VulkanImage* albedoImg       = vulkanFrameResourcesGetAlbedo();
+    if (!depthImg || !earlyHiZImage.img || !velocityImg || !albedoImg) return;
 
     VulkanCommand* cmd = vulkan.currentCmd;
     u32 fi             = renderer.flightIndex;
@@ -508,11 +514,13 @@ void VulkanOcclusionPass::update() {
     }
 
     // ========== STEP C: Phase 2 depth rendering (no clear) ==========
+    vulkanTransition(cmd, albedoImg, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, 0, 1);
     vulkanBeginRender(.cmd    = cmd,
                       .pipe    = &phase2DepthPipe,
                       .color1  = velocityImg,
                       .color2  = viewNormalImg,
                       .color3  = worldNormalImg,
+                      .color4  = albedoImg,
                       .depth   = depthImg);
 
     vulkanViewport(cmd, 0, h, w, -((i32)h));

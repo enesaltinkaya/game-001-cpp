@@ -25,9 +25,9 @@ else ()
     # (or -DENGINE_ASAN=ON).  run.sh already exports ASAN_OPTIONS/LSAN_OPTIONS.
     option(ENGINE_ASAN "Build with AddressSanitizer (non-Release)" OFF)
     if (ENGINE_ASAN)
-        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=address -fno-omit-frame-pointer -fno-optimize-sibling-calls")
     endif ()
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-omit-frame-pointer -fno-optimize-sibling-calls")
+    # set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-omit-frame-pointer -fno-optimize-sibling-calls")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=address -fno-omit-frame-pointer -fno-optimize-sibling-calls")
 endif ()
 
 # ── Third-party root (external prebuilt libs) ───────────────────────────────

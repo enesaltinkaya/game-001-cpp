@@ -102,9 +102,53 @@ namespace game {
     // the fragment shader's 0.5 alpha test keeps; the card's bottom edge samples
     // that V instead of 1.0, trimming the empty band so the visible blades end
     // at the card's base (the ground).
+    // Lowest row the fragment shader's 0.5 alpha test keeps (alpha > 128); its
+    // V coordinate trims the empty band below the tuft out of the card's UVs.
+    // 1.0 = no trim.  Missing alpha / single-row images keep the full UVs.
+    //
+    // Runs on a PRIVATE decode of the PNG: getTextureByName uploads the pixels
+    // to the GPU and then frees the CPU buffer (imageDestory in
+    // vulkanLoadTexture), so t->image.data is never readable after it returns.
+    static float grassMeasureBottomV(const char* path) {
+        if (!utils::dataManagerFileExists(path)) return 1.0f;
+        utils::Image img = utils::imageLoad(path);
+        float bottomV    = 1.0f;
+        if (img.data && img.channels >= 4 && img.depth == 1 && img.width > 0 &&
+            img.height > 1) {
+            const u8* px     = static_cast<const u8*>(img.data);
+            u32 w            = static_cast<u32>(img.width);
+            u32 h            = static_cast<u32>(img.height);
+            u32 ch           = static_cast<u32>(img.channels);
+            u32 lastRow      = 0;
+            bool foundRow     = false;
+            for (u32 y = h - 1; y > 0; y--) {
+                bool any = false;
+                for (u32 x = 0; x < w; x++) {
+                    if (px[((y * w + x) * ch) + 3] > 128) {
+                        any = true;
+                        break;
+                    }
+                }
+                if (any) {
+                    lastRow  = y;
+                    foundRow = true;
+                    break;
+                }
+            }
+            if (foundRow) {
+                // Row 0 -> V 0, row h-1 -> V 1 (texel-centre addressing).
+                bottomV = (lastRow == 0) ? 0.0f : static_cast<float>(lastRow) /
+                                                static_cast<float>(h - 1);
+            }
+        }
+        utils::imageDestory(&img);
+        return bottomV;
+    }
+
     static void grassLoadTextures(void) {
         if (g_grassTexLoaded) return;
         for (u32 i = 0; i < kGrassTexCount; i++) {
+            float bottomV = grassMeasureBottomV(kGrassTexPaths[i]);
             engine::Texture* t = engine::getTextureByName(kGrassTexPaths[i]);
             if (t && t->id >= 0) {
                 g_grassTexIds[i] = static_cast<u32>(t->id);
@@ -112,40 +156,6 @@ namespace game {
                     (t->image.width > 0 && t->image.height > 0)
                         ? static_cast<float>(t->image.width) / static_cast<float>(t->image.height)
                         : 1.0f;
-                // Lowest row the fragment shader's 0.5 alpha test keeps (alpha >
-                // 128); its V coordinate trims the empty band below the tuft out
-                // of the card's UVs.  1.0 = no trim.  Missing alpha / single-row
-                // images keep the full UVs.
-                float bottomV = 1.0f;
-                utils::Image& img = t->image;
-                if (img.data && img.channels >= 4 && img.depth == 1 && img.width > 0 &&
-                    img.height > 1) {
-                    const u8* px     = static_cast<const u8*>(img.data);
-                    u32 w            = static_cast<u32>(img.width);
-                    u32 h            = static_cast<u32>(img.height);
-                    u32 ch           = static_cast<u32>(img.channels);
-                    u32 lastRow      = 0;
-                    bool foundRow     = false;
-                    for (u32 y = h - 1; y > 0; y--) {
-                        bool any = false;
-                        for (u32 x = 0; x < w; x++) {
-                            if (px[((y * w + x) * ch) + 3] > 128) {
-                                any = true;
-                                break;
-                            }
-                        }
-                        if (any) {
-                            lastRow  = y;
-                            foundRow = true;
-                            break;
-                        }
-                    }
-                    if (foundRow) {
-                        // Row 0 -> V 0, row h-1 -> V 1 (texel-centre addressing).
-                        bottomV = (lastRow == 0) ? 0.0f : static_cast<float>(lastRow) /
-                                                    static_cast<float>(h - 1);
-                    }
-                }
                 g_grassBottomVs[i] = bottomV;
                 if (bottomV < 1.0f) {
                     utils::info("azgaarProps: grass texture %s trims %.1f%% empty bottom band",

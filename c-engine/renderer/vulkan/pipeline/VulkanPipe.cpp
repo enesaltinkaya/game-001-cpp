@@ -648,16 +648,6 @@ void r_vulkanBeginRender(VulkanBeginRenderInfo beginRenderInfo) {
         .pDepthAttachment     = beginRenderInfo.depth ? &depthAttachmentInfo : nullptr,
         .pStencilAttachment   = nullptr,
     };
-    static char _dbgBeginRenderLogged = 0;
-    if (!_dbgBeginRenderLogged && beginRenderInfo.color4) {
-        _dbgBeginRenderLogged = 1;
-        utils::info("[brix8dbg] beginRender pipe='%s' colorAttachmentCount=%d c4view=%p c4ext=%ux%u",
-                    beginRenderInfo.pipe ? beginRenderInfo.pipe->name : "?",
-                    colorAttachmentCount,
-                    (void*)beginRenderInfo.color4->view,
-                    beginRenderInfo.color4->extent.width,
-                    beginRenderInfo.color4->extent.height);
-    }
 
     if (utils::isDebug()) {
         vulkanLabelBegin(beginRenderInfo.cmd, beginRenderInfo.pipe->name);

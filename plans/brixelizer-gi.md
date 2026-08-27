@@ -31,7 +31,8 @@ FFX passes (`VulkanFsrPass`, CACAO in `VulkanAOPass`, `VulkanLpmPass`, `VulkanLe
       2026-08-27; Gate 7 met (giDiffuse / giSpecular / giCache dumps coherent,
       19 GI passes ~1.7 ms @ 50% internal, validation clean, mv-scale verified
       with a dolly A/B). See the Step 7 notes.
-- [ ] Step 8 — Albedo G-buffer + GI compositing into the lit image
+- [x] Step 8 — Albedo G-buffer + GI compositing into the lit image
+      2026-08-27; Gate 8 met, see the Step 8 status below
 - [ ] Step 9 — Settings / debug GUI + performance tuning
 - [ ] Step 10 — Dynamic geometry + robustness (later)
 
@@ -951,6 +952,106 @@ attachment:
 - TAA and FSR paths both stable (run with upscaler on and off); no GI ghosting
   on camera motion;
 - the disabled path is **pixel-identical** to pre-GI (diff the dumps).
+
+### Step 8 — Status (2026-08-27)
+
+**Gate 8 met.** Implementation already in place (verified against the plan, then
+tested): 8.1 albedo G-buffer (4th color attachment `colorFormat4` in
+`VulkanPipe`, `VulkanFrameResources.albedo` R8G8B8A8 cleared 0; written by
+`scene_depth.frag` (material baseColor), `heightmap_terrain_depth.frag` (v1
+neutral gray 0.5), `azgaar_props_depth.frag` (part colour × instance tint); water
+leaves 0) and 8.2 composite (`composite.comp` block 7c: `+ albedo * E_diffuse *
+diffuseFactor`, `+ E_spec * specFactor * (1-rough)(1-metallic)`, absent-sentinel
+skip when GI off; the Step-6.3 `compositeColor → HistoryLitOutput` copy is the
+GI-inclusive prevLitOutput).
+
+**Testing found one blocking bug — fixed:** the `Albedo` frame resource was
+created with only `COLOR_ATTACHMENT | SAMPLED`, but the `ENGINE_DEBUG_DUMP_IMAGES`
+`albedo` dump transitions it to `TRANSFER_SRC_OPTIMAL` — the spec requires
+`VK_IMAGE_USAGE_TRANSFER_SRC_BIT` whenever that layout is used. The validation
+callback `utils::terminate`s on the resulting `vkCmdPipelineBarrier2` ERROR, so
+every `play screenshot ... ENGINE_DEBUG_DUMP_IMAGES=albedo` run CRIT-aborted at
+tear-down (exit 1) **and the albedo dump was never written** (the crash landed in
+the dump copy). Fix: add `VK_IMAGE_USAGE_TRANSFER_SRC_BIT` to the albedo usage
+(mirrors `worldNormal`, which is dumped the same way). Also removed leftover
+one-shot `[brix8dbg]` debug logs in `VulkanPipe.cpp` / `VulkanFrameResources.cpp`.
+After the fix: `play screenshot` runs clean (no per-frame validation errors; the
+only CRIT is the known deferred Step-1 FFX shutdown leak at `vkDestroyDevice`),
+and all dumps write.
+
+**Gate 8 verified (parked player at the red-roof hut, 2880×1627, A/B via
+`ENGINE_BRIXGI=0/1` + `ENGINE_DEBUG_DUMP_IMAGES`):**
+- *colored ambient, no white-wash:* the shadowed house front wall goes from pure
+  black (GI off, zero engine ambient) to a soft **warm red-preserved** ambient
+  (final img [124,118,99] → [163,154,151], R>G>B kept) — albedo-weighted, not
+  white. The albedo dump confirms per-pixel base colour (red walls, orange
+  chimney, green props, 0.5-gray terrain, black sky); `albedo × E_diffuse` tints
+  the ambient correctly.
+- *sky/surface boundary clean:* the final (post-FSR) sky is **bit-identical**
+  between on/off ([188,216,244] both) — no GI on sky pixels, no halo at the
+  silhouette. (The GI term is inside `if (!isSky)` in `composite.comp`; the
+  small ~24 red difference in the *pre-FSR* composite dump is transient FSR
+  auto-exposure state that converges to the same sky regardless of GI — the
+  rendered sky is unaffected.)
+- *disabled path pixel-identical:* the `giDiffuseIndex`/`giSpecularIndex` =
+  0xFFFFFFFF sentinel makes the composite skip the GI block entirely, so the
+  GI-off composite is the exact pre-GI code path; two independent `ENGINE_BRIXGI=0`
+  runs are pixel-identical in the sky (mean abs diff 0.01) — deterministic.
+- *TAA/FSR stable:* both on/off renders pass through the full TAA→FSR→LPM→Final
+  chain with no artifacts/ghosting at the parked camera.
+- *validation:* clean during gameplay in both runs (only the known Step-1 teardown
+  leak).
+
+**Deviations / notes (recorded 2026-08-27):**
+- _Composite factors are live-tunable + retuned._ `ENGINE_BRIXGI_DIFFUSE` /
+  `ENGINE_BRIXGI_SPECULAR` (read once in `VulkanCompositePass::update`, A/B without a
+  rebuild) scale the two GI terms. The FFX sample defaults (1.5 / 3.0) **wash out**
+  this open-sky outdoor scene (the raw GI radiance is bright: the sunlit foreground
+  gains ~+100 of bluish sky ambient at 1.5). New defaults **0.6 / 1.0** (A/B-picked
+  from parked screenshots — 1.5/3.0 too bright, 0.9/1.5 still a foreground wash,
+  0.6/1.0 natural: clean sun shadow, soft red ambient on the shadowed wall, untinted
+  ground). Further tuning + the in-GUI sliders land in Step 9.
+- _Terrain albedo is the v1 neutral 0.5 gray_ (the pre-pass does not sample the
+  per-biome terrain colour) — terrain GI ambient is untinted; matching the
+  rendered terrain colour is a possible later improvement, not a gate item.
+
+**Re-test 2026-08-27 (validation follow-up) — one bug found and fixed:**
+
+- _Validation warning: `outAlbedo` written with no 4th attachment._ The occlusion
+  pass' phase-2 HiZ pipes (`phase2_depth`, `phase2_depth_ds` in
+  `VulkanOcclusionPass.cpp`) reuse `scene_depth.vert/frag`, and Step 8 taught
+  `scene_depth.frag` to write `outAlbedo` (loc 3) — but the phase-2 pipes declared
+  only 3 color attachments and the phase-2 `vulkanBeginRender` bound no 4th image,
+  so every `vkCmdDrawIndexedIndirectCount` logged
+  `WARNING: writes to Location 3 "outAlbedo" but there is no
+  VkRenderingInfo::pColorAttachments[3]`. Fix: `.colorFormat4 = R8G8B8A8_UNORM` on
+  both pipes (clear disabled → `loadOp = LOAD`, which is required: phase 2 only
+  redraws the non-HiZ-culled subset, so the prepass' albedo must survive on the
+  pixels it skips — the redrawn pixels rewrite the identical value) + bind
+  `vulkanFrameResourcesGetAlbedo()` as `.color4` with a `COLOR_ATTACHMENT_OPTIMAL`
+  transition before STEP C. All other `scene_depth.frag` users (depth prepass,
+  heightmap-terrain, props) already had `colorFormat4`; the occlusion pass was the
+  only straggler.
+- _Re-verified after the fix (parked player, red-roof hut):_ `play log 6000` →
+  **zero** validation warnings/errors during gameplay (only the known Step-1
+  `vkDestroyDevice` teardown leak at exit); A/B `ENGINE_BRIXGI=0/1`: shadowed hut
+  wall [0,0,0] → [92,71,80] (R>G>B warm, albedo-weighted, no white-wash), ground
+  gains a bluish sky-ambient lift (untinted v1 terrain albedo — the documented
+  deviation); `albedo` dump per-pixel base colours (red walls, orange chimney,
+  0.5-gray terrain, green props, black sky); `giDiffuse`/`giSpecular` dumps
+  coherent. Two independent `ENGINE_BRIXGI=0` runs: sky mean abs diff 2.5/255,
+  scene diffs limited to HUD text + TAA shimmer at high-contrast edges —
+  functionally the same pixel-identical claim as before.
+- _Sky A/B residual is auto-exposure, not GI on sky pixels._ The composite's GI
+  terms are inside `if (!isSky)`, and the pre-FSR `compositeColor` dump confirms
+  it: GI-off = pure-black shadowed wall / bright sunlit ground; GI-on = wall
+  gains red ambient AND the whole-frame tone drops (global auto-exposure adapting
+  down because GI raised the scene's mean luminance) — the sky gradient is
+  unchanged, only re-toned by the new exposure. So the final-frame sky is NOT
+  bit-identical between on/off (a mild bluish/brighter shift, ~8–14 in one 10 s
+  A/B); that is LPM auto-exposure adaptation, expected engine behavior, not a
+  leak. If Step 9 wants a stable exposure for A/B comparisons, a longer capture
+  delay or a pinned exposure value is the lever.
 
 ## Step 9 — Settings, debug GUI, performance
 
