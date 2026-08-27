@@ -400,11 +400,30 @@ fix before moving on.
   tokens in `Vulkan.cpp`.
 
 **Gate 2 verified:** distance dump shows a clean SDF of the cube (cyan zero
-level set, dark-red brick halo); grad view is a coherent normal field; brick-ID
-view shows brick boundaries; `stats` = 240 staticTris / 85 staticRefs /
-27 staticBricks (> 0); no failed-voxel / scratch-overflow. The only
-validation CRIT is the known deferred FFX shutdown leak at `vkDestroyDevice`
+level set, thin dark-red rim hugging the silhouette); grad view is a coherent
+normal field; brick-ID view shows brick boundaries; `stats` = 240 staticTris /
+85 staticRefs / 26 staticBricks (> 0); no failed-voxel / scratch-overflow. The
+only validation CRIT is the known deferred FFX shutdown leak at `vkDestroyDevice`
 (Step 1) — no per-frame validation errors.
+
+**The red rim is a debug-viz property, not an SDF defect** (checked 2026-08-27
+against `ffx_brixelizer_debug_visualization.h`): in `TRACE_DEBUG_MODE_DISTANCE`
+hit rays are colored (0, blue→green by normalized hit-t) — red is impossible
+on a hit. Red only comes from the MISS branch: rays that fail to converge to a
+hit within [tMin,tMax] are colored with `FFX_HeatmapGradient(iter_count/64)`,
+which is crimson at iter_count ≈ 22–32. The rim is the band of rays that graze
+the cube's silhouette: they march with small SDF steps along the boundary (high
+iteration count) but never register a hit (coarse 2 m voxel SDF + bilinear
+interpolation that overestimates distance at edges/corners + the 0.5 m solve
+epsilon + the iteration budget). The `iter` debug mode proves it: iteration
+heatmap concentrates exactly on the cube boundary (and the 3×3 brick seams per
+face) while full-miss background rays sit at ~0 (blue). Grazing misses at the
+silhouette are a measure-zero ray subset — irrelevant for the Step-7 GI trace.
+Also from the brick-map decode: the 26 held bricks = the 3×3×3 block minus its
+CENTER voxel — `CompressBrick` legitimately frees the solid cube's interior
+brick (all 8³ samples are > 1/8 voxel from any surface; an unsigned SDF carries
+no near-surface data in the interior, and the trace stops at the front face
+never entering it). The full boundary layer is present.
 
 **Known artifact — RESOLVED (2026-08-27, transform bug):** the Step-2 dump
 originally showed the cube as **two small separated blobs** with the brick
