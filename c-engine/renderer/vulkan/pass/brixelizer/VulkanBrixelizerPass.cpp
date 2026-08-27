@@ -191,6 +191,34 @@ namespace engine {
     /* Reserve of the shared 65536 instance table for Step 10's dynamic
      * instances (the voxelizer asserts static+pending <= 65536). */
     static const u32 BRIX_DYNAMIC_HEADROOM = 1024;
+    /* The voxelizer's invalidation queue (FfxBrixelizerInvalidation[FFX_BRIXELIZER_MAX_INSTANCES])
+     * takes one entry per static instance create/delete and an entry survives
+     * until every cascade has baked once — the cascade round-robin (lowest set
+     * bit of the bake frame index, ffxBrixelizerRawGetCascadeToUpdate) turns
+     * the top cascade (8 cascades -> lowest set bit 128 of an 8-bit counter)
+     * once every 256 updates, so the queue is a 256-frame moving window of
+     * this pass' FFX instance traffic. Re-applying a dense tile set costs
+     * ~2× its instance count in invalidations; a camera-churn storm
+     * (scroll-wheel zoom → cull re-push → tile re-scatter) fits two
+     * re-applies in one window and the queue overflows. The SDK
+     * bounds-assert is compiled out of the release lib, so the OOB write
+     * stoms the instance tables that follow the queue in
+     * FfxBrixelizerContext_Private and the next ffxBrixelizerDeleteInstances
+     * reads a garbage instanceIndices[] entry and segfaults. Every create/
+     * delete below accounts itself in invalRing; the props drain defers its
+     * whole batch when the window + batch would exceed INVAL_WINDOW_LIMIT
+     * (queue cap minus a small margin for untracked traffic — the SDF is a
+     * catch-up system, the data simply lands later). A batch that exceeds
+     * the limit on its own (pathological set > ~31k instances) is deferred
+     * indefinitely: it cannot fit the queue even when empty. Ring depth is
+     * the window + 1: at frame start the current frame's slot (holding the
+     * adds of frame −257) is zeroed, and those invalidations are guaranteed
+     * drained by the top-cascade turn of the previous frame. */
+    static u32 invalRing[(1u << BRIX_NUM_CASCADES) + 1] = {0};
+    static const u32 INVAL_WINDOW_LIMIT = FFX_BRIXELIZER_MAX_INSTANCES - 2048;
+    static u32 invalDeferrals;
+    static void invalAccount(u32 n);
+    static u32 invalWindow(void);
     static void propsResolveBudget(void);
     static BrixelPropsVariant* propsVariantFind(u32 species, u32 variant);
     static void propsVariantRegister(u32 i);
@@ -200,6 +228,9 @@ namespace engine {
     static void propsSetApply(u32 kind, i32 tileX, i32 tileZ, u64 readyStamp,
                               const PropInstance* insts, u32 count, const float* camPos);
     static void propsSyncPending(const float* camPos);
+    static u32 sceneInstanceEstimate(Scene* scene);
+    static void sceneRetryDrain(void);
+    static std::vector<Scene*> sceneRetry;
     static char propsExtractMeshes(const void* verts, u32 vertCount, const void* idx, u32 idxCount,
                                    const PropVariantRange* variants, u32 variantCount);
 
@@ -458,6 +489,9 @@ namespace engine {
             s->ids.clear();
         }
         propsContextRegistered = 0;
+        for (u32 i = 0; i < ((1u << BRIX_NUM_CASCADES) + 1); i++) {
+            invalRing[i] = 0;
+        }
     }
 
     static void terrainClearAll(void) {
@@ -789,6 +823,43 @@ namespace engine {
         *outScale = wscale;
     }
 
+    /* Non-skinned draw count of a scene — the invalidation cost of
+     * registering it (one queue entry per instance create). */
+    static u32 sceneInstanceEstimate(Scene* scene) {
+        if (!scene || !scene->backendScene) {
+            return 0;
+        }
+        VulkanScene* vs = static_cast<VulkanScene*>(scene->backendScene);
+        u32 n = 0;
+        for (u32 i = 0; i < vs->cpuDraws.size(); i++) {
+            if (!(vs->cpuDraws[i].draw.flags & DRAW_FLAG_SKINNED)) {
+                n++;
+            }
+        }
+        return n;
+    }
+
+    /* Retry the scene registrations the invalidation-window gate deferred:
+     * attempt each when the window has room, drop vanished scenes, and stop
+     * retrying a scene that fails for a real reason (registerScene already
+     * logged it). */
+    static void sceneRetryDrain(void) {
+        for (i32 i = (i32)sceneRetry.size() - 1; i >= 0; i--) {
+            Scene* scene = sceneRetry[i];
+            u32 est = sceneInstanceEstimate(scene);
+            if (!est) {
+                sceneRetry.erase(sceneRetry.begin() + i);
+                continue;
+            }
+            if (invalWindow() + est > INVAL_WINDOW_LIMIT) {
+                continue; /* window still full — next frame */
+            }
+            char ok = registerScene(scene);
+            sceneRetry.erase(sceneRetry.begin() + i);
+            (void)ok;
+        }
+    }
+
     /* Registers a scene's geometry with the voxelizer: its VBO/IBO once,
      * then one static instance per non-skinned draw (the skinned characters
      * come with dynamic geometry in Step 10). Main thread only. */
@@ -804,6 +875,26 @@ namespace engine {
             if (sceneRegs[i].scene == scene) {
                 return 1; /* already registered with the live context */
             }
+        }
+
+        /* Invalidation-window gate (see invalRing): a big registration pushes
+         * one queue entry per instance — if the 256-frame window is nearly
+         * full this would overflow the SDK's invalidation queue and stomp
+         * the instance tables. Defer: the frame loop retries (sceneRetry)
+         * until the window has drained; the SDF is a catch-up system. */
+        u32 est = sceneInstanceEstimate(scene);
+        if (est > 0 && invalWindow() + est > INVAL_WINDOW_LIMIT) {
+            for (u32 i = 0; i < sceneRetry.size(); i++) {
+                if (sceneRetry[i] != scene) {
+                    sceneRetry.push_back(scene);
+                    break;
+                }
+            }
+            utils::info("vulkanBrixelizerPass: scene '%s' registration deferred: %u instances, window %u",
+                        scene->name.data,
+                        est,
+                        invalWindow());
+            return 0;
         }
 
         /* PIXEL_COMPUTE_READ like the sample's GetBufferIndex — the FFX
@@ -978,6 +1069,9 @@ namespace engine {
         sceneRegs.push_back(reg);
         totalRegisteredInstances += instanceCount;
         totalRegisteredTriangles += sceneTris;
+        if (instanceCount > 0) {
+            invalAccount(instanceCount);
+        }
         /* The bake of the new (invalidated) instances lands across the next
          * full cascade round (256 updates) — track that window's GPU cost
          * for Gate 3. Only for non-empty registrations (skinned-only scenes
@@ -1049,6 +1143,7 @@ namespace engine {
                              z,
                              delResult);
             }
+            invalAccount(1);
             totalRegisteredInstances--;
             totalRegisteredTriangles -= 2u * (terrainRes - 1) * (terrainRes - 1);
         }
@@ -1231,6 +1326,7 @@ namespace engine {
             vulkanDestroyBuffer(&ib, NULL);
             return 0;
         }
+        invalAccount(1);
 
         BrixelTerrainTile* e = NULL;
         for (u32 i = 0; i < terrainTiles.size(); i++) {
@@ -1404,6 +1500,18 @@ namespace engine {
         d->flags                  = FFX_BRIXELIZER_INSTANCE_FLAG_NONE;
     }
 
+    static void invalAccount(u32 n) {
+        invalRing[frameIndex % ((1u << BRIX_NUM_CASCADES) + 1)] += n;
+    }
+
+    static u32 invalWindow(void) {
+        u32 sum = 0;
+        for (u32 i = 0; i < ((1u << BRIX_NUM_CASCADES) + 1); i++) {
+            sum += invalRing[i];
+        }
+        return sum;
+    }
+
     static BrixelPropsSet* propsSetFind(u32 kind, i32 tileX, i32 tileZ) {
         for (u32 i = 0; i < propsSets.size(); i++) {
             BrixelPropsSet* s = &propsSets[i];
@@ -1438,6 +1546,7 @@ namespace engine {
                 utils::error("vulkanBrixelizerPass: ffxBrixelizerDeleteInstances (props set) failed: %d",
                              delResult);
             }
+            invalAccount((u32)s->ids.size());
         }
         s->ids.clear();
         totalRegisteredInstances -= s->accepted;
@@ -1467,8 +1576,15 @@ namespace engine {
             return;
         }
         BrixelPropsSet* s = propsSetFind(kind, tileX, tileZ);
-        if (s->inUse && (s->ids.size() > 0 || s->accepted > 0)) {
-            propsSetDelete(s);
+        if (s->inUse) {
+            /* Always rebuild from scratch: the re-apply paths (MESH_SET,
+             * context recreation) arrive with ids/accepted already cleared,
+             * so keying the clear on them would append the new instances to
+             * the stored ones and double-create every FFX instance on each
+             * mesh swap / swapchain recreation. */
+            if (s->ids.size() > 0 || s->accepted > 0) {
+                propsSetDelete(s);
+            }
             s->instances.clear();
             s->accepted = 0;
             s->dropped  = 0;
@@ -1587,6 +1703,7 @@ namespace engine {
         for (u32 i = 0; i < s->accepted; i++) {
             s->ids.push_back(ids[i]);
         }
+        invalAccount(s->accepted);
         s->tris = setTris;
         totalRegisteredInstances += s->accepted;
         totalRegisteredTriangles += s->tris;
@@ -1630,6 +1747,89 @@ namespace engine {
         if (!batch.size()) {
             return;
         }
+        /* Invalidation-queue gate (see invalRing): estimate how many FFX
+         * invalidations the batch would add — existing sets' ids are deleted,
+         * incoming instances are created — and defer the whole batch when the
+         * 256-frame window would overflow the SDK queue. Re-queued in order;
+         * the window drains within one cascade round. */
+        u32 batchAdds = 0;
+        for (u32 i = 0; i < batch.size(); i++) {
+            BrixelPropsPending* p = &batch[i];
+            switch (p->kind) {
+            case BRIX_PROPS_MESH_SET:
+                for (u32 j = 0; j < propsSets.size(); j++) {
+                    if (propsSets[j].inUse) {
+                        batchAdds += (u32)propsSets[j].ids.size() + (u32)propsSets[j].instances.size();
+                    }
+                }
+                break;
+            case BRIX_PROPS_MESH_CLEAR:
+                for (u32 j = 0; j < propsSets.size(); j++) {
+                    if (propsSets[j].inUse) {
+                        batchAdds += (u32)propsSets[j].ids.size();
+                    }
+                }
+                break;
+            case BRIX_PROPS_TILE_SET: {
+                BrixelPropsSet* s = propsSetFind(0, p->tileX, p->tileZ);
+                batchAdds += (u32)s->ids.size() + (u32)p->instances.size();
+                break;
+            }
+            case BRIX_PROPS_TILE_CLEAR: {
+                BrixelPropsSet* s = propsSetFind(0, p->tileX, p->tileZ);
+                batchAdds += (u32)s->ids.size();
+                break;
+            }
+            case BRIX_PROPS_GLOBAL_SET: {
+                BrixelPropsSet* s = propsSetFind(1, 0, 0);
+                batchAdds += (u32)s->ids.size() + (u32)p->instances.size();
+                break;
+            }
+            case BRIX_PROPS_GLOBAL_CLEAR: {
+                BrixelPropsSet* s = propsSetFind(1, 0, 0);
+                batchAdds += (u32)s->ids.size();
+                break;
+            }
+            case BRIX_PROPS_LANDMARKS_SET: {
+                BrixelPropsSet* s = propsSetFind(2, 0, 0);
+                batchAdds += (u32)s->ids.size() + (u32)p->instances.size();
+                break;
+            }
+            case BRIX_PROPS_LANDMARKS_CLEAR: {
+                BrixelPropsSet* s = propsSetFind(2, 0, 0);
+                batchAdds += (u32)s->ids.size();
+                break;
+            }
+            default:
+                break;
+            }
+        }
+        if (invalWindow() + batchAdds > INVAL_WINDOW_LIMIT) {
+            utils::threadLock(&propsLock);
+            for (u32 i = batch.size(); i > 0; i--) {
+                propsPending.push_back(std::move(batch[i - 1]));
+            }
+            utils::threadUnlock(&propsLock);
+            if (invalDeferrals++ % 300 == 0) {
+                if (batchAdds > INVAL_WINDOW_LIMIT) {
+                    utils::warn(
+                        "vulkanBrixelizerPass: props SDF batch of %u invalidations can never fit the "
+                        "queue (window %u, limit %u, cap %u) — it stays deferred indefinitely",
+                        batchAdds,
+                        invalWindow(),
+                        INVAL_WINDOW_LIMIT,
+                        FFX_BRIXELIZER_MAX_INSTANCES);
+                } else {
+                    utils::info("vulkanBrixelizerPass: props SDF batch deferred: window %u + batch %u > %u "
+                                "(invalidation queue cap %u)",
+                                invalWindow(),
+                                batchAdds,
+                                INVAL_WINDOW_LIMIT,
+                                FFX_BRIXELIZER_MAX_INSTANCES);
+                }
+            }
+            return;
+        }
         for (u32 i = 0; i < batch.size(); i++) {
             BrixelPropsPending* p = &batch[i];
             switch (p->kind) {
@@ -1668,11 +1868,15 @@ namespace engine {
                     for (u32 j = 0; j < propsSets.size(); j++) {
                         BrixelPropsSet* s = &propsSets[j];
                         if (s->inUse && s->instances.size() > 0) {
+                            /* propsSetApply clears the set's stored instances
+                             * (rebuild-from-scratch), so hand it a copy —
+                             * s->instances.data() would dangle mid-apply. */
+                            std::vector<PropInstance> saved = s->instances;
                             s->ids.clear();
                             s->accepted = 0;
                             s->tris     = 0;
-                            propsSetApply(s->kind, s->tileX, s->tileZ, s->readyStamp,
-                                          s->instances.data(), (u32)s->instances.size(), camPos);
+                            propsSetApply(s->kind, s->tileX, s->tileZ, s->readyStamp, saved.data(),
+                                          (u32)saved.size(), camPos);
                         }
                     }
                 }
@@ -1798,11 +2002,15 @@ namespace engine {
         for (u32 i = 0; i < propsSets.size(); i++) {
             BrixelPropsSet* s = &propsSets[i];
             if (s->inUse && s->instances.size() > 0) {
+                /* propsSetApply clears the set's stored instances
+                 * (rebuild-from-scratch), so hand it a copy — s->instances.data()
+                 * would dangle mid-apply. */
+                std::vector<PropInstance> saved = s->instances;
                 s->ids.clear();
                 s->accepted = 0;
                 s->tris     = 0;
-                propsSetApply(s->kind, s->tileX, s->tileZ, s->readyStamp, s->instances.data(),
-                              (u32)s->instances.size(), NULL);
+                propsSetApply(s->kind, s->tileX, s->tileZ, s->readyStamp, saved.data(),
+                              (u32)saved.size(), NULL);
             }
         }
     }
@@ -2133,6 +2341,13 @@ namespace engine {
         /* Step 4: sync the streaming heightmap tiles with the SDF (register
          * newly READY tiles, evict out-of-window ones) before this frame's
          * bake dispatch so new tiles are baked with the rest. */
+        /* Drop the frame's add slot (it still holds the add count of the
+         * frame 256 updates ago — whose invalidations the queue just drained
+         * with the last top-cascade turn). */
+        invalRing[frameIndex % ((1u << BRIX_NUM_CASCADES) + 1)] = 0;
+        /* Retry the invalidation-gate-deferred scene registrations before this
+         * frame's bake so an admitted scene is baked with the rest. */
+        sceneRetryDrain();
         terrainSyncTiles();
 
         /* Step 5: drain the thread-safe props queue (tile scatters / global
@@ -3013,6 +3228,12 @@ namespace engine {
         if (!scene) {
             return;
         }
+        for (u32 i = 0; i < sceneRetry.size(); i++) {
+            if (sceneRetry[i] == scene) {
+                sceneRetry.erase(sceneRetry.begin() + (ptrdiff_t)i);
+                break;
+            }
+        }
         for (u32 i = 0; i < sceneRegs.size(); i++) {
             if (sceneRegs[i].scene != scene) {
                 continue;
@@ -3028,6 +3249,7 @@ namespace engine {
                         utils::error("vulkanBrixelizerPass: ffxBrixelizerDeleteInstances failed: %d",
                                      delResult);
                     }
+                    invalAccount(reg->instanceCount);
                 }
                 u32 dropIdx[2] = {reg->vertBufIdx, reg->idxBufIdx};
                 FfxErrorCode unregResult = ffxBrixelizerUnregisterBuffers(&brixelizerContext, dropIdx, 2);
