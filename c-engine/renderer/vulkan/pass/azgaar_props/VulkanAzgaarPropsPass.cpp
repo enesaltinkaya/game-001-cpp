@@ -187,7 +187,8 @@ static VkVertexInputAttributeDescription depthPrepassAttrs[] = {
     {.location = 4, .binding = 1, .format = VK_FORMAT_R32_SFLOAT, .offset = 16},
     {.location = 5, .binding = 1, .format = VK_FORMAT_R32G32B32_SFLOAT, .offset = 20},
     {.location = 6, .binding = 1, .format = VK_FORMAT_R32_SFLOAT, .offset = 32},
-    {.location = 7, .binding = 1, .format = VK_FORMAT_R32_UINT, .offset = 36}, // no loc 10 (inVertColor)
+    {.location = 7, .binding = 1, .format = VK_FORMAT_R32_UINT, .offset = 36},
+    {.location = 10, .binding = 0, .format = VK_FORMAT_R32G32B32_SFLOAT, .offset = 60}, // inVertColor (GI albedo)
 };
 static VkVertexInputAttributeDescription shadowAttrs[] = { // only what azgaar_props_shadow.vert reads
     {.location = 0, .binding = 0, .format = VK_FORMAT_R32G32B32_SFLOAT, .offset = 0},
@@ -251,10 +252,11 @@ static void recreatePipelines(void) {
         .colorFormat1         = VK_FORMAT_R16G16_SFLOAT,
         .colorFormat2         = VK_FORMAT_R16G16_SNORM,
         .colorFormat3         = VK_FORMAT_R16G16B16A16_SFLOAT,
+        .colorFormat4         = VK_FORMAT_R8G8B8A8_UNORM,
         .depthFormat          = VK_FORMAT_D32_SFLOAT,
         .noCull               = 1,
         .vertexAttributes     = depthPrepassAttrs,
-        .vertexAttributeCount = 10,
+        .vertexAttributeCount = 11,
         .vertexBindings       = vertexBindings,
         .vertexBindingCount   = 2);
 

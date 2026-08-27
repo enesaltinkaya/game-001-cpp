@@ -19,6 +19,11 @@ layout(push_constant) uniform PushConstants {
     uint volumetricColorIndex;
     uint weatherMaskIndex;   // 0xFFFFFFFF = no weather pass / no mask
     uint aoIndex;            // 0xFFFFFFFF = AO disabled / no output
+    uint albedoIndex;        // per-pixel base colour (GI diffuse weight)
+    uint giDiffuseIndex;     // 0xFFFFFFFF = GI disabled -> term skipped
+    uint giSpecularIndex;    // 0xFFFFFFFF = GI disabled -> term skipped
+    float diffuseFactor;     // L += albedo * E_diffuse * diffuseFactor
+    float specularFactor;    // L += E_specular * specularFactor * mask
     uint width;
     uint height;
 } pc;
@@ -118,6 +123,36 @@ void main() {
                           samplers[SAMPLER_CLAMP_NEAREST]),
                 coord, 0).r;
             composite *= aoFactor;
+        }
+
+        // ── 7c. Brixelizer GI (plan Step 8) ──────────────────────────
+        // Screen-probe SDF GI: soft coloured ambient (diffuse) + specular GI.
+        // Absent-sentinel: while GI is disabled BOTH indices are 0xFFFFFFFF
+        // and this block is skipped entirely, so the frame stays pixel-identical
+        // to pre-GI.  Added AFTER the AO multiply (GI carries its own SDF
+        // occlusion; AO is not applied to it again) and BEFORE fog (distant GI
+        // fades to the fog colour like the direct light).
+        if (pc.giDiffuseIndex != 0xFFFFFFFFu || pc.giSpecularIndex != 0xFFFFFFFFu) {
+            vec3 albedo = texelFetch(
+                sampler2D(textures[nonuniformEXT(pc.albedoIndex)], samplers[SAMPLER_NEAREST]),
+                coord, 0).rgb;
+            if (pc.giDiffuseIndex != 0xFFFFFFFFu) {
+                vec3 giD = texture(
+                    sampler2D(textures[nonuniformEXT(pc.giDiffuseIndex)], samplers[SAMPLER_CLAMP_LINEAR]),
+                    uv).rgb;
+                composite += albedo * giD * pc.diffuseFactor;
+            }
+            if (pc.giSpecularIndex != 0xFFFFFFFFu) {
+                vec3 giS = texture(
+                    sampler2D(textures[nonuniformEXT(pc.giSpecularIndex)], samplers[SAMPLER_CLAMP_LINEAR]),
+                    uv).rgb;
+                // v1: additive on top of the existing SSR blend (blending the
+                // SSR out is a Step-9 decision).  Attenuated by roughness and
+                // by a metallic-ish mask (metal reflects environment, not GI
+                // specular on top of it).
+                float specMask = (1.0 - roughness) * (1.0 - metallic);
+                composite += giS * pc.specularFactor * specMask;
+            }
         }
     }
 

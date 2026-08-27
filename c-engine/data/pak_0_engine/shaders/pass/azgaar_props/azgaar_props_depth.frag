@@ -18,10 +18,15 @@ layout(location = 3) in vec2 inUV;
 layout(location = 4) flat in uint inTexId;
 layout(location = 5) flat in uint inSpecies;
 layout(location = 6) in vec3 inWorldNormal;
+layout(location = 7) in vec3 inColor;
+layout(location = 8) in vec3 inVertColor;
 
 layout(location = 0) out vec2 outVelocity;
 layout(location = 1) out vec2 outViewNormalXY;
 layout(location = 2) out vec3 outWorldNormal;
+/* GI albedo: part colour x instance tint, matching azgaar_props.frag's
+ * `albedo` (tint only the white/tintable parts; trunk keeps its own colour). */
+layout(location = 3) out vec4 outAlbedo;
 
 void main() {
     /* ── Alpha discard — must match azgaar_props.frag exactly. ──
@@ -44,6 +49,7 @@ void main() {
     /* Must match azgaar_props.frag: same jitter compensation + HARD alpha
      * test (frameIndex 0). */
     vec2 cutUV = inUV;
+    vec4 tex = vec4(1.0);
     if (inTexId != 0xFFFFFFFFu) {
         vec2 jitterPx = -vec2(sceneBuffer.cameras[0].jitterX, sceneBuffer.cameras[0].jitterY)
                         * sceneBuffer.cameras[0].viewport;
@@ -54,7 +60,7 @@ void main() {
         if (d > 0.30) discard;
     }
     if (inTexId != 0xFFFFFFFFu) {
-        vec4 tex = texture(
+        tex = texture(
             sampler2D(textures[nonuniformEXT(inTexId)], samplers[SAMPLER_LINEAR]),
             cutUV);
         if (stochasticAlphaDiscard(tex.a, 0.5, gl_FragCoord.xy, 0u))
@@ -83,4 +89,18 @@ void main() {
     vec3 wn = normalize(inWorldNormal);
     if (!gl_FrontFacing) wn = -wn;
     outWorldNormal = wn;
+
+    /* Albedo — the colour pass' `albedo`: tint only the white/tintable
+     * (white vertex-colour) parts with the per-instance biome tint; a
+     * textured part keeps its own base-colour texture (trunk bark), a
+     * procedural (no-texture) part uses its baked vertex colour. */
+    float tintable = step(0.99, min(inVertColor.r, min(inVertColor.g, inVertColor.b)));
+    vec3 albedo;
+    if (inTexId != 0xFFFFFFFFu) {
+        vec3 tint = mix(vec3(1.0), inColor, tintable);
+        albedo = tint * tex.rgb;
+    } else {
+        albedo = mix(inVertColor, inColor, tintable);
+    }
+    outAlbedo = vec4(clamp(albedo, 0.0, 1.0), 1.0);
 }

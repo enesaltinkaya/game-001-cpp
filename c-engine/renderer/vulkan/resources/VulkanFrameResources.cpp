@@ -11,6 +11,7 @@ struct VulkanFrameResources {
     VulkanImage compositeColor;
     VulkanImage normals;
     VulkanImage material;
+    VulkanImage albedo;
     VulkanImage reflectionColor;
     VulkanImage reflectionDepth;
     VulkanImage oitAccum;
@@ -70,6 +71,10 @@ VulkanImage* vulkanFrameResourcesGetNormals(void) {
 
 VulkanImage* vulkanFrameResourcesGetMaterial(void) {
     return frameResources.material.img ? &frameResources.material : nullptr;
+}
+
+VulkanImage* vulkanFrameResourcesGetAlbedo(void) {
+    return frameResources.albedo.img ? &frameResources.albedo : nullptr;
 }
 
 VulkanImage* vulkanFrameResourcesGetResolvedColor(void) {
@@ -162,6 +167,17 @@ static void recreate(void) {
 
     frameResources.material =
         vulkanCreateImage(.name   = "Material",
+                          .format = VK_FORMAT_R8G8B8A8_UNORM,
+                          .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                          .width = window.renderWidth,
+                          .height = window.renderHeight);
+
+    /* Per-pixel base colour (albedo) written by the depth pre-pass (scene /
+     * terrain / props frags; water leaves 0).  Consumed by the Brixelizer GI
+     * composite to weight the diffuse GI term (L += albedo * E_diffuse).  No
+     * GI on water/roads — the 0 clear is the correct "no diffuse GI" there. */
+    frameResources.albedo =
+        vulkanCreateImage(.name   = "Albedo",
                           .format = VK_FORMAT_R8G8B8A8_UNORM,
                           .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
                           .width = window.renderWidth,
@@ -264,6 +280,15 @@ frameResources.depth =
                           .width  = window.renderWidth,
                           .height = window.renderHeight);
 
+    static char _dbgFrLogged = 0;
+    if (!_dbgFrLogged) {
+        _dbgFrLogged = 1;
+        utils::info("[brix8dbg] frameResources: albedo=%d depth=%d composite=%d",
+                    frameResources.albedo.img ? 1 : 0,
+                    frameResources.depth.img ? 1 : 0,
+                    frameResources.compositeColor.img ? 1 : 0);
+    }
+
     transitionInitialLayouts();
 }
 
@@ -281,6 +306,7 @@ static void destroyAll(void) {
     destroyImage(&frameResources.compositeColor);
     destroyImage(&frameResources.normals);
     destroyImage(&frameResources.material);
+    destroyImage(&frameResources.albedo);
     destroyImage(&frameResources.reflectionColor);
     destroyImage(&frameResources.reflectionDepth);
     destroyImage(&frameResources.oitAccum);
@@ -311,6 +337,7 @@ static void transitionInitialLayouts(void) {
                      1);
     vulkanTransition(cmd, &frameResources.normals, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, 0, 1);
     vulkanTransition(cmd, &frameResources.material, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, 0, 1);
+    vulkanTransition(cmd, &frameResources.albedo, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, 0, 1);
     vulkanTransition(cmd,
                      &frameResources.resolvedColor,
                      VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,

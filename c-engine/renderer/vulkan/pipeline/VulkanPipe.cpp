@@ -162,6 +162,14 @@ if (info.clearColor1Enabled) {
                                                           info.clearColor3[3]}}};
     }
 
+    if (info.clearColor4Enabled) {
+        pipe->clearColor4Enabled = true;
+        pipe->clearColor4        = VkClearValue{.color = {{info.clearColor4[0],
+                                                          info.clearColor4[1],
+                                                          info.clearColor4[2],
+                                                          info.clearColor4[3]}}};
+    }
+
     if (info.clearDepthEnabled) {
         pipe->clearDepthEnabled = true;
         pipe->clearDepth = VkClearValue{.depthStencil = {info.clearDepth[0], static_cast<uint32_t>(info.clearDepth[1])}};
@@ -196,7 +204,7 @@ if (info.clearColor1Enabled) {
     VkPipelineRenderingCreateInfo renderingInfo = {};
     renderingInfo.sType                         = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
 
-    VkFormat colorFormats[3]  = {};
+    VkFormat colorFormats[4]  = {};
     int colorAttachementCount = 0;
 
     if (info.colorFormat1) {
@@ -209,6 +217,10 @@ if (info.clearColor1Enabled) {
     }
     if (info.colorFormat3) {
         colorFormats[2] = (VkFormat)info.colorFormat3;
+        colorAttachementCount++;
+    }
+    if (info.colorFormat4) {
+        colorFormats[3] = (VkFormat)info.colorFormat4;
         colorAttachementCount++;
     }
 
@@ -253,7 +265,7 @@ if (info.clearColor1Enabled) {
         rasterizationState.polygonMode = VK_POLYGON_MODE_LINE;
     }
 
-    VkPipelineColorBlendAttachmentState attachementStates[3] = {};
+    VkPipelineColorBlendAttachmentState attachementStates[4] = {};
     for (i32 i = 0, si = colorAttachementCount; i < si; i++) {
         attachementStates[i].colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
                                               VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
@@ -504,7 +516,7 @@ void r_vulkanBeginRender(VulkanBeginRenderInfo beginRenderInfo) {
     u32 width  = 0;
     u32 height = 0;
 
-    VkRenderingAttachmentInfo colorAttachmentInfos[3] = {};
+    VkRenderingAttachmentInfo colorAttachmentInfos[4] = {};
 
     if (beginRenderInfo.color1) {
         colorAttachmentInfos[0].imageView = beginRenderInfo.color1->view;
@@ -551,6 +563,22 @@ void r_vulkanBeginRender(VulkanBeginRenderInfo beginRenderInfo) {
                                                   : VK_ATTACHMENT_LOAD_OP_LOAD;
         width                               = beginRenderInfo.color3->extent.width;
         height                              = beginRenderInfo.color3->extent.height;
+        colorAttachmentCount++;
+    }
+
+    if (beginRenderInfo.color4) {
+        colorAttachmentInfos[3].imageView = beginRenderInfo.color4->view;
+        colorAttachmentInfos[3].storeOp   = VK_ATTACHMENT_STORE_OP_STORE;
+        if (beginRenderInfo.pipe->clearColor4Enabled) {
+            colorAttachmentInfos[3].clearValue = beginRenderInfo.pipe->clearColor4;
+        }
+        colorAttachmentInfos[3].imageLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL;
+        colorAttachmentInfos[3].sType       = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+        colorAttachmentInfos[3].loadOp      = beginRenderInfo.pipe->clearColor4Enabled
+                                                  ? VK_ATTACHMENT_LOAD_OP_CLEAR
+                                                  : VK_ATTACHMENT_LOAD_OP_LOAD;
+        width                               = beginRenderInfo.color4->extent.width;
+        height                              = beginRenderInfo.color4->extent.height;
         colorAttachmentCount++;
     }
 
@@ -620,6 +648,16 @@ void r_vulkanBeginRender(VulkanBeginRenderInfo beginRenderInfo) {
         .pDepthAttachment     = beginRenderInfo.depth ? &depthAttachmentInfo : nullptr,
         .pStencilAttachment   = nullptr,
     };
+    static char _dbgBeginRenderLogged = 0;
+    if (!_dbgBeginRenderLogged && beginRenderInfo.color4) {
+        _dbgBeginRenderLogged = 1;
+        utils::info("[brix8dbg] beginRender pipe='%s' colorAttachmentCount=%d c4view=%p c4ext=%ux%u",
+                    beginRenderInfo.pipe ? beginRenderInfo.pipe->name : "?",
+                    colorAttachmentCount,
+                    (void*)beginRenderInfo.color4->view,
+                    beginRenderInfo.color4->extent.width,
+                    beginRenderInfo.color4->extent.height);
+    }
 
     if (utils::isDebug()) {
         vulkanLabelBegin(beginRenderInfo.cmd, beginRenderInfo.pipe->name);

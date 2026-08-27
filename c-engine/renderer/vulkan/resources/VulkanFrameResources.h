@@ -12,6 +12,7 @@ VulkanImage* vulkanFrameResourcesGetSceneColor(void);
 VulkanImage* vulkanFrameResourcesGetCompositeColor(void);
 VulkanImage* vulkanFrameResourcesGetNormals(void);
 VulkanImage* vulkanFrameResourcesGetMaterial(void);
+VulkanImage* vulkanFrameResourcesGetAlbedo(void);
 VulkanImage* vulkanFrameResourcesGetResolvedColor(void);
 VulkanImage* vulkanFrameResourcesGetReflectionColor(void);
 VulkanImage* vulkanFrameResourcesGetReflectionDepth(void);

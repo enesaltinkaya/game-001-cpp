@@ -13,6 +13,7 @@ layout(location = 0) in vec3 inPosition;
 layout(location = 1) in vec3 inNormal;
 layout(location = 8) in vec2 inUV;
 layout(location = 9) in uint inTexId;
+layout(location = 10) in vec3 inVertColor;
 
 layout(location = 2) in vec3 inPos;
 layout(location = 3) in float inYaw;
@@ -38,6 +39,8 @@ layout(location = 3) out vec2 outUV;
 layout(location = 4) flat out uint outTexId;
 layout(location = 5) flat out uint outSpecies;
 layout(location = 6) out vec3 outWorldNormal;
+layout(location = 7) out vec3 outColor;     // per-instance tint (GI albedo)
+layout(location = 8) out vec3 outVertColor; // per-part colour (GI albedo)
 
 void main() {
     // Match azgaar_props.vert: hard LOD switch, collapse the hidden side to a
@@ -109,4 +112,6 @@ void main() {
     outUV      = inUV;
     outTexId   = inTexId;
     outSpecies = inSpecies;
+    outColor     = inColor;
+    outVertColor = inVertColor;
 }

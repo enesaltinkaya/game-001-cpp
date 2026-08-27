@@ -184,6 +184,7 @@ static void recreatePipelines(void) {
         .colorFormat1       = VK_FORMAT_R16G16_SFLOAT,
         .colorFormat2       = VK_FORMAT_R16G16_SNORM,
         .colorFormat3       = VK_FORMAT_R16G16B16A16_SFLOAT,
+        .colorFormat4       = VK_FORMAT_R8G8B8A8_UNORM,
         .depthFormat        = VK_FORMAT_D32_SFLOAT);
 }
 

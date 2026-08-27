@@ -19,11 +19,13 @@ struct VulkanPipe {
     VkClearValue clearColor1;
     VkClearValue clearColor2;
     VkClearValue clearColor3;
+    VkClearValue clearColor4;
     VkClearValue clearDepth;
     bool isCompute;
     bool clearColor1Enabled;
     bool clearColor2Enabled;
     bool clearColor3Enabled;
+    bool clearColor4Enabled;
     bool clearDepthEnabled;
 };
 
@@ -50,10 +52,12 @@ struct VulkanPipeInfo {
     VkFormat colorFormat1 = VK_FORMAT_UNDEFINED;
     VkFormat colorFormat2 = VK_FORMAT_UNDEFINED;
     VkFormat colorFormat3 = VK_FORMAT_UNDEFINED;
+    VkFormat colorFormat4 = VK_FORMAT_UNDEFINED;
     VkFormat depthFormat = VK_FORMAT_UNDEFINED;
     vec4 clearColor1 = {};
     vec4 clearColor2 = {};
     vec4 clearColor3 = {};
+    vec4 clearColor4 = {};
     vec2 clearDepth = {};
     bool wireFrame = false;
     bool blend = false;
@@ -67,6 +71,7 @@ struct VulkanPipeInfo {
     bool clearColor1Enabled = false;
     bool clearColor2Enabled = false;
     bool clearColor3Enabled = false;
+    bool clearColor4Enabled = false;
     bool clearDepthEnabled = false;
     bool depthClamp = false;
     VkCompareOp depthCompareOp = VK_COMPARE_OP_NEVER;
@@ -83,6 +88,7 @@ struct VulkanBeginRenderInfo {
     struct VulkanImage* color1 = nullptr;
     struct VulkanImage* color2 = nullptr;
     struct VulkanImage* color3 = nullptr;
+    struct VulkanImage* color4 = nullptr;
     struct VulkanImage* depth = nullptr;
     int depthLayer = -1;  // -1 or 0 = use default view, >0 = use per-layer view (1-indexed)
 };

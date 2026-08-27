@@ -19,6 +19,13 @@ layout(location = 3) in vec3 inWorldNormal;
 layout(location = 0) out vec2 outVelocity;
 layout(location = 1) out vec2 outViewNormalXY;
 layout(location = 2) out vec3 outWorldNormal;
+/* GI albedo: v1 neutral gray (plan Step 8.1) — the terrain colour pass has
+ * per-biome albedo, but the pre-pass does not sample it; a flat mid-gray gives
+ * the diffuse GI a neutral (white-wash-free) weight on open ground. A
+ * per-tile biome tint can replace this later. */
+layout(location = 3) out vec4 outAlbedo;
+
+const vec3 TERRAIN_GI_ALBEDO = vec3(0.5, 0.5, 0.5);
 
 void main() {
     vec2 ndcCurrent  = inClipCurrent.xy / inClipCurrent.w;
@@ -30,4 +37,5 @@ void main() {
     vec3 n = normalize(inViewNormal);
     outViewNormalXY = n.xy;
     outWorldNormal  = normalize(inWorldNormal);
+    outAlbedo       = vec4(TERRAIN_GI_ALBEDO, 1.0);
 }

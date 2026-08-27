@@ -55,6 +55,9 @@ struct VulkanImage* vulkanBrixelizerPassGetGiSpecular(void);
 /* GI cache debug visualization (radiance / irradiance — ENGINE_BRIXGI_DEBUG),
  * render-res R16F. Null until the GI context exists. */
 struct VulkanImage* vulkanBrixelizerPassGetGiDebug(void);
+/* GI enabled (ENGINE_BRIXGI, default 1) AND the GI context exists. When false
+ * the composite pass skips the GI terms entirely (pixel-identical to pre-GI). */
+char vulkanBrixelizerPassIsGiEnabled(void);
 /* Scene hooks (called from rendererSceneCreate/Destroy in Renderer.cpp).
  * Scene create runs on the scene-load worker thread, so the FFX registration
  * is deferred to a main-thread task; a scene created before the context

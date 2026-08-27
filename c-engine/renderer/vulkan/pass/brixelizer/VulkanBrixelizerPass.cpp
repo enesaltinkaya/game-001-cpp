@@ -301,6 +301,18 @@ namespace engine {
     static u32 giFrameCount = 0;
     static u32 giDebugFrame = 120;
     static char giDebugDone = 0;
+    /* Step 8: GI on/off (ENGINE_BRIXGI, default 1 = on). When off the per-frame
+     * GI dispatch is skipped and the composite pass passes sentinel GI indices
+     * (the term is skipped entirely -> pixel-identical to pre-GI). The history
+     * copy still runs (harmless; it feeds a disabled consumer). */
+    static char        giEnabled = 1;
+    static char        giEnabledSet = 0;
+    static void resolveGiEnabled(void) {
+        if (giEnabledSet) return;
+        giEnabledSet = 1;
+        const char* env = getenv("ENGINE_BRIXGI");
+        if (env && !strcmp(env, "0")) giEnabled = 0;
+    }
 
     /* Step 3: registered scene geometry. One entry per scene (its VBO/IBO
      * registered once, one static instance per non-skinned draw). The FFX
@@ -2683,6 +2695,10 @@ namespace engine {
      * outputs → GENERAL (UAV write), then back to SHADER_READ_ONLY for the
      * Step-8 composite / dumps. */
     static void giDispatch(VulkanCommand* cmd, Camera* camera) {
+        resolveGiEnabled();
+        if (!giEnabled) {
+            return; /* GI off (ENGINE_BRIXGI=0) — composite skips the term */
+        }
         if (!giContextReady || !giDiffuse.img) {
             return;
         }
@@ -2921,6 +2937,11 @@ namespace engine {
 
     struct VulkanImage* vulkanBrixelizerPassGetGiSpecular(void) {
         return giSpecular.img ? &giSpecular : NULL;
+    }
+
+    char vulkanBrixelizerPassIsGiEnabled(void) {
+        resolveGiEnabled();
+        return giEnabled && giContextReady;
     }
 
     struct VulkanImage* vulkanBrixelizerPassGetGiDebug(void) {

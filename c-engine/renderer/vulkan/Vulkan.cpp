@@ -163,6 +163,8 @@ static void vulkanDebugDumpFrameImages(const char* shotPath) {
             img = vulkanAOPassGetOutput();
         } else if (!strcmp(tok, "scene")) {
             img = vulkanFrameResourcesGetSceneColor();
+        } else if (!strcmp(tok, "albedo")) {
+            img = vulkanFrameResourcesGetAlbedo();
         } else if (!strcmp(tok, "oitReveal")) {
             img = vulkanFrameResourcesGetOitReveal();
         } else if (!strcmp(tok, "oitAccum")) {
@@ -226,6 +228,8 @@ static void vulkanDebugDumpFrameImages(const char* shotPath) {
                 rawImg = vulkanAOPassGetOutput();
             } else if (!strcmp(sub, "scene")) {
                 rawImg = vulkanFrameResourcesGetSceneColor();
+            } else if (!strcmp(sub, "albedo")) {
+                rawImg = vulkanFrameResourcesGetAlbedo();
             } else if (!strcmp(sub, "lensIn")) {
                 rawImg = vulkanLensPassGetInput();
             } else if (!strcmp(sub, "dof")) {

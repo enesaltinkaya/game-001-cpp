@@ -18,6 +18,11 @@ layout(location = 6) in vec3 inWorldNormal;
 layout(location = 0) out vec2 outVelocity;
 layout(location = 1) out vec2 outViewNormalXY;
 layout(location = 2) out vec3 outWorldNormal;
+/* Per-pixel base colour (GI albedo — plan Step 8).  Flat material base for
+ * opaque geometry; the texture-modulated colour for alpha-cutout (the one
+ * path that samples the base-colour texture in this pass).  Water/roads leave
+ * the cleared 0. */
+layout(location = 3) out vec4 outAlbedo;
 
 vec4 sampleMaterialTexture(uint texIndex, uint samplerIndex, vec2 uv) {
     return texture(sampler2D(textures[nonuniformEXT(texIndex)],
@@ -39,6 +44,7 @@ void main() {
     vec2 velocity = clamp(pixelVelocity, vec2(-32767.0), vec2(32767.0));
 
     Material material = materialBuffer.materials[inMaterialId];
+    vec3 albedo = material.baseColor.rgb;
 
     if ((material.featureMask & (1u << MAT_ALPHA_MASK)) != 0u) {
         vec4 baseColor = material.baseColor;
@@ -78,6 +84,7 @@ void main() {
         if ((material.featureMask & (1u << MAT_HAS_TEXTURE_COLOR)) != 0u) {
             baseColor *= sampleMaterialTexture(material.colorTexture, material.colorTextureSampler, uv);
         }
+        albedo = baseColor.rgb;
 
         float cutoff = material.rmas.z;
         float alpha  = baseColor.a;
@@ -114,4 +121,6 @@ void main() {
         outViewNormalXY = normalize(inViewNormal).xy;
         outWorldNormal  = normalize(inWorldNormal);
     }
+
+    outAlbedo = vec4(clamp(albedo, 0.0, 1.0), 1.0);
 }
