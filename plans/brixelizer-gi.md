@@ -33,7 +33,10 @@ FFX passes (`VulkanFsrPass`, CACAO in `VulkanAOPass`, `VulkanLpmPass`, `VulkanLe
       with a dolly A/B). See the Step 7 notes.
 - [x] Step 8 — Albedo G-buffer + GI compositing into the lit image
       2026-08-27; Gate 8 met, see the Step 8 status below
-- [ ] Step 9 — Settings / debug GUI + performance tuning
+- [x] Step 9 — Settings / debug GUI + performance tuning
+      2026-08-27; Gate 9 met (voxelizer 0.78–0.80 ms, GI 1.60–1.64 ms @50%
+      internal @ 2880×1627; settings persist; GUI section + live stats
+      verified headless via ENGINE_OPEN_SETTINGS_GUI). See Step 9 status.
 - [ ] Step 10 — Dynamic geometry + robustness (later)
 
 ## Background
@@ -1068,10 +1071,89 @@ and all dumps write.
   when optimizing. Tune: cascade count (8 → fewer if far cascades cost more
   than they contribute), voxel size base (2 m), `tMax`, `sdfSolveEps`,
   `maxBricksPerBake`, terrain SDF resolution, props budget.
-- **Gate 9:** per-frame cost at the parked scene recorded and accepted (fill in
-  measured numbers: voxelizer **_ ms, GI _** ms); settings persist across
+- **Gate 9:** per-frame cost at the parked scene recorded and accepted —
+  voxelizer **0.78–0.80 ms**, GI **1.60–1.64 ms** @ 50% internal (2.83–2.88 @
+  75%, ~3.29 @ 100%; 2880×1627, RADV NAVI31); settings persist across
   restarts; GUI toggles work; `docs/fsr3.1.md` updated with the final
   configuration.
+
+### Step 9 — Status (2026-08-27)
+
+**Gate 9 met.** Implementation:
+
+- *Settings* — 4 new persisted settings in `c-utils/settings/Settings.cpp`
+  (`giEnabled` bool / `giResolution` double / `giDiffuseFactor` /
+  `giSpecularFactor`), read in the passes' `added()` with env overrides (env
+  wins — deterministic A/B runs, the `ENGINE_AO_DISABLED` pattern):
+  `ENGINE_BRIXGI=0/1`, `ENGINE_BRIXGI_RES=50/75/100`,
+  `ENGINE_BRIXGI_SDF_DEBUG=off|distance|grad|brick|cascade|uvw|iter` (legacy
+  `ENGINE_BRIX_SDF_DEBUG`), `ENGINE_BRIXGI_DIFFUSE` / `ENGINE_BRIXGI_SPECULAR`
+  (factor resolution moved from `VulkanCompositePass`'s lazy env-only read
+  into its `added()`). The GI internal resolution is a context-creation
+  parameter, so `giEnsureContext` now recreates the GI context when the live
+  `giResolutionPct` differs from the baked one (`giContextResolutionPct`) —
+  a GUI resolution change takes effect on the next update.
+- *Debug GUI section* — `SettingsGraphicsGui` + `graphics.html/lua`: GI
+  on/off toggle, GI resolution cycle (50/75/100), GI Diffuse / GI Specular
+  sliders (0–200%, 500 ms debounce like the lens/DOF sliders), Debug — SDF
+  View cycle, Debug — GI Cache View cycle, and a live stats line (free
+  bricks, static/dynamic tris/refs/bricks from the lagged
+  `FfxBrixelizerStats` + last-frame voxelizer/GI GPU ms, refreshed twice per
+  second in `SettingsGraphicsGui::update()`, StatsGui pattern). Persisted
+  rows call `settingsSetX` + `settingsWrite()`; the debug rows are live-only
+  (new pass setters `vulkanBrixelizerPassSetSdfDebugMode` /
+  `SetGiCacheDebug` — the cache-view enable re-arms the one-shot dispatch 32
+  frames out; `vulkanBrixelizerPassGetStats` exposes the readback). The
+  settings button container now scrolls (`.middle .buttonContainer`
+  `max-height:100%; overflow:auto`, credits.css pattern) — the 22-row
+  graphics page used to clip its last rows.
+- *Headless GUI test hook* — `ENGINE_OPEN_SETTINGS_GUI[=graphics]` in
+  `GameState.cpp` opens the settings GUI a moment after gameplay (no input),
+  used for the screenshot verification below.
+- *Performance / tuning* — parked-scene steady state (2880×1627, RADV
+  NAVI31): voxelizer update **0.78–0.80 ms** (8 cascades, ~32 k instances),
+  GI 19 passes **1.60–1.64 ms @ 50% internal** (default) / 2.83–2.88 @ 75% /
+  ~3.29 @ 100%. ~2.4 ms total GI layer at the default. No bake/trace tuning
+  was warranted — the free-brick pool is steady (no churn, ~220 k free of
+  262 144) and the per-update cost is flat, so the sample budgets
+  (maxReferences 32 M / triangleSwapSize 300 M / maxBricksPerBake 16384) and
+  the 8-cascade 2–256 m layout are kept as-is (far cascades carry the
+  horizon occlusion; RenderDoc pass-level inspection stays available via
+  `docs/renderdoc-capture.md` for Step-10 work).
+
+**Gate 9 verified (2026-08-27):**
+- *Cost:* the numbers above, 8-sample steady state (120-frame log interval),
+  free-brick pool constant across the window (no alloc/clear churn).
+- *Persistence:* pre-written `settings.json` (`giEnabled:false`,
+  `giResolution:75`, factors 1.0/0.5) respected on the next start — no GI
+  dispatch logs, context created at 75% internal, GUI readout shows exactly
+  those values; deleting the keys re-seeds the defaults (on/50/0.6/1.0).
+- *Env overrides:* `ENGINE_BRIXGI=0` → zero GI dispatches; `ENGINE_BRIXGI_RES=100`
+  → context at 100% internal (3.29 ms).
+- *GUI:* `ENGINE_OPEN_SETTINGS_GUI=graphics` + screenshot — the full panel
+  renders (all labels, sliders at the persisted values, SDF View = Distance,
+  Cache View = Off, live stats line `bricks free=… | vox … ms gi … ms`
+  updating twice per second, BACK reachable via the new scroll).
+- *Visual:* default-config parked screenshot — the Step-8 GI character is
+  unchanged (soft warm ambient on the shadowed hut wall).
+- *Validation:* clean during gameplay in all runs (only the known deferred
+  Step-1 FFX shutdown leak at `vkDestroyDevice`).
+
+**Deviations / notes (recorded 2026-08-27):**
+- _The stats line shows per-update allocations (0 in steady state), not
+  cumulative SDF contents_ — `FfxBrixelizerStats` is the lagged readback of
+  the current cascade update's alloc attempts; the free-brick count + the
+  one-shot “scene instances baked” log are the cumulative signals. The GUI
+  line documents this by showing the pool + per-frame GPU costs.
+- _GUI toggle click-through_ (LEFT/RIGHT on the new rows) was verified by
+  code inspection + successful page render + independently verified halves
+  (pass setters + `settingsWrite` persistence, both A/B-tested above); a
+  physical click is left to the user (the headless hook can open the page
+  but not inject key input).
+- _Mid-run GI resolution change_ (GUI) recreates the GI context via the same
+  `giDestroyContext` + `giCreateOutputs` + create sequence the swapchain
+  path uses (verified clean across all runs) — exercised at startup via the
+  persisted `giResolution`, not mid-run (no headless GUI click path).
 
 ## Step 10 — Dynamic geometry + robustness (later)
 

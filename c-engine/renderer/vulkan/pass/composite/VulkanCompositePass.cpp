@@ -19,20 +19,27 @@ static double     elapsedGPU;
 
 VulkanCompositePass vulkanCompositePass;
 
-/* Step 8: Brixelizer GI composite strength. Live-tunable via env (read once,
- * so A/B-tunable without a rebuild). Defaults lower than the FFX sample
- * (1.5 / 3.0): this world is open-sky outdoors, so the raw GI radiance is
- * bright and the sample factors wash out the sunlit scene. */
-static float giDiffuseFactor = 0.6f;
+/* Step 8/9: Brixelizer GI composite strength. Persisted settings
+ * (giDiffuseFactor / giSpecularFactor, resolved in added() with the
+ * ENGINE_BRIXGI_DIFFUSE / ENGINE_BRIXGI_SPECULAR env overrides — env wins so
+ * A/B test runs are deterministic), live-settable from the settings GUI.
+ * Defaults lower than the FFX sample (1.5 / 3.0): this world is open-sky
+ * outdoors, so the raw GI radiance is bright and the sample factors wash out
+ * the sunlit scene (Step 8 A/B). */
+static float giDiffuseFactor  = 0.6f;
 static float giSpecularFactor = 1.0f;
-static char  giFactorsResolved = 0;
-static void resolveGiFactors(void) {
-    if (giFactorsResolved) return;
-    giFactorsResolved = 1;
-    const char* d = getenv("ENGINE_BRIXGI_DIFFUSE");
-    if (d && *d) giDiffuseFactor = strtof(d, NULL);
-    const char* s = getenv("ENGINE_BRIXGI_SPECULAR");
-    if (s && *s) giSpecularFactor = strtof(s, NULL);
+
+float vulkanCompositePassGetGiDiffuseFactor(void) {
+    return giDiffuseFactor;
+}
+
+float vulkanCompositePassGetGiSpecularFactor(void) {
+    return giSpecularFactor;
+}
+
+void vulkanCompositePassSetGiFactors(float diffuse, float specular) {
+    giDiffuseFactor  = diffuse;
+    giSpecularFactor = specular;
 }
 
 VulkanCompositePass::VulkanCompositePass() : System("composite") {}
@@ -61,6 +68,13 @@ void VulkanCompositePass::added() {
         .name = "composite",
         .comp = "shaders/pass/composite/spv/composite.comp.spv");
 
+    /* Step 9: persisted GI composite factors + env overrides (see above). */
+    giDiffuseFactor  = (float)utils::settingsGetDouble("giDiffuseFactor");
+    giSpecularFactor = (float)utils::settingsGetDouble("giSpecularFactor");
+    const char* d    = getenv("ENGINE_BRIXGI_DIFFUSE");
+    if (d && *d) giDiffuseFactor = strtof(d, NULL);
+    const char* s = getenv("ENGINE_BRIXGI_SPECULAR");
+    if (s && *s) giSpecularFactor = strtof(s, NULL);
 }
 
 void VulkanCompositePass::preUpdate() {
@@ -68,7 +82,6 @@ void VulkanCompositePass::preUpdate() {
 }
 
 void VulkanCompositePass::update() {
-    resolveGiFactors();
     elapsedCPU = utils::nanos();
 
     if (vulkan.skipFrame) {

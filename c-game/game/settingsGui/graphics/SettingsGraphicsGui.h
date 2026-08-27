@@ -7,6 +7,7 @@ public:
     SettingsGraphicsGui();
     void added() override;
     void removed() override;
+    void update() override;
 };
 
 extern SettingsGraphicsGui settingsGraphicsGui;

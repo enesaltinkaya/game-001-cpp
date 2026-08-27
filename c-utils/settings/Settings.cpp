@@ -61,6 +61,16 @@ void settingsInit(void) {
     templates.push_back((Template{"lensGrain", "double", 20.0}));
     templates.push_back((Template{"lensChromAb", "double", 20.0}));
     templates.push_back((Template{"lensVignette", "double", 70.0}));
+    /* Brixelizer GI (FidelityFX voxelized screen-probe GI, see
+     * plans/brixelizer-gi.md Step 9): on/off, internal resolution percent
+     * (50/75/100 — a GI context creation-time parameter), and the composite
+     * strength factors. The FFX sample defaults (1.5 / 3.0) wash out this
+     * open-sky outdoor world (bright raw GI radiance), so the factors default
+     * lower (A/B-picked in Step 8). */
+    templates.push_back((Template{"giEnabled", "boolean", 1.}));
+    templates.push_back((Template{"giResolution", "double", 50.}));
+    templates.push_back((Template{"giDiffuseFactor", "double", 0.6}));
+    templates.push_back((Template{"giSpecularFactor", "double", 1.0}));
     /* DOF is off by default — a strong aesthetic effect, player's choice.
      * Focus model: focus distance (m), f-number, focal length (mm),
      * blur quality (ring count 1..8). */

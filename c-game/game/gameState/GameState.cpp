@@ -27,9 +27,13 @@
 #include "azgaar/AzgaarStreaming.h"
 #include "pauseMenu/PauseMenuGui.h"
 #include "settingsGui/SettingsGui.h"
+#include "settingsGui/graphics/SettingsGraphicsGui.h"
 #include "renderer/gui/rmlui/GuiManagerRmlUi.h"
 #include "events/Events.h"
+#include "futuretask/FutureTask.h"
 #include "timer/Timer.h"
+#include <stdio.h>
+#include <string.h>
 
 namespace game {
 static GameState currentState;
@@ -233,6 +237,30 @@ void gameStateLoadingAzgaarUpdate(void) {
 
 /* ── Gameplay callbacks ──────────────────────────────────────────────────── */
 
+/* ── Debug: headless settings GUI (plans/brixelizer-gi.md Step 9) ───────────
+ * ENGINE_OPEN_SETTINGS_GUI opens the settings GUI a moment after gameplay
+ * starts, so the GUI can be screenshot-verified without input: "graphics"
+ * opens the graphics tab directly, any other value the main settings page. */
+static char headlessSettingsEnv[32];
+static char headlessSettingsLoaded = 0;
+static char headlessSettingsOpened = 0;
+
+static void headlessSettingsGraphicsSwitch(void) {
+    /* settingsGui is added (and its main document shown) by now — hide it
+     * and open the graphics tab (mirrors showGraphicsSettings). */
+    settingsGuiHide();
+    engine::guiManagerAddGuiNextFrame(&settingsGraphicsGui);
+}
+
+static void headlessSettingsOpen(void) {
+    if (!settingsGuiIsShowing()) {
+        engine::guiManagerAddGuiNextFrame(&settingsGui);
+    }
+    if (strcmp(headlessSettingsEnv, "graphics") == 0) {
+        utils::futureTaskAddNoParam(50, headlessSettingsGraphicsSwitch);
+    }
+}
+
 void gameStateGameplayEnter(void) {
     gameplayLoadState = GAMEPLAY_LOADED_READY;
     engine::flyingCameraLoadForGameplay();
@@ -257,6 +285,17 @@ void gameStateGameplayEnter(void) {
         engine::guiManagerAddGuiNextFrame(&hud);
         engine::guiManagerAddGuiNextFrame(&compassGui);
         engine::guiManagerAddGuiNextFrame(&zoneGui);
+    }
+    /* Debug hook: open the settings GUI headlessly (see the header comment
+     * above). Fires once, after the world has settled. */
+    if (!headlessSettingsLoaded) {
+        headlessSettingsLoaded = 1;
+        const char* v = getenv("ENGINE_OPEN_SETTINGS_GUI");
+        if (v) snprintf(headlessSettingsEnv, sizeof(headlessSettingsEnv), "%s", v);
+    }
+    if (headlessSettingsEnv[0] && !headlessSettingsOpened && !hideGameplayGui) {
+        headlessSettingsOpened = 1;
+        utils::futureTaskAddNoParam(2000, headlessSettingsOpen);
     }
 }
 

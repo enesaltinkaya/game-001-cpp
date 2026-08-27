@@ -6,6 +6,8 @@
 #include "renderer/gui/rmlui/GuiManagerRmlUi.h"
 #include "renderer/vulkan/pass/ao/VulkanAOPass.h"
 #include "renderer/vulkan/pass/bloom/VulkanBloomPass.h"
+#include "renderer/vulkan/pass/brixelizer/VulkanBrixelizerPass.h"
+#include "renderer/vulkan/pass/composite/VulkanCompositePass.h"
 #include "renderer/vulkan/pass/dof/VulkanDofPass.h"
 #include "renderer/vulkan/pass/lens/VulkanLensPass.h"
 #include "renderer/vulkan/pass/shadow/VulkanShadowPass.h"
@@ -27,6 +29,15 @@ static void queueAAPersist(void);
 static void applyUpscalerModeLater(void* _);
 static void flushPendingTasks(void);
 static void renderScaleApply(void* _);
+static void syncGiLabels(void);
+static void queueGiSliderPersist(void);
+static void giSliderApply(void* _);
+static int toggleGi(void* _);
+static int giResolutionNext(void* _);
+static int giDiffuseChange(void* _);
+static int giSpecularChange(void* _);
+static int giSdfDebugNext(void* _);
+static int giCacheDebugNext(void* _);
 
 SettingsGraphicsGui settingsGraphicsGui;
 
@@ -95,6 +106,27 @@ static char dofLabelText[16];
 static char contactShadowLabelText[16];
 static char fogLabelText[16];
 static char taaLabelText[16];
+/* Step 9: Brixelizer GI section (plans/brixelizer-gi.md). giEnabled /
+ * giResolution / the factor sliders are persisted (settings.json); the SDF
+ * debug view + GI cache view are debug-only (no persistence). */
+static char   giEnabled;
+static int    giResolution;
+static float  giDiffusePercent;
+static float  giSpecularPercent;
+static int    giSdfDebugMode;
+static int    giCacheDebugMode;
+static int    giSliderTaskKey = -1;
+static double giStatsLastUpdate = 0.0;
+static char*  giLabel;
+static char   giLabelText[16];
+static char*  giResolutionLabel;
+static char   giResolutionLabelText[16];
+static char*  giSdfDebugLabel;
+static char   giSdfDebugLabelText[32];
+static char*  giCacheDebugLabel;
+static char   giCacheDebugLabelText[32];
+static char   giStatsLabelText[192];
+static char*  giStatsLabel;
 
 static int upscalerPrev(void* _);
 static int upscalerNext(void* _);
@@ -130,6 +162,13 @@ void SettingsGraphicsGui::added() {
     engine::luaRegisterFunction("toggleContactShadow", toggleContactShadow);
     engine::luaRegisterFunction("toggleFog", toggleFog);
     engine::luaRegisterFunction("toggleTaa", toggleTaa);
+    /* Step 9: Brixelizer GI (plans/brixelizer-gi.md). */
+    engine::luaRegisterFunction("toggleGi", toggleGi);
+    engine::luaRegisterFunction("giResolutionNext", giResolutionNext);
+    engine::luaRegisterFunction("giDiffuseChange", giDiffuseChange);
+    engine::luaRegisterFunction("giSpecularChange", giSpecularChange);
+    engine::luaRegisterFunction("giSdfDebugNext", giSdfDebugNext);
+    engine::luaRegisterFunction("giCacheDebugNext", giCacheDebugNext);
 
     /* Read live renderer state rather than stale settings values so that
      * changes made via the debug GUI (or elsewhere) are reflected. */
@@ -144,6 +183,21 @@ void SettingsGraphicsGui::added() {
     dofQuality          = (float)engine::vulkanDofPassGetQuality();
     dofParamsDisabled   = engine::vulkanDofPassIsDisabled();
     syncAAUi();
+
+    /* Step 9: Brixelizer GI — the pass state is the source of truth (it
+     * already merged the persisted settings + env overrides in added()). */
+    giEnabled          = engine::vulkanBrixelizerPassGetGiEnabled() ? 1 : 0;
+    giResolution       = engine::vulkanBrixelizerPassGetGiResolution();
+    giDiffusePercent    = engine::vulkanCompositePassGetGiDiffuseFactor() * 100.0f;
+    giSpecularPercent   = engine::vulkanCompositePassGetGiSpecularFactor() * 100.0f;
+    giSdfDebugMode      = engine::vulkanBrixelizerPassGetSdfDebugMode();
+    giCacheDebugMode    = engine::vulkanBrixelizerPassGetGiCacheDebug();
+    syncGiLabels();
+    /* The stats line starts as a placeholder — the first real value lands in
+     * update(). The pointer must be non-null when the document renders
+     * (RMLUI copies *ptr into a std::string). */
+    snprintf(giStatsLabelText, sizeof(giStatsLabelText), "bricks free=…");
+    giStatsLabel = giStatsLabelText;
 
     renderScalePercent = engine::rendererGetRenderScale() * 100.0f;
 
@@ -170,6 +224,13 @@ void SettingsGraphicsGui::added() {
     rmlBind(model, "contactShadowLabel", &contactShadowLabel);
     rmlBind(model, "fogLabel", &fogLabel);
     rmlBind(model, "taaLabel", &taaLabel);
+    rmlBind(model, "giLabel", &giLabel);
+    rmlBind(model, "giResolutionLabel", &giResolutionLabel);
+    rmlBindFloat(model, "giDiffusePercent", &giDiffusePercent);
+    rmlBindFloat(model, "giSpecularPercent", &giSpecularPercent);
+    rmlBind(model, "giSdfDebugLabel", &giSdfDebugLabel);
+    rmlBind(model, "giCacheDebugLabel", &giCacheDebugLabel);
+    rmlBind(model, "giStatsLabel", &giStatsLabel);
     rmlLoadDocument(document);
     rmlShowDocument(document);
 }
@@ -389,6 +450,10 @@ static void flushPendingTasks(void) {
         utils::futureTaskRemove(dofTaskKey);
         persistDofSettings(nullptr);
     }
+    if (giSliderTaskKey != -1) {
+        utils::futureTaskRemove(giSliderTaskKey);
+        giSliderApply(nullptr);
+    }
 }
 
 int graphicsClose(void* _) {
@@ -585,5 +650,121 @@ int toggleTaa(void* _) {
     return 0;
 }
 
+/* ── Step 9: Brixelizer GI (plans/brixelizer-gi.md) ──────────────────────────
+ * On/off + internal resolution + the composite factors are persisted
+ * (settings.json, written with settingsWrite); the SDF debug view and the GI
+ * cache view are debug-only. The pass state is the source of truth (it merged
+ * the settings + env overrides at startup). */
+
+static void syncGiLabels(void) {
+    static const char* giSdfDebugNames[] = {"Off", "Distance", "Gradient", "Brick ID", "Cascade", "UVW", "Iterations"};
+    static const char* giCacheNames[]    = {"Off", "Radiance", "Irradiance"};
+    snprintf(giLabelText, sizeof(giLabelText), "%s", giEnabled ? "On" : "Off");
+    giLabel = giLabelText;
+    snprintf(giResolutionLabelText, sizeof(giResolutionLabelText), "%d%%", giResolution);
+    giResolutionLabel = giResolutionLabelText;
+    snprintf(giSdfDebugLabelText, sizeof(giSdfDebugLabelText), "%s", giSdfDebugNames[giSdfDebugMode]);
+    giSdfDebugLabel = giSdfDebugLabelText;
+    snprintf(giCacheDebugLabelText, sizeof(giCacheDebugLabelText), "%s", giCacheNames[giCacheDebugMode]);
+    giCacheDebugLabel = giCacheDebugLabelText;
+}
+
+int toggleGi(void* _) {
+    giEnabled = engine::vulkanBrixelizerPassGetGiEnabled() ? 0 : 1;
+    engine::vulkanBrixelizerPassSetGiEnabled(giEnabled);
+    syncGiLabels();
+    rmlUpdateDirtyAll(model);
+    utils::settingsSetBool("giEnabled", giEnabled != 0);
+    utils::settingsWrite();
+    return 0;
+}
+
+int giResolutionNext(void* _) {
+    static const int giResList[] = {50, 75, 100};
+    int i = (giResolution == 50) ? 0 : (giResolution == 75) ? 1 : 2;
+    giResolution = giResList[(i + 1) % 3];
+    /* Recreating the GI context happens on the render thread (the next
+     * update's giEnsureContext) — a one-frame hitch, acceptable. */
+    engine::vulkanBrixelizerPassSetGiResolution(giResolution);
+    syncGiLabels();
+    rmlUpdateDirtyAll(model);
+    utils::settingsSetDouble("giResolution", static_cast<double>(giResolution));
+    utils::settingsWrite();
+    return 0;
+}
+
+static void giSliderApply(void* _) {
+    giSliderTaskKey = -1;
+
+    /* Read the bound slider values here (debounced), not in the change
+     * handler — RMLUI only writes the fresh value back into the bound
+     * variables while processing the 'change' event (same caveat as the CAS
+     * / lens / DOF sliders). */
+    engine::vulkanCompositePassSetGiFactors(giDiffusePercent / 100.0f,
+                                            giSpecularPercent / 100.0f);
+    utils::settingsSetDouble("giDiffuseFactor", giDiffusePercent / 100.0);
+    utils::settingsSetDouble("giSpecularFactor", giSpecularPercent / 100.0);
+    utils::settingsWrite();
+    if (model) {
+        rmlUpdateDirtyAll(model);
+    }
+}
+
+static void queueGiSliderPersist(void) {
+    if (giSliderTaskKey != -1) {
+        utils::futureTaskRemove(giSliderTaskKey);
+    }
+    giSliderTaskKey = utils::futureTaskAdd(500, giSliderApply, nullptr);
+}
+
+int giDiffuseChange(void* _) {
+    queueGiSliderPersist();
+    return 0;
+}
+
+int giSpecularChange(void* _) {
+    queueGiSliderPersist();
+    return 0;
+}
+
+int giSdfDebugNext(void* _) {
+    giSdfDebugMode = (giSdfDebugMode + 1) % 7;
+    /* Debug tool — no persistence (the env override ENGINE_BRIXGI_SDF_DEBUG
+     * seeds it at startup; see VulkanBrixelizerPass::added). */
+    engine::vulkanBrixelizerPassSetSdfDebugMode(giSdfDebugMode);
+    syncGiLabels();
+    rmlUpdateDirtyAll(model);
+    return 0;
+}
+
+int giCacheDebugNext(void* _) {
+    giCacheDebugMode = (giCacheDebugMode + 1) % 3;
+    engine::vulkanBrixelizerPassSetGiCacheDebug(giCacheDebugMode);
+    syncGiLabels();
+    rmlUpdateDirtyAll(model);
+    return 0;
+}
+
+void SettingsGraphicsGui::update() {
+    /* Step 9: live Brixelizer GI stats readout — the lagged GPU stats
+     * readback + the last frame's profiled GPU costs, twice per second
+     * (StatsGui pattern). */
+    double now = utils::nanos();
+    if (now < giStatsLastUpdate + BILLION / 2.) {
+        return;
+    }
+    giStatsLastUpdate = now;
+    u32 freeBricks = 0, sTris = 0, sRefs = 0, sBricks = 0, dTris = 0, dRefs = 0, dBricks = 0;
+    double voxelizerMs = 0.0, giMs = 0.0;
+    engine::vulkanBrixelizerPassGetStats(&freeBricks, &sTris, &sRefs, &sBricks,
+                                         &dTris, &dRefs, &dBricks, &voxelizerMs, &giMs);
+    snprintf(giStatsLabelText, sizeof(giStatsLabelText),
+             "bricks free=%u  s: %u tris / %u refs / %u bricks  d: %u / %u / %u  |  vox %.2f ms  gi %.2f ms",
+             freeBricks, sTris, sRefs, sBricks, dTris, dRefs, dBricks, voxelizerMs, giMs);
+    giStatsLabel = giStatsLabelText;
+    if (model) {
+        rmlUpdateDirtyAll(model);
+    }
+}
 
 }  // namespace game

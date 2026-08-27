@@ -55,9 +55,43 @@ struct VulkanImage* vulkanBrixelizerPassGetGiSpecular(void);
 /* GI cache debug visualization (radiance / irradiance — ENGINE_BRIXGI_DEBUG),
  * render-res R16F. Null until the GI context exists. */
 struct VulkanImage* vulkanBrixelizerPassGetGiDebug(void);
-/* GI enabled (ENGINE_BRIXGI, default 1) AND the GI context exists. When false
- * the composite pass skips the GI terms entirely (pixel-identical to pre-GI). */
+/* GI enabled (persisted `giEnabled` setting, env override ENGINE_BRIXGI,
+ * default on) AND the GI context exists. When false the composite pass
+ * skips the GI terms entirely (pixel-identical to pre-GI). */
 char vulkanBrixelizerPassIsGiEnabled(void);
+/* Step 9: settings / debug GUI (plans/brixelizer-gi.md). GI on/off and the
+ * internal resolution are persisted settings (settings.json, written by the
+ * settings GUI) with env overrides (ENGINE_BRIXGI / ENGINE_BRIXGI_RES, read
+ * in added() — the ENGINE_AO_DISABLED pattern). The SDF debug mode and the GI
+ * cache view are debug-only (env: ENGINE_BRIXGI_SDF_DEBUG, legacy
+ * ENGINE_BRIX_SDF_DEBUG, and ENGINE_BRIXGI_DEBUG) — no persistence. */
+char vulkanBrixelizerPassGetGiEnabled(void);
+void vulkanBrixelizerPassSetGiEnabled(char enabled);
+/* Internal GI resolution percent (50/75/100, clamped to those values).
+ * A change recreates the GI context (internalResolution is a
+ * context-creation parameter). */
+int vulkanBrixelizerPassGetGiResolution(void);
+void vulkanBrixelizerPassSetGiResolution(int percent);
+/* SDF debug visualization mode: 0 = off, 1 = distance, 2 = gradient,
+ * 3 = brick ID, 4 = cascade ID, 5 = UVW, 6 = iteration heatmap. */
+int vulkanBrixelizerPassGetSdfDebugMode(void);
+void vulkanBrixelizerPassSetSdfDebugMode(int mode);
+/* GI cache debug view: 0 = off, 1 = radiance cache, 2 = irradiance cache.
+ * Enables re-arm the one-shot cache visualization dispatch (a few frames out).
+ * 0 disables it (the pending one-shot is cancelled). */
+int vulkanBrixelizerPassGetGiCacheDebug(void);
+void vulkanBrixelizerPassSetGiCacheDebug(int mode);
+/* Latest (lagged) voxelizer stats + last-frame GPU costs in ms, for the
+ * settings GUI readout. Any out pointer may be NULL. */
+void vulkanBrixelizerPassGetStats(u32* outFreeBricks,
+                                  u32* outStaticTris,
+                                  u32* outStaticRefs,
+                                  u32* outStaticBricks,
+                                  u32* outDynamicTris,
+                                  u32* outDynamicRefs,
+                                  u32* outDynamicBricks,
+                                  double* outVoxelizerMs,
+                                  double* outGiMs);
 /* Scene hooks (called from rendererSceneCreate/Destroy in Renderer.cpp).
  * Scene create runs on the scene-load worker thread, so the FFX registration
  * is deferred to a main-thread task; a scene created before the context

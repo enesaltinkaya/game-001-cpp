@@ -45,14 +45,11 @@ body {
 
 .middle .buttonContainer {
   max-width: 540dp;
-}
-
-#videoSettings .middle .buttonContainer {
-  max-width: 540dp;
-}
-
-#graphicsSettings .middle .buttonContainer {
-  max-width: 540dp;
+  /* The graphics page outgrows the screen (16+ effect rows) — constrain to
+     the available height and scroll like credits.css (overflow: auto keeps
+     the scrollbar hidden on the shorter audio/video pages). */
+  max-height: 100%;
+  overflow: auto;
 }
 
 #audioSettings button.active,

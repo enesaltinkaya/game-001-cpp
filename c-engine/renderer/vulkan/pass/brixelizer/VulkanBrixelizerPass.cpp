@@ -284,6 +284,8 @@ namespace engine {
     static void renderEnvCube(void);
     static void giHistoryCopy(void);
     static void blueNoiseGenerate(u8* out, u32 width);
+    static void sdfDebugModeFromString(const char* value);
+    static FfxBrixelizerGIInternalResolution giInternalResolutionFromPct(int percent);
 
     /* ── Step 7: GI context + outputs (plans/brixelizer-gi.md) ──────
      * - giContext: ffxBrixelizerGIContext (DEPTH_INVERTED, 50% internal,
@@ -322,7 +324,6 @@ namespace engine {
      * explicitly with ENGINE_BRIXGI_DEBUG=radiance|irradiance. */
     static char        giDebugEnabled = 0;
     static FfxBrixelizerGIDebugMode giDebugMode;
-    static char        giDebugModeSet;
     /* One-shot: the cache debug visualization runs on a SINGLE frame
      * (giDebugFrame, counted from GI-context creation) rather than every
      * frame — a per-frame second dispatch would keep the FFX frame index at
@@ -332,18 +333,20 @@ namespace engine {
     static u32 giFrameCount = 0;
     static u32 giDebugFrame = 120;
     static char giDebugDone = 0;
-    /* Step 8: GI on/off (ENGINE_BRIXGI, default 1 = on). When off the per-frame
-     * GI dispatch is skipped and the composite pass passes sentinel GI indices
-     * (the term is skipped entirely -> pixel-identical to pre-GI). The history
-     * copy still runs (harmless; it feeds a disabled consumer). */
-    static char        giEnabled = 1;
-    static char        giEnabledSet = 0;
-    static void resolveGiEnabled(void) {
-        if (giEnabledSet) return;
-        giEnabledSet = 1;
-        const char* env = getenv("ENGINE_BRIXGI");
-        if (env && !strcmp(env, "0")) giEnabled = 0;
-    }
+    /* Step 9: GI on/off + internal resolution (plans/brixelizer-gi.md).
+     * Persisted settings (settings.json: giEnabled / giResolution) resolved
+     * in added() with env overrides (ENGINE_BRIXGI / ENGINE_BRIXGI_RES) —
+     * env wins so an A/B test run does not depend on the player's saved
+     * settings (the ENGINE_AO_DISABLED pattern). When GI is off the
+     * per-frame GI dispatch is skipped and the composite pass passes sentinel
+     * GI indices (the term is skipped entirely -> pixel-identical to pre-GI).
+     * The history copy still runs (harmless; it feeds a disabled consumer). */
+    static char giEnabled        = 1;
+    static int  giResolutionPct  = 50;
+    /* Internal resolution baked into the live GI context. displaySize AND
+     * internalResolution are creation-time parameters, so a mismatch with
+     * giResolutionPct recreates the context (giEnsureContext). */
+    static int  giContextResolutionPct = 0;
 
     /* Step 3: registered scene geometry. One entry per scene (its VBO/IBO
      * registered once, one static instance per non-skinned draw). The FFX
@@ -376,10 +379,11 @@ namespace engine {
     static u64 regBakeGpuTotal;
     static double regBakeGpuMax;
 
-    /* Debug visualization mode (ENGINE_BRIX_SDF_DEBUG=distance|grad|brick|
-     * cascade|uvw|iter; default distance). Step 9 moves this to the GUI. */
-    static FfxBrixelizerTraceDebugModes sdfDebugMode;
-    static char sdfDebugModeSet;
+    /* Step 9: SDF debug visualization mode. Resolved in added() from
+     * ENGINE_BRIXGI_SDF_DEBUG (legacy ENGINE_BRIX_SDF_DEBUG:
+     * off|distance|grad|brick|cascade|uvw|iter; default distance); the
+     * settings GUI overrides it live (debug tool — not persisted). */
+    static FfxBrixelizerTraceDebugModes sdfDebugMode = FFX_BRIXELIZER_TRACE_DEBUG_MODE_DISTANCE;
     static char sdfDebugEnabled = 1;
     static char statsTrisLogged;
     /* Debug ray-march range (ENGINE_BRIX_SDF_TMAX, default the sample's
@@ -401,6 +405,45 @@ namespace engine {
 
     void VulkanBrixelizerPass::added() {
         utils::signalSubscribe("swapchainCreated", swapchainCreated);
+        /* Step 9: persisted settings + env overrides (see the state comments
+         * above). The settings file is loaded by utilsInit before the
+         * renderer exists — the same pattern the lens/DOF passes use. Env
+         * wins over the persisted value so A/B test runs are deterministic. */
+        giEnabled       = utils::settingsGetBool("giEnabled") ? 1 : 0;
+        giResolutionPct = (int)utils::settingsGetDouble("giResolution");
+        {
+            const char* env = getenv("ENGINE_BRIXGI");
+            if (env && *env) giEnabled = atoi(env) ? 1 : 0;
+            env             = getenv("ENGINE_BRIXGI_RES");
+            if (env && *env) giResolutionPct = atoi(env);
+        }
+        if (giResolutionPct != 50 && giResolutionPct != 75 && giResolutionPct != 100) {
+            giResolutionPct = 50;
+        }
+        /* SDF debug visualization mode (ENGINE_BRIXGI_SDF_DEBUG, legacy
+         * ENGINE_BRIX_SDF_DEBUG; off|distance|grad|brick|cascade|uvw|iter,
+         * default distance). */
+        {
+            const char* env = getenv("ENGINE_BRIXGI_SDF_DEBUG");
+            if (!env || !*env) env = getenv("ENGINE_BRIX_SDF_DEBUG");
+            sdfDebugModeFromString(env);
+        }
+        /* GI cache debug view (ENGINE_BRIXGI_DEBUG=radiance|irradiance, off
+         * by default — the cache viz is a separate FFX dispatch). */
+        {
+            const char* env = getenv("ENGINE_BRIXGI_DEBUG");
+            if (env && !strcmp(env, "radiance")) {
+                giDebugMode    = FFX_BRIXELIZER_GI_DEBUG_MODE_RADIANCE_CACHE;
+                giDebugEnabled = 1;
+            } else if (env && !strcmp(env, "irradiance")) {
+                giDebugMode    = FFX_BRIXELIZER_GI_DEBUG_MODE_IRRADIANCE_CACHE;
+                giDebugEnabled = 1;
+            } else {
+                giDebugEnabled = 0; /* "off" or unrecognized */
+            }
+            const char* frameEnv = getenv("ENGINE_BRIXGI_DEBUG_FRAME");
+            if (frameEnv && *frameEnv) giDebugFrame = (u32)atoi(frameEnv);
+        }
         profile      = vulkanCreateProfile("brixelizer");
         profileReady = 1;
         envCubePipe  = vulkanCreatePipe(.name = "brixelizer_envcube",
@@ -2275,26 +2318,47 @@ namespace engine {
         return 1;
     }
 
-    static FfxBrixelizerTraceDebugModes getSdfDebugMode(void) {
-        if (!sdfDebugModeSet) {
-            sdfDebugModeSet = 1;
-            const char* env = getenv("ENGINE_BRIX_SDF_DEBUG");
-            if (env && !strcmp(env, "grad")) {
-                sdfDebugMode = FFX_BRIXELIZER_TRACE_DEBUG_MODE_GRAD;
-            } else if (env && !strcmp(env, "brick")) {
-                sdfDebugMode = FFX_BRIXELIZER_TRACE_DEBUG_MODE_BRICK_ID;
-            } else if (env && !strcmp(env, "cascade")) {
-                sdfDebugMode = FFX_BRIXELIZER_TRACE_DEBUG_MODE_CASCADE_ID;
-            } else if (env && !strcmp(env, "uvw")) {
-                sdfDebugMode = FFX_BRIXELIZER_TRACE_DEBUG_MODE_UVW;
-            } else if (env && !strcmp(env, "iter")) {
-                sdfDebugMode = FFX_BRIXELIZER_TRACE_DEBUG_MODE_ITERATIONS;
-            } else if (env && !strcmp(env, "off")) {
-                sdfDebugEnabled = 0;
-            } else {
-                sdfDebugMode = FFX_BRIXELIZER_TRACE_DEBUG_MODE_DISTANCE;
-            }
+    /* Parse the SDF debug visualization mode string (see added()):
+     * off|distance|grad|brick|cascade|uvw|iter; "off" or an unrecognized
+     * value disables the extra dispatch. A NULL/empty string keeps the
+     * default (distance). */
+    static void sdfDebugModeFromString(const char* value) {
+        if (!value || !*value || !strcmp(value, "distance")) {
+            sdfDebugMode    = FFX_BRIXELIZER_TRACE_DEBUG_MODE_DISTANCE;
+            sdfDebugEnabled = 1;
+        } else if (!strcmp(value, "grad")) {
+            sdfDebugMode    = FFX_BRIXELIZER_TRACE_DEBUG_MODE_GRAD;
+            sdfDebugEnabled = 1;
+        } else if (!strcmp(value, "brick")) {
+            sdfDebugMode    = FFX_BRIXELIZER_TRACE_DEBUG_MODE_BRICK_ID;
+            sdfDebugEnabled = 1;
+        } else if (!strcmp(value, "cascade")) {
+            sdfDebugMode    = FFX_BRIXELIZER_TRACE_DEBUG_MODE_CASCADE_ID;
+            sdfDebugEnabled = 1;
+        } else if (!strcmp(value, "uvw")) {
+            sdfDebugMode    = FFX_BRIXELIZER_TRACE_DEBUG_MODE_UVW;
+            sdfDebugEnabled = 1;
+        } else if (!strcmp(value, "iter")) {
+            sdfDebugMode    = FFX_BRIXELIZER_TRACE_DEBUG_MODE_ITERATIONS;
+            sdfDebugEnabled = 1;
+        } else {
+            sdfDebugEnabled = 0;
         }
+    }
+
+    static FfxBrixelizerGIInternalResolution giInternalResolutionFromPct(int percent) {
+        if (percent >= 100) {
+            return FFX_BRIXELIZER_GI_INTERNAL_RESOLUTION_NATIVE;
+        }
+        if (percent >= 75) {
+            return FFX_BRIXELIZER_GI_INTERNAL_RESOLUTION_75_PERCENT;
+        }
+        return FFX_BRIXELIZER_GI_INTERNAL_RESOLUTION_50_PERCENT;
+    }
+
+    static FfxBrixelizerTraceDebugModes getSdfDebugMode(void) {
+        /* Mode resolved in added() (env) / by the settings GUI; only the
+         * debug tMax is still env-only (ENGINE_BRIX_SDF_TMAX). */
         if (!sdfDebugTMaxSet) {
             sdfDebugTMaxSet = 1;
             const char* env = getenv("ENGINE_BRIX_SDF_TMAX");
@@ -2775,22 +2839,8 @@ namespace engine {
      * default 120, counted from GI-context creation) — a single extra FFX
      * dispatch, after which the main dispatch resumes 1-per-frame (safe). */
     static FfxBrixelizerGIDebugMode getGIDebugMode(void) {
-        if (!giDebugModeSet) {
-            giDebugModeSet = 1;
-            const char* env = getenv("ENGINE_BRIXGI_DEBUG");
-            if (env && !strcmp(env, "irradiance")) {
-                giDebugMode    = FFX_BRIXELIZER_GI_DEBUG_MODE_IRRADIANCE_CACHE;
-                giDebugEnabled = 1;
-            } else if (env && !strcmp(env, "radiance")) {
-                giDebugMode    = FFX_BRIXELIZER_GI_DEBUG_MODE_RADIANCE_CACHE;
-                giDebugEnabled = 1;
-            } else if (env && !strcmp(env, "off")) {
-                giDebugEnabled = 0;
-            }
-            const char* frameEnv = getenv("ENGINE_BRIXGI_DEBUG_FRAME");
-            if (frameEnv && *frameEnv) giDebugFrame = (u32)atoi(frameEnv);
-            /* No env (or unrecognized) → stays disabled (giDebugEnabled = 0). */
-        }
+        /* Resolved in added() (ENGINE_BRIXGI_DEBUG / ENGINE_BRIXGI_DEBUG_FRAME);
+         * the settings GUI overrides it live (re-arming the one-shot). */
         return giDebugMode;
     }
 
@@ -2851,16 +2901,17 @@ namespace engine {
         vulkanTransientEnd(cmd, 1);
     }
 
-    /* Creates (or, on a resolution change, recreates) the GI context + outputs.
-     * displaySize is fixed at creation, so a render-size mismatch destroys and
-     * rebuilds both (FSR-pass pattern). The GI context holds a raw pointer to
-     * the voxelizer context, so the voxelizer must exist first. */
+    /* Creates (or, on a resolution / internal-resolution change, recreates)
+     * the GI context + outputs. displaySize AND internalResolution are fixed
+     * at creation, so a render-size or internal-resolution mismatch destroys
+     * and rebuilds both (FSR-pass pattern). The GI context holds a raw pointer
+     * to the voxelizer context, so the voxelizer must exist first. */
     static char giEnsureContext(u32 renderW, u32 renderH) {
         if (!contextReady || renderW == 0 || renderH == 0) {
             return 0;
         }
         if (giContextReady && giDiffuse.img && (u32)giDiffuse.extent.width == renderW &&
-            (u32)giDiffuse.extent.height == renderH) {
+            (u32)giDiffuse.extent.height == renderH && giContextResolutionPct == giResolutionPct) {
             return 1;
         }
         giDestroyContext();
@@ -2874,7 +2925,7 @@ namespace engine {
          * pitfall #3: the flag flips ffxIsBackground / BackgroundDepth / the
          * closer-op in the GI shaders to the reverse-Z convention. */
         desc.flags              = FFX_BRIXELIZER_GI_FLAG_DEPTH_INVERTED;
-        desc.internalResolution = FFX_BRIXELIZER_GI_INTERNAL_RESOLUTION_50_PERCENT;
+        desc.internalResolution = giInternalResolutionFromPct(giResolutionPct);
         desc.displaySize.width  = renderW;
         desc.displaySize.height = renderH;
         desc.backendInterface   = backendInterface; /* shared with the voxelizer */
@@ -2887,18 +2938,21 @@ namespace engine {
                     "Free VRAM by closing other GPU applications and try again.");
             }
             utils::error("vulkanBrixelizerPass: ffxBrixelizerGIContextCreate failed: %d", result);
-            giContext = FfxBrixelizerGIContext{};
+            giContext              = FfxBrixelizerGIContext{};
+            giContextResolutionPct = 0;
             return 0;
         }
-        giContextReady = 1;
-        giHavePrev     = 0; /* temporal history restarts with the context */
-        giFrameCount   = 0; /* one-shot debug-viz frame counter restarts too */
-        giDebugDone    = 0;
+        giContextReady         = 1;
+        giContextResolutionPct = giResolutionPct;
+        giHavePrev             = 0; /* temporal history restarts with the context */
+        giFrameCount           = 0; /* one-shot debug-viz frame counter restarts too */
+        giDebugDone            = 0;
         if (!giContextLogged) {
             giContextLogged = 1;
-            utils::info("vulkanBrixelizerPass: created GI context (%ux%u display, 50%% internal, reverse-Z)",
+            utils::info("vulkanBrixelizerPass: created GI context (%ux%u display, %d%% internal, reverse-Z)",
                         renderW,
-                        renderH);
+                        renderH,
+                        giResolutionPct);
         }
         return 1;
     }
@@ -2910,9 +2964,8 @@ namespace engine {
      * outputs → GENERAL (UAV write), then back to SHADER_READ_ONLY for the
      * Step-8 composite / dumps. */
     static void giDispatch(VulkanCommand* cmd, Camera* camera) {
-        resolveGiEnabled();
         if (!giEnabled) {
-            return; /* GI off (ENGINE_BRIXGI=0) — composite skips the term */
+            return; /* GI off (giEnabled setting / ENGINE_BRIXGI) — composite skips the term */
         }
         if (!giContextReady || !giDiffuse.img) {
             return;
@@ -3061,8 +3114,9 @@ namespace engine {
         vulkanTransition(cmd, &giSpecular, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
 
         if (frameIndex % 120 == 0 && giProfileReady) {
-            utils::info("vulkanBrixelizerPass: GI dispatch gpu=%.3f ms (19 passes, 50%% internal)",
-                        giProfile.elapsed / MILLION);
+            utils::info("vulkanBrixelizerPass: GI dispatch gpu=%.3f ms (19 passes, %d%% internal)",
+                        giProfile.elapsed / MILLION,
+                        giResolutionPct);
         }
     }
 
@@ -3155,12 +3209,114 @@ namespace engine {
     }
 
     char vulkanBrixelizerPassIsGiEnabled(void) {
-        resolveGiEnabled();
         return giEnabled && giContextReady;
     }
 
     struct VulkanImage* vulkanBrixelizerPassGetGiDebug(void) {
         return giDebug.img ? &giDebug : NULL;
+    }
+
+    /* ── Step 9: settings / debug GUI (plans/brixelizer-gi.md) ───────────
+     * Called from the settings GUI (main thread). The setters only change
+     * pass state; the per-frame update() picks them up (a GI resolution
+     * change recreates the GI context there). */
+    void vulkanBrixelizerPassSetGiEnabled(char enabled) {
+        giEnabled = enabled;
+    }
+
+    char vulkanBrixelizerPassGetGiEnabled(void) {
+        return giEnabled;
+    }
+
+    int vulkanBrixelizerPassGetGiResolution(void) {
+        return giResolutionPct;
+    }
+
+    void vulkanBrixelizerPassSetGiResolution(int percent) {
+        if (percent != 50 && percent != 75 && percent != 100) {
+            percent = 50;
+        }
+        /* giEnsureContext recreates the GI context on the next update (the
+         * internal resolution is a context-creation parameter). */
+        giResolutionPct = percent;
+    }
+
+    int vulkanBrixelizerPassGetSdfDebugMode(void) {
+        if (!sdfDebugEnabled) {
+            return 0; /* off */
+        }
+        switch (sdfDebugMode) {
+        case FFX_BRIXELIZER_TRACE_DEBUG_MODE_GRAD:
+            return 2;
+        case FFX_BRIXELIZER_TRACE_DEBUG_MODE_BRICK_ID:
+            return 3;
+        case FFX_BRIXELIZER_TRACE_DEBUG_MODE_CASCADE_ID:
+            return 4;
+        case FFX_BRIXELIZER_TRACE_DEBUG_MODE_UVW:
+            return 5;
+        case FFX_BRIXELIZER_TRACE_DEBUG_MODE_ITERATIONS:
+            return 6;
+        case FFX_BRIXELIZER_TRACE_DEBUG_MODE_DISTANCE:
+            break;
+        default:
+            break;
+        }
+        return 1; /* distance */
+    }
+
+    void vulkanBrixelizerPassSetSdfDebugMode(int mode) {
+        static const char* names[] = {NULL, "distance", "grad", "brick", "cascade", "uvw", "iter"};
+        if (mode < 0 || mode > 6) {
+            mode = 0;
+        }
+        sdfDebugModeFromString(mode == 0 ? "off" : names[mode]);
+    }
+
+    int vulkanBrixelizerPassGetGiCacheDebug(void) {
+        if (!giDebugEnabled) {
+            return 0; /* off */
+        }
+        return giDebugMode == FFX_BRIXELIZER_GI_DEBUG_MODE_RADIANCE_CACHE ? 1 : 2;
+    }
+
+    void vulkanBrixelizerPassSetGiCacheDebug(int mode) {
+        if (mode == 1) {
+            giDebugMode    = FFX_BRIXELIZER_GI_DEBUG_MODE_RADIANCE_CACHE;
+            giDebugEnabled = 1;
+        } else if (mode == 2) {
+            giDebugMode    = FFX_BRIXELIZER_GI_DEBUG_MODE_IRRADIANCE_CACHE;
+            giDebugEnabled = 1;
+        } else {
+            giDebugEnabled = 0;
+        }
+        if (giDebugEnabled) {
+            /* Re-arm the one-shot cache visualization a few frames out: the
+             * extra dispatch's dynamic views must not overlap the in-flight
+             * window of the current frame's dispatch (see the giDebugFrame
+             * comment) — 32 frames is well past the 4-FFX-frame lifetime. */
+            giDebugDone  = 0;
+            giDebugFrame = giFrameCount + 32;
+        }
+    }
+
+    void vulkanBrixelizerPassGetStats(u32* outFreeBricks,
+                                      u32* outStaticTris,
+                                      u32* outStaticRefs,
+                                      u32* outStaticBricks,
+                                      u32* outDynamicTris,
+                                      u32* outDynamicRefs,
+                                      u32* outDynamicBricks,
+                                      double* outVoxelizerMs,
+                                      double* outGiMs) {
+        if (outFreeBricks)    *outFreeBricks    = stats.contextStats.freeBricks;
+        if (outStaticTris)    *outStaticTris    = stats.staticCascadeStats.trianglesAllocated;
+        if (outStaticRefs)    *outStaticRefs    = stats.staticCascadeStats.referencesAllocated;
+        if (outStaticBricks)  *outStaticBricks  = stats.staticCascadeStats.bricksAllocated;
+        if (outDynamicTris)   *outDynamicTris   = stats.dynamicCascadeStats.trianglesAllocated;
+        if (outDynamicRefs)   *outDynamicRefs   = stats.dynamicCascadeStats.referencesAllocated;
+        if (outDynamicBricks) *outDynamicBricks = stats.dynamicCascadeStats.bricksAllocated;
+        if (outVoxelizerMs)   *outVoxelizerMs   = profileReady ? profile.elapsed / MILLION : 0.0;
+        if (outGiMs)          *outGiMs          = giProfileReady ? giProfile.elapsed / MILLION : 0.0;
     }
 
     struct VulkanImage* vulkanBrixelizerPassGetHistoryDepth(void) {
