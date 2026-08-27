@@ -6,6 +6,7 @@
 #include "events/Events.h"
 #include "renderer/vulkan/Vulkan.h"
 #include "renderer/vulkan/command/VulkanCommand.h"
+#include "renderer/vulkan/barrier/VulkanBarrier.h"
 #include "renderer/vulkan/pipeline/VulkanProfile.h"
 #include "renderer/vulkan/resources/VulkanBuffer.h"
 #include "renderer/vulkan/resources/VulkanImage.h"
@@ -99,6 +100,49 @@ namespace engine {
     static u32 cubeIdxBufIdx;
     static FfxBrixelizerInstanceID cubeInstanceID;
     static char testInstanceReady;
+    /* ENGINE_BRIX_NO_CUBE=1: skip the test instance (ghost-artifact
+     * diagnostics). */
+    static char noCube;
+    static char noCubeSet;
+    /* The test cube is camera-relative, but the camera drifts for a few frames
+     * at startup before settling at the parked position — creating the
+     * instance during that drift would bake it at the pre-settle offset.
+     * Wait until renderLocation is stable for CUBE_SETTLE_FRAMES, then create
+     * the instance at the settled position (matches how Step 3's real meshes
+     * sit at fixed world positions). */
+    static vec3 cubeSettleLastLoc;
+    static char cubeSettleHaveLast;
+    static u32 cubeSettleStableFrames;
+    static const u32 CUBE_SETTLE_FRAMES = 30; /* ~0.5 s of a stable camera */
+    static const float CUBE_SETTLE_EPS2 = 1e-8f; /* (1e-4 m)^2 */
+    /* ENGINE_BRIX_DUMP_BRICKMAP=1: one-shot readback of the cascade-0 brick
+     * map (which voxel slots hold bricks) to /tmp, for ghost-artifact
+     * analysis. */
+    static VulkanBuffer brickMapReadbacks[FFX_BRIXELIZER_MAX_CASCADES];
+    static char brickMapCopyRecorded;
+    static u32 brickMapCopyFrame;
+    static char brickMapDumped;
+    static char dumpBrickMap;
+    static char dumpBrickMapSet;
+    /* ENGINE_BRIX_DUMP_SCRATCH=1: one-shot readback of the FFX scratch state
+     * right after the cube's cascade-0 bake — the 10 scratch counters
+     * (triangles swapped, references, brick allocations) plus the head of
+     * the triangle-swap buffer. Written to /tmp/brixel_scratch_*.bin. */
+    static VulkanBuffer scratchDumpBuf;
+    static char scratchCopyRecorded;
+    static u32 scratchCopyFrame;
+    static char scratchDumped;
+    static char dumpScratch;
+    static char dumpScratchSet;
+    /* The pass-frame (pre-increment) on which the cube instance was created;
+     * the cascade-0 bake lands on the next odd FFX frame. */
+    static u32 cubeCreatedFrame;
+    /* Multi-frame cascade-0 brick-map tracker (the 27->2 brick loss): one
+     * 1 MiB readback per dump, sampled every other cascade-0 update after
+     * the bake (static frames cubeCreatedFrame + 2k). */
+    static VulkanBuffer c0Readbacks[6];
+    static char c0CopyRecorded[6];
+    static char c0Dumped[6];
 
     /* Debug visualization mode (ENGINE_BRIX_SDF_DEBUG=distance|grad|brick|
      * cascade|uvw|iter; default distance). Step 9 moves this to the GUI. */
@@ -149,6 +193,10 @@ namespace engine {
          * context — both are recreated with it. */
         testInstanceReady = 0;
         cubeInstanceID    = 0;
+        /* The instance is recreated after a swapchain resize — restart the
+         * settle clock so it is created at the (re)settled camera position. */
+        cubeSettleHaveLast     = 0;
+        cubeSettleStableFrames = 0;
     }
 
     static void destroyResources(void) {
@@ -185,6 +233,16 @@ namespace engine {
         if (gpuScratch.buf) {
             vulkanDestroyBuffer(&gpuScratch, NULL);
             gpuScratch = VulkanBuffer{};
+        }
+        if (scratchDumpBuf.buf) {
+            vulkanDestroyBuffer(&scratchDumpBuf, NULL);
+            scratchDumpBuf = VulkanBuffer{};
+        }
+        for (u32 i = 0; i < 6; i++) {
+            if (c0Readbacks[i].buf) {
+                vulkanDestroyBuffer(&c0Readbacks[i], NULL);
+                c0Readbacks[i] = VulkanBuffer{};
+            }
         }
     }
 
@@ -224,9 +282,12 @@ namespace engine {
             cascadeAABBTrees[i] = vulkanCreateGpuBuffer("BrixelCascadeAABBTrees",
                                                         FFX_BRIXELIZER_CASCADE_AABB_TREE_SIZE,
                                                         VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+            /* TRANSFER_SRC: lets a debug readback (ENGINE_BRIX_DUMP_BRICKMAP)
+             * copy the brick map to a CPU buffer. No VRAM cost. */
             cascadeBrickMaps[i] = vulkanCreateGpuBuffer("BrixelCascadeBrickMaps",
                                                         FFX_BRIXELIZER_CASCADE_BRICK_MAP_SIZE,
-                                                        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+                                                        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+                                                            VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
         }
         /* TRANSFER_SRC: the FFX backend vkCmdCopyBuffer's job/constant data into
          * the scratch buffer each update (Cauldron's VK backend adds the same
@@ -380,6 +441,38 @@ namespace engine {
         if (testInstanceReady) {
             return 1;
         }
+        if (!noCubeSet) {
+            noCubeSet = 1;
+            const char* env = getenv("ENGINE_BRIX_NO_CUBE");
+            noCube = (env && !strcmp(env, "1")) ? 1 : 0;
+        }
+        if (noCube) {
+            testInstanceReady = 1; /* mark done so we don't re-check each frame */
+            return 1;
+        }
+        /* Wait for the camera to settle before creating the instance (see the
+         * cubeSettle* state above). A camera-relative instance created during
+         * the startup drift leaves a ghost SDF copy at the earlier offset. */
+        vec3 curLoc;
+        glm_vec3_copy(camera->cameraUbo.renderLocation, curLoc);
+        if (!cubeSettleHaveLast) {
+            glm_vec3_copy(curLoc, cubeSettleLastLoc);
+            cubeSettleHaveLast     = 1;
+            cubeSettleStableFrames = 0;
+        } else {
+            float dx = curLoc[0] - cubeSettleLastLoc[0];
+            float dy = curLoc[1] - cubeSettleLastLoc[1];
+            float dz = curLoc[2] - cubeSettleLastLoc[2];
+            if (dx * dx + dy * dy + dz * dz < CUBE_SETTLE_EPS2) {
+                cubeSettleStableFrames++;
+            } else {
+                glm_vec3_copy(curLoc, cubeSettleLastLoc);
+                cubeSettleStableFrames = 0;
+            }
+        }
+        if (cubeSettleStableFrames < CUBE_SETTLE_FRAMES) {
+            return 0; /* not settled yet — retry next frame */
+        }
         /* PIXEL_COMPUTE_READ like the sample's GetBufferIndex — the FFX
          * backend binds every SRV buffer as a shader storage buffer. */
         FfxResource vertRes =
@@ -428,9 +521,16 @@ namespace engine {
             inst.aabb.min[i] = center[i] - CUBE_HALF_EXTENT;
             inst.aabb.max[i] = center[i] + CUBE_HALF_EXTENT;
         }
+        /* ROW-major 3x4 (plan pitfall #2 — the GLSL LoadInstanceTransform
+         * loads 3 rows and applies them row-vector style): the identity
+         * diagonal sits at [0], [5], [10]. ([0]/[4]/[8] — column-major-style
+         * indices — projected the cube onto the main diagonal: every output
+         * component read p.x, the triangles collapsed onto a line, and
+         * CompressBrick freed all but the two endpoint voxels — the "two
+         * regions / ghost cube" artifact.) */
         inst.transform[0]  = 1.0f;
-        inst.transform[4]  = 1.0f;
-        inst.transform[8]  = 1.0f;
+        inst.transform[5]  = 1.0f;
+        inst.transform[10] = 1.0f;
         inst.transform[3]  = center[0]; /* row 0, col 3 */
         inst.transform[7]  = center[1]; /* row 1, col 3 */
         inst.transform[11] = center[2]; /* row 2, col 3 */
@@ -452,14 +552,16 @@ namespace engine {
         }
 
         testInstanceReady = 1;
+        cubeCreatedFrame  = frameIndex;
         /* Diagnostics: the cube's cascade-0 local voxel coord (grid is 64^3,
          * 2 m/voxel, centered on sdfCenter) is (center - (sdfCenter - 64)) / 2
          * = 32 + dir * 5, so it should sit near voxel 32 (grid center), never
          * near an edge. If the debug dump shows the cube at a wrapped / second
          * position, this is the reference to diff against. */
         utils::info(
-            "vulkanBrixelizerPass: test cube instance created at (%.1f, %.1f, %.1f) "
+            "vulkanBrixelizerPass: test cube instance created at frame %u at (%.1f, %.1f, %.1f) "
             "(cam=(%.1f, %.1f, %.1f) dir=(%.2f, %.2f, %.2f) id=%u buf %u/%u)",
+            frameIndex,
             cx,
             cy,
             cz,
@@ -638,6 +740,101 @@ namespace engine {
         }
         vulkanEndProfile(cmd, &profile, 1);
 
+        /* FFX_BRIX_DIAG: poll for the one-shot FFX pipeline-end dump (lands
+         * a few cascade-0 updates after the cube's first bake). */
+        {
+            static bool diagDumped = false;
+            uint32_t diagSize = 0;
+            void* diagDump = ffxBrixelizerRawGetDiagDump(&diagSize);
+            if (diagDump && diagSize > 0 && !diagDumped) {
+                FILE* f = fopen("/tmp/brixel_diag.bin", "wb");
+                if (f) {
+                    fwrite(diagDump, 1, diagSize, f);
+                    fclose(f);
+                }
+                utils::info("vulkanBrixelizerPass: brix diag dump written to /tmp/brixel_diag.bin (%u bytes)",
+                            diagSize);
+                diagDumped = true;
+            }
+        }
+
+        /* ENGINE_BRIX_DUMP_SCRATCH: capture FFX scratch state right after the
+         * cube's cascade-0 bake (copy recorded in this same command list,
+         * after the update's dispatches; the next cascade update reuses the
+         * shared scratch, so it must land on the bake frame itself — cascade
+         * 0 runs on odd FFX frames = odd static frameIndex, first one >=
+         * cubeCreatedFrame). Targeted regions at the ground-truth scratch
+         * offsets (dumped from FFX via FFX_BRIX_LOG_LAYOUT):
+         *   [0, 64 KiB)        counters + padding
+         *   [64, 128 KiB)     bricks_storage (first 32 bricks x 2048 B)
+         *   [128, 132 KiB)    bricks_storage_offsets (first 1024)
+         *   [132, 132.25 KiB) bricks_compression_list (first 64)
+         *   [132.25, 134.25)  cr1_references (first 128 raw refs)
+         *   [134.25, 134.75)  cr1_compacted_references (first 128)
+         *   [134.75, +1M)     cr1_ref_counters
+         *   [+1M, +1M)        cr1_ref_counter_scan
+         *   [+1M, +1M)        cr1_stamp_scan
+         *   [+1M, +4K)        cr1_stamp_global_scan */
+        if (dumpScratch && !scratchCopyRecorded && testInstanceReady &&
+            cubeInstanceID != FFX_BRIXELIZER_INVALID_ID &&
+            (frameIndex & 1u) == 1u && frameIndex >= cubeCreatedFrame) {
+            static const struct {
+                u32 srcOff;
+                u32 dstOff;
+                u32 size;
+            } regions[] = { {0u,            0u,        65536u},
+                            {315621632u,    65536u,    65536u},
+                            {349176064u,   131072u,     4096u},
+                            {350224640u,   135168u,      256u},
+                            {352322560u,   135424u,     2048u},
+                            {754975744u,   137472u,      512u},
+                            {889193472u,   137984u,   1048576u},
+                            {890242048u,  1186560u,  1048576u},
+                            {891294720u,  2235136u,  1048576u},
+                            {892343296u,  3283712u,     4096u} };
+            const u32 total = 3287808;
+            if (!scratchDumpBuf.buf) {
+                scratchDumpBuf = vulkanCreateReadbackBuffer("BrixelScratchDump", total, 0);
+            }
+            if (scratchDumpBuf.buf) {
+                for (u32 r = 0; r < 10; r++) {
+                    vulkanCopy(.cmd             = cmd,
+                               .source.buf      = &gpuScratch,
+                               .source.offset   = regions[r].srcOff,
+                               .target.buf      = &scratchDumpBuf,
+                               .target.bufferOffset = regions[r].dstOff,
+                               .size            = regions[r].size);
+                }
+                vulkanBarrier(cmd, DEVICE_WRITE_TO_HOST_READ);
+                scratchCopyRecorded = 1;
+                scratchCopyFrame    = frameIndex;
+                utils::info("vulkanBrixelizerPass: scratch dump copies recorded at frame %u (post-bake)",
+                            scratchCopyFrame);
+            }
+        } else if (scratchCopyRecorded && frameIndex >= scratchCopyFrame + 4) {
+            const uint32_t* data = (const uint32_t*)scratchDumpBuf.vmaInfo.pMappedData;
+            FILE* f = fopen("/tmp/brixel_scratch_dump.bin", "wb");
+            if (f) {
+                fwrite(data, sizeof(uint32_t), 3287808 / 4, f);
+                fclose(f);
+            }
+            utils::info(
+                "vulkanBrixelizerPass: scratch counters (post-bake): triangles=%u maxTriangles=%u "
+                "refs=%u maxRefs=%u groupIndex=%u compressionBricks=%u storageOffset=%u "
+                "storageSize=%u bricksAllocated=%u clearBricks=%u",
+                data[0],
+                data[1],
+                data[2],
+                data[3],
+                data[4],
+                data[5],
+                data[6],
+                data[7],
+                data[8],
+                data[9]);
+            scratchDumped = 1;
+        }
+
         /* The GI ray-march (Step 7) samples the atlas — leave it readable.
          * The debug image is a dump target — leave it readable too. */
         vulkanTransition(cmd, &sdfAtlas, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
@@ -645,13 +842,166 @@ namespace engine {
             vulkanTransition(cmd, &sdfDebug, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
         }
 
+        /* Ghost-artifact diagnostic (ENGINE_BRIX_DUMP_BRICKMAP=1): read back
+         * the cascade-0 brick map (which voxel slots hold bricks) to /tmp.
+         * Three-phase: this frame records the copy (in the current flight's
+         * command buffer); a few frames later (FRAMES_IN_FLIGHT=2, so the
+         * flight's fence has signalled and the GPU write is complete) the
+         * mapped buffer is read and the file written. */
+        if (!dumpBrickMapSet) {
+            dumpBrickMapSet = 1;
+            const char* env = getenv("ENGINE_BRIX_DUMP_BRICKMAP");
+            dumpBrickMap = (env && !strcmp(env, "1")) ? 1 : 0;
+        }
+        if (!dumpScratchSet) {
+            dumpScratchSet = 1;
+            const char* env = getenv("ENGINE_BRIX_DUMP_SCRATCH");
+            dumpScratch = (env && !strcmp(env, "1")) ? 1 : 0;
+        }
+        if (dumpBrickMap && !brickMapDumped) {
+                /* Record the copy after the cube's bake (frame ~31 in the
+                 * settle-wait flow; 45 = safely post-bake). The FFX does not
+                 * bake a freshly-created instance on the same frame, so an
+                 * earlier capture reads a pre-bake brick map. */
+                if (!brickMapCopyRecorded && frameIndex >= 45) {
+                    int allCreated = 1;
+                    for (u32 i = 0; i < BRIX_NUM_CASCADES; i++) {
+                        if (!brickMapReadbacks[i].buf) {
+                            char rbName[64];
+                            snprintf(rbName, 64, "BrixelBrickMapDump%u", i);
+                            brickMapReadbacks[i] = vulkanCreateReadbackBuffer(rbName, FFX_BRIXELIZER_CASCADE_BRICK_MAP_SIZE, 0);
+                        }
+                        if (!brickMapReadbacks[i].buf) allCreated = 0;
+                    }
+                    if (allCreated) {
+                        for (u32 i = 0; i < BRIX_NUM_CASCADES; i++) {
+                            vulkanCopy(.cmd         = cmd,
+                                       .source.buf  = &cascadeBrickMaps[i],
+                                       .target.buf  = &brickMapReadbacks[i],
+                                       .size        = FFX_BRIXELIZER_CASCADE_BRICK_MAP_SIZE);
+                            vulkanBarrier(cmd, DEVICE_WRITE_TO_HOST_READ);
+                        }
+                        brickMapCopyRecorded = 1;
+                        brickMapCopyFrame = frameIndex;
+                        utils::info("vulkanBrixelizerPass: brick-map copies (all cascades) recorded at frame %u",
+                                    brickMapCopyFrame);
+                    }
+                } else if (brickMapCopyRecorded && frameIndex >= brickMapCopyFrame + 4) {
+                    for (u32 c = 0; c < BRIX_NUM_CASCADES; c++) {
+                        const uint32_t* data = (const uint32_t*)brickMapReadbacks[c].vmaInfo.pMappedData;
+                        const uint32_t   total = FFX_BRIXELIZER_CASCADE_BRICK_MAP_SIZE / sizeof(uint32_t);
+                        char             path[64];
+                        snprintf(path, 64, "/tmp/brixel_brickmap_cascade%u.bin", c);
+                        FILE* f = fopen(path, "wb");
+                        if (f) {
+                            fwrite(data, sizeof(uint32_t), total, f);
+                            fclose(f);
+                        }
+                        uint32_t occupied = 0;
+                        char     line[256] = "";
+                        for (u32 z = 0; z < 64; z++) {
+                            for (u32 y = 0; y < 64; y++) {
+                                for (u32 x = 0; x < 64; x++) {
+                                    uint32_t id = data[(z * 64 + y) * 64 + x];
+                                    if (id != FFX_BRIXELIZER_UNINITIALIZED_ID && id != FFX_BRIXELIZER_INVALID_ID) {
+                                        occupied++;
+                                        if (occupied <= 6) {
+                                            char tmp[40];
+                                            int  tn =
+                                                snprintf(tmp, sizeof(tmp), " (%u,%u,%u)->%u", x, y, z, id);
+                                            if (strlen(line) + (size_t)tn < sizeof(line) - 1) {
+                                                strcat(line, tmp);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        utils::info("vulkanBrixelizerPass: cascade %u brick map: %u occupied of %u slots%s",
+                                    c,
+                                    occupied,
+                                    total,
+                                    occupied ? line : "");
+                    }
+                    brickMapDumped = 1;
+                }
+            }
+
+        /* Multi-frame cascade-0 brick-map tracker: watch the occupied-slot
+         * set across the cascade-0 updates after the bake (the 27 -> 2 loss).
+         * A copy recorded at static frame f lands in the flight after FFX
+         * frame f-1 (the just-finished update), so f = cubeCreatedFrame + 2k
+         * samples right after FFX frames ..., 31, 33, 35, 37, 39, 41. */
+        if (dumpBrickMap && cubeCreatedFrame) {
+            for (u32 k = 1; k <= 6; k++) {
+                const u32 f = cubeCreatedFrame + 2u * k;
+                if (frameIndex == f) {
+                    if (!c0Readbacks[k - 1].buf) {
+                        char name[64];
+                        snprintf(name, 64, "BrixelBrickMapC0Dump%u", k - 1);
+                        c0Readbacks[k - 1] = vulkanCreateReadbackBuffer(name, FFX_BRIXELIZER_CASCADE_BRICK_MAP_SIZE, 0);
+                    }
+                    if (c0Readbacks[k - 1].buf) {
+                        vulkanCopy(.cmd         = cmd,
+                                   .source.buf  = &cascadeBrickMaps[0],
+                                   .target.buf  = &c0Readbacks[k - 1],
+                                   .size        = FFX_BRIXELIZER_CASCADE_BRICK_MAP_SIZE);
+                        vulkanBarrier(cmd, DEVICE_WRITE_TO_HOST_READ);
+                        c0CopyRecorded[k - 1] = 1;
+                    }
+                } else if (c0CopyRecorded[k - 1] && !c0Dumped[k - 1] && frameIndex >= f + 4) {
+                    const uint32_t* data = (const uint32_t*)c0Readbacks[k - 1].vmaInfo.pMappedData;
+                    const uint32_t  total = FFX_BRIXELIZER_CASCADE_BRICK_MAP_SIZE / sizeof(uint32_t);
+                    char            path[64];
+                    snprintf(path, 64, "/tmp/brixel_brickmap_c0_f%u.bin", f - 1);
+                    FILE* fp = fopen(path, "wb");
+                    if (fp) {
+                        fwrite(data, sizeof(uint32_t), total, fp);
+                        fclose(fp);
+                    }
+                    uint32_t occupied = 0;
+                    char     line[256] = "";
+                    for (u32 z = 0; z < 64; z++) {
+                        for (u32 y = 0; y < 64; y++) {
+                            for (u32 x = 0; x < 64; x++) {
+                                uint32_t id = data[(z * 64 + y) * 64 + x];
+                                if (id != FFX_BRIXELIZER_UNINITIALIZED_ID && id != FFX_BRIXELIZER_INVALID_ID) {
+                                    occupied++;
+                                    if (occupied <= 8) {
+                                        char tmp[40];
+                                        int  tn =
+                                            snprintf(tmp, sizeof(tmp), " (%u,%u,%u)->%u", x, y, z, id);
+                                        if (strlen(line) + (size_t)tn < sizeof(line) - 1) {
+                                            strcat(line, tmp);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    utils::info(
+                        "vulkanBrixelizerPass: cascade-0 brick map after FFX frame %u: %u occupied%s",
+                        f - 1,
+                        occupied,
+                        line);
+                    c0Dumped[k - 1] = 1;
+                }
+            }
+        }
+
         /* outStats is a lagged GPU readback (filled a few updates later). */
-        if (stats.contextStats.freeBricks && !statsLiveLogged) {
-            statsLiveLogged = 1;
+        /* Track the free-brick pool across updates (lagged readback): the
+         * 262144-27 -> 262144-2 transition pins down which update frees the
+         * baked bricks. */
+        static u32 lastFreeBricks = 0;
+        if (stats.contextStats.freeBricks && stats.contextStats.freeBricks != lastFreeBricks) {
+            lastFreeBricks = stats.contextStats.freeBricks;
             utils::info(
-                "vulkanBrixelizerPass: stats readback live (lagged): freeBricks=%u "
-                "bricksCleared=%u",
+                "vulkanBrixelizerPass: free-brick pool (lagged stats, cascade %u): free=%u allocAttempted=%u allocSucceeded=%u cleared=%u",
+                stats.cascadeIndex,
                 stats.contextStats.freeBricks,
+                stats.contextStats.brickAllocationsAttempted,
+                stats.contextStats.brickAllocationsSucceeded,
                 stats.contextStats.bricksCleared);
         }
         /* Gate 2: the test cube actually baked (triangles/bricks allocated in
@@ -671,14 +1021,17 @@ namespace engine {
         if (frameIndex % 120 == 0) {
             utils::info(
                 "vulkanBrixelizerPass: stats cascade=%u freeBricks=%u bricksCleared=%u "
-                "staticTris=%u staticRefs=%u staticBricks=%u gpu=%.3f ms",
+                "staticTris=%u staticRefs=%u staticBricks=%u gpu=%.3f ms cam=(%.1f, %.1f, %.1f)",
                 stats.cascadeIndex,
                 stats.contextStats.freeBricks,
                 stats.contextStats.bricksCleared,
                 stats.staticCascadeStats.trianglesAllocated,
                 stats.staticCascadeStats.referencesAllocated,
                 stats.staticCascadeStats.bricksAllocated,
-                profile.elapsed / MILLION); /* ns → ms */
+                profile.elapsed / MILLION, /* ns → ms */
+                camera->cameraUbo.renderLocation[0],
+                camera->cameraUbo.renderLocation[1],
+                camera->cameraUbo.renderLocation[2]);
         }
 
         elapsedGPU = profile.elapsed;

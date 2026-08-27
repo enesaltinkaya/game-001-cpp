@@ -321,6 +321,7 @@ cost recorded: **~0.35–0.36 ms** GPU (8 static-cascade pass set, zero instance
 profile logged every 120 frames).
 
 Deviations from the plan text (verified against the SDK source, kept):
+
 - `gpuScratch` is **1 GiB** (the sample's `GPU_SCRATCH_BUFFER_SIZE`), not 256 MiB: with
   the sample budgets (maxReferences 32 M / triangleSwapSize 300 M) the required scratch
   is ~892 MB — the 256 MiB estimate in the step text was wrong; the overflow check is
@@ -386,6 +387,7 @@ fix before moving on.
 
 **Done (2026-08-26).** All sub-steps landed in
 `c-engine/renderer/vulkan/pass/brixelizer/`:
+
 - 2.1 `createTestInstance()` registers the generated 8-vertex/36-index cube
   (`cubeVertBuf`/`cubeIdxBuf`, `vulkanCreateGpuBuffer` + transient `vulkanCopy`
   upload) via `ffxBrixelizerRegisterBuffers` (PIXEL_COMPUTE_READ) and creates
@@ -404,13 +406,24 @@ view shows brick boundaries; `stats` = 240 staticTris / 85 staticRefs /
 validation CRIT is the known deferred FFX shutdown leak at `vkDestroyDevice`
 (Step 1) — no per-frame validation errors.
 
-**Known artifact (not a Gate 2 failure):** the cube is baked relative to the
-camera at instance-creation (frame 0). The camera drifts during the first few
-frames before settling at the parked position, so the clipmap scroll leaves a
-small ghost copy of the cube's SDF at the earlier offset (a second, tiny cube
-in the dump). Harmless for the smoke test; real Step-3 meshes sit at fixed
-world positions, so no ghost. If it ever affects the GI (Step 7), re-create the
-instance once the camera is settled, or pin the cube to a fixed world pos.
+**Known artifact — RESOLVED (2026-08-27, transform bug):** the Step-2 dump
+originally showed the cube as **two small separated blobs** with the brick
+block collapsing 27 → 2 within one update of the bake. Root cause (found by
+A/B against the FFX sample, see `docs/fsr3.1.md`): the identity diagonal of
+the ROW-major instance transform was written at indices [0]/[4]/[8]
+(column-major-style) instead of [0]/[5]/[10], so every transformed vertex read
+`p.x` for all three output components — the cube was projected onto its main
+diagonal. The degenerate line-segment triangles still stamped references over
+the whole 3×3×3 job block (27 bricks allocated) but `FfxBrixelizerCompressBrick`
+freed every brick whose SDF samples stayed ≥ 1/8 — all but the two endpoint
+voxels of the diagonal (exactly the "two regions" in the debug view; unwrapped
+(35,30,28) and (37,32,30) = cube corner ± 2 m). With the correct diagonal the
+cube bakes to 26 bricks, all 26 stay allocated (free=262118), the map is a
+contiguous 3×3×3 block at the wrapped position, and the dump shows one
+coherent cube (cyan surface, red halo). The earlier "camera-drift clipmap
+scroll ghost" theory was wrong; the camera-settle wait is kept as harmless
+robustness. Step 3+ instance transforms must build the full row-major matrix
+correctly (pitfall #2).
 
 ## Step 3 — Register the real scene meshes (static world)
 

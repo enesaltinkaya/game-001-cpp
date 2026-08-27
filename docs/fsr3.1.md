@@ -624,6 +624,52 @@ Scene/IBL/noise media lives in `git/media/` (fetched via
   `[FFX ERROR|WARNING|INFO] …` — a run is "FFX-clean" when the log has no
   ERROR/WARNING lines.
 
+### Test hooks for engine A/B comparisons (2026-08-27, ghost-cube hunt)
+
+Added while hunting the engine's Step-2 "two SDF regions / 27→2 brick
+collapse" artifact; they reproduce the engine's voxelizer conditions inside
+the reference sample:
+
+- `BRIXGI_STATIC_ONLY=1` — cascade layout parity with the engine's Step 1:
+  8 STATIC-only cascades (raw cascade == level), base voxel 2 m doubling per
+  level, trace range moved down to cascades 0..7.
+- `BRIXGI_SINGLE_CUBE=<frame>` — at frame N, drop every instance and submit
+  exactly one static instance (`maxCascade = 0`) 10 m ahead of the SDF center
+  — the sparse-object regime of the engine's smoke test.
+- `BRIXGI_CUBE_MIN_EXTENT=<m>` / `BRIXGI_CUBE_SOLID=1` /
+  `BRIXGI_CUBE_SCALE=<m>` — object picker filters: minimum largest extent,
+  require extent on every axis (planar decals legitimately free their
+  adjacent voxels and hide solid-object failure modes), and per-axis scale to
+  a cube-like target size (the toyshop's meshes are sub-voxel at 2 m).
+- `BRIXGI_CUBE_FRESH=1` — destroy + recreate both FFX contexts before the
+  single-instance submission (pristine voxelizer state, no deletion
+  invalidations).
+- `BRIXGI_SDF_CENTER=x,y,z` — pin the clipmap center to a fixed world
+  position instead of the camera's (engine-parity large/negative coords).
+  NOTE: this also moves the grid away from the toyshop (world ~0..20 m), so a
+  pinned run has NO scene geometry — only the single instance.
+- `BRIXGI_LOG_STATS=<stride>` — print the lagged `FfxBrixelizerStats` every
+  N frames (`free=… sTris=… sBricks=…`); `freeBricks` is the collapse signal.
+- `BRIXGI_DIAG_PATH` — where to write the `FFX_BRIX_DIAG` fork dump.
+
+Result of the A/B that found the bug: with a SOLID 4 m object at the engine's
+exact coordinates, the reference sample bakes ~24-34 bricks and keeps them
+(retention ~100%), while the engine kept 2 of 27 — proving the failure was in
+the engine integration, not FFX: the row-major instance transform had its
+identity diagonal at `[0]/[4]/[8]` instead of `[0]/[5]/[10]`, projecting the
+cube onto its main diagonal (degenerate line-segment triangles; `CompressBrick`
+freed every brick without near-surface samples, leaving the diagonal's two
+endpoint voxels — the "two regions").
+
+The FFX fork's `FFX_BRIX_DIAG` dump was also extended (2026-08-27):
+`FFX_BRIX_DIAG_AT=<frame>` + `FFX_BRIX_DIAG_COUNT=<n>` capture up to 4
+consecutive cascade-0 bakes (each region: 40 B counters, 4 KB compression
+list, and the 1 MB cascade-0 brick map) instead of one first-bake snapshot;
+scratch source offsets are computed per bake via `getScratchMemorySize`
+(the job-counter partitions scale with `numJobs + numInstances`); and the
+capture state resets in `ffxBrixelizerRawContextCreate` so a recreated
+context can be captured cleanly.
+
 `enable-brixgi-screenshot.sh` (in `fsr3.1/`) flips
 `configs/brixelizergiconfig.json` → `"FidelityFX Brixelizer GI" →
 "Screenshot": true` (the sample loads that file, NOT cauldronconfig.json;
