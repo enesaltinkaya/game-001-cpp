@@ -11,6 +11,7 @@
 #include "renderer/vulkan/pass/shadow/VulkanShadowPass.h"
 #include "renderer/vulkan/pass/ssr/VulkanSsrPass.h"
 #include "renderer/vulkan/pass/contact_shadow/VulkanContactShadowPass.h"
+#include "renderer/vulkan/pass/ssgi/VulkanSsgiPass.h"
 #include "renderer/vulkan/pass/volumetric/VulkanVolumetricPass.h"
 #include "renderer/vulkan/resources/VulkanResourceManager.h"
 #include "rmlui/wrapper/src/crmlui.h"
@@ -80,6 +81,7 @@ static char* bloomLabel;
 static char* lensLabel;
 static char* dofLabel;
 static char* contactShadowLabel;
+static char* ssgiLabel;
 static char* fogLabel;
 static char* taaLabel;
 static int   fogMode;
@@ -93,6 +95,7 @@ static char bloomLabelText[16];
 static char lensLabelText[16];
 static char dofLabelText[16];
 static char contactShadowLabelText[16];
+static char ssgiLabelText[16];
 static char fogLabelText[16];
 static char taaLabelText[16];
 static int upscalerPrev(void* _);
@@ -109,6 +112,7 @@ static int toggleSsr(void* _);
 static int toggleAo(void* _);
 static int toggleBloom(void* _);
 static int toggleContactShadow(void* _);
+static int toggleSsgi(void* _);
 static int toggleFog(void* _);
 static int toggleTaa(void* _);
 
@@ -127,6 +131,7 @@ void SettingsGraphicsGui::added() {
     engine::luaRegisterFunction("toggleDof", toggleDof);
     engine::luaRegisterFunction("dofParamChange", dofParamChange);
     engine::luaRegisterFunction("toggleContactShadow", toggleContactShadow);
+    engine::luaRegisterFunction("toggleSsgi", toggleSsgi);
     engine::luaRegisterFunction("toggleFog", toggleFog);
     engine::luaRegisterFunction("toggleTaa", toggleTaa);
     /* Read live renderer state rather than stale settings values so that
@@ -166,6 +171,7 @@ void SettingsGraphicsGui::added() {
     rmlBind(model, "lensLabel", &lensLabel);
     rmlBind(model, "dofLabel", &dofLabel);
     rmlBind(model, "contactShadowLabel", &contactShadowLabel);
+    rmlBind(model, "ssgiLabel", &ssgiLabel);
     rmlBind(model, "fogLabel", &fogLabel);
     rmlLoadDocument(document);
     rmlShowDocument(document);
@@ -221,6 +227,8 @@ static void syncAAUi(void) {
     bloomLabel = bloomLabelText;
     snprintf(contactShadowLabelText, sizeof(contactShadowLabelText), "%s", engine::vulkanContactShadowPassIsDisabled() ? "Off" : "On");
     contactShadowLabel = contactShadowLabelText;
+    snprintf(ssgiLabelText, sizeof(ssgiLabelText), "%s", engine::vulkanSsgiPassIsDisabled() ? "Off" : "On");
+    ssgiLabel = ssgiLabelText;
     snprintf(lensLabelText, sizeof(lensLabelText), "%s", engine::vulkanLensPassIsDisabled() ? "Off" : "On");
     lensLabel = lensLabelText;
     snprintf(dofLabelText, sizeof(dofLabelText), "%s", engine::vulkanDofPassIsDisabled() ? "Off" : "On");
@@ -412,6 +420,8 @@ static void syncEffectLabels(void) {
     bloomLabel = bloomLabelText;
     snprintf(contactShadowLabelText, sizeof(contactShadowLabelText), "%s", engine::vulkanContactShadowPassIsDisabled() ? "Off" : "On");
     contactShadowLabel = contactShadowLabelText;
+    snprintf(ssgiLabelText, sizeof(ssgiLabelText), "%s", engine::vulkanSsgiPassIsDisabled() ? "Off" : "On");
+    ssgiLabel = ssgiLabelText;
     snprintf(fogLabelText, sizeof(fogLabelText), "%s", fogModeNames[fogMode]);
     fogLabel = fogLabelText;
 }
@@ -426,6 +436,7 @@ static void persistEffectSettings(void) {
     utils::settingsSetBool("aoDisabled", engine::vulkanAOPassIsDisabled());
     utils::settingsSetBool("bloomDisabled", engine::vulkanBloomPassIsDisabled());
     utils::settingsSetBool("contactShadowDisabled", engine::vulkanContactShadowPassIsDisabled());
+    utils::settingsSetBool("ssgiDisabled", engine::vulkanSsgiPassIsDisabled());
     utils::settingsSetDouble("fogMode", static_cast<double>(fogMode));
     utils::settingsWrite();
 
@@ -554,6 +565,14 @@ int dofParamChange(void* _) {
 
 int toggleContactShadow(void* _) {
     engine::vulkanContactShadowPassSetDisabled(!engine::vulkanContactShadowPassIsDisabled());
+    syncEffectLabels();
+    rmlUpdateDirtyAll(model);
+    persistEffectSettings();
+    return 0;
+}
+
+int toggleSsgi(void* _) {
+    engine::vulkanSsgiPassSetDisabled(!engine::vulkanSsgiPassIsDisabled());
     syncEffectLabels();
     rmlUpdateDirtyAll(model);
     persistEffectSettings();

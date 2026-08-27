@@ -135,9 +135,13 @@ void main() {
 
     // Ambient (from the sun UBO): zeroed, so shadowed areas are pure black.
     // Kept in the lighting equation for easy tuning.  Scaled by kD for
-    // energy conservation with specular.
-    vec3 ambient = dirLight.ambient.rgb;
-    vec3 color   = Lo + ambient * kD * baseColor.rgb;
+    // energy conservation with specular.  SSGI replaces the UBO ambient
+    // where its confidence is non-zero: the bounce irradiance already has
+    // the hit-point albedo folded in, so the origin albedo is applied by
+    // the same kD * baseColor term (Lambertian energy conservation).
+    vec4  ssgiTerm  = sampleSSGI();
+    vec3  ambient   = mix(dirLight.ambient.rgb, ssgiTerm.rgb, ssgiTerm.a);
+    vec3  color     = Lo + ambient * kD * baseColor.rgb;
 
     // Forward+ point/spot lights
     vec3 T_aniso = vec3(0.0);

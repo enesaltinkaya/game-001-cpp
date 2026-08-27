@@ -84,7 +84,7 @@ struct ShadowData {
     float lightSize;            // unused (PCSS removed), kept for struct alignment
     uint temporalActive;         // 1 when temporal upscaler (FSR) is active — enables temporal PCF noise
     uint contactShadowImageIndex;
-    uint shadowPad2;
+    uint ssgiImageIndex;
     uint shadowPad3;
     uint shadowPad4;
     uint shadowPad5;

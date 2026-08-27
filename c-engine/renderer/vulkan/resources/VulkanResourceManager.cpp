@@ -478,6 +478,15 @@ void vulkanResourceSetContactShadowImageIndex(u32 index) {
     }
 }
 
+void vulkanResourceSetSsgiImageIndex(u32 index) {
+    for (int i = 0; i < FRAMES_IN_FLIGHT; i++) {
+        VulkanSceneBuffer* buf  = static_cast<VulkanSceneBuffer*>(sceneBuffer[i].vmaInfo.pMappedData);
+        if (buf) {
+            buf->shadow.ssgiImageIndex = index;
+        }
+    }
+}
+
 void vulkanResourceUploadLight(GpuLight* light, u32 index) {
     (void)light;
     (void)index;

@@ -26,6 +26,7 @@
 #include "renderer/vulkan/pass/scene/VulkanScenePass.h"
 #include "renderer/vulkan/pass/decal/VulkanDecalPass.h"
 #include "renderer/vulkan/pass/contact_shadow/VulkanContactShadowPass.h"
+#include "renderer/vulkan/pass/ssgi/VulkanSsgiPass.h"
 #include "renderer/vulkan/pass/ssr/VulkanSsrPass.h"
 #include "renderer/vulkan/pass/volumetric/VulkanVolumetricPass.h"
 #include "timer/Timer.h"
@@ -200,6 +201,10 @@ static void vulkanDebugDumpFrameImages(const char* shotPath) {
             img = vulkanTaaPassGetOutput();
         } else if (!strcmp(tok, "ao")) {
             img = vulkanAOPassGetOutput();
+        } else if (!strcmp(tok, "ssgi")) {
+            img = vulkanSsgiPassGetOutput();
+        } else if (!strcmp(tok, "ssgiRaw")) {
+            img = vulkanSsgiPassGetRawOutput();
         } else if (!strcmp(tok, "scene")) {
             img = vulkanFrameResourcesGetSceneColor();
         } else if (!strcmp(tok, "oitReveal")) {
@@ -284,6 +289,7 @@ void vulkanInit(void) {
     addPass(&vulkanHiZPass);
     addPass(&vulkanShadowPass);
     addPass(&vulkanContactShadowPass);
+    addPass(&vulkanSsgiPass);
     addPass(&vulkanLightCullingPass);
     addPass(&vulkanHeightmapTerrainPass);
     addPass(&vulkanAzgaarPropsPass);

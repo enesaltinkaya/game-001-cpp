@@ -42,7 +42,7 @@ typedef struct ShadowUbo {
     float lightSize;             /* unused (PCSS removed) */
     u32 temporalActive;          /* 1 when FSR or any temporal upscaler is active */
     u32 contactShadowImageIndex; /* bindless sampled index of contact shadow texture (0 = off) */
-    u32 pad2;
+    u32 ssgiImageIndex;          /* bindless sampled index of SSGI bounce irradiance (0 = off) */
     u32 pad3;
     u32 pad4;
     u32 pad5;

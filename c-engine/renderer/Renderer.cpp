@@ -16,6 +16,7 @@
 #include "renderer/vulkan/pass/contact_shadow/VulkanContactShadowPass.h"
 #include "renderer/vulkan/pass/fsr/VulkanFsrUtils.h"
 #include "renderer/vulkan/pass/shadow/VulkanShadowPass.h"
+#include "renderer/vulkan/pass/ssgi/VulkanSsgiPass.h"
 #include "renderer/vulkan/pass/ssr/VulkanSsrPass.h"
 #include "renderer/vulkan/pass/volumetric/VulkanVolumetricPass.h"
 #include "settings/Settings.h"
@@ -84,6 +85,7 @@ void RenderSystem::added() {
     if (utils::settingsGetBool("aoDisabled")) vulkanAOPassSetDisabled(1);
     if (utils::settingsGetBool("bloomDisabled")) vulkanBloomPassSetDisabled(1);
     if (utils::settingsGetBool("contactShadowDisabled")) vulkanContactShadowPassSetDisabled(1);
+    if (utils::settingsGetBool("ssgiDisabled")) vulkanSsgiPassSetDisabled(1);
 
     /* Apply fog mode from settings */
     {

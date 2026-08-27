@@ -261,3 +261,18 @@ float sampleContactShadow(void) {
 vec3 sampleShadow(vec3 worldPos, vec3 normal) {
     return sampleShadowFull(worldPos, normal).rgb;
 }
+
+/* Sample the SSGI bounce-irradiance term for the current fragment.
+ * Returns (0,0,0,0) when no SSGI texture is bound, which the scene
+ * shader uses to fall back to the UBO ambient.  .rgb = bounce
+ * irradiance (Lambertian integral over the jittered hemisphere),
+ * .a = confidence. */
+vec4 sampleSSGI(void) {
+    if (sceneBuffer.shadow.ssgiImageIndex == 0u)
+        return vec4(0.0);
+    vec2 screenUV = gl_FragCoord.xy / sceneBuffer.cameras[0].viewport;
+    return texture(
+        sampler2D(textures[nonuniformEXT(sceneBuffer.shadow.ssgiImageIndex)],
+                  samplers[SAMPLER_CLAMP_LINEAR]),
+        screenUV);
+}
