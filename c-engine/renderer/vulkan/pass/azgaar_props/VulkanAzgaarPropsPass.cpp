@@ -1,4 +1,5 @@
 #include "renderer/vulkan/pass/azgaar_props/VulkanAzgaarPropsPass.h"
+#include "renderer/vulkan/pass/brixelizer/VulkanBrixelizerPass.h"
 #include <iterator>
 #include "renderer/Renderer.h"
 #include "renderer/vulkan/Vulkan.h"
@@ -397,6 +398,15 @@ void vulkanAzgaarPropsSetTile(i32 tileX, i32 tileZ, u64 readyStamp,
     utils::threadLock(&uploadLock);
     pendingTiles.push_back(p);
     utils::threadUnlock(&uploadLock);
+
+    /* Step 5 (plans/brixelizer-gi.md): mirror this tile's scatter into the
+     * Brixelizer SDF (thread-safe; the brixelizer pass budgets the instances
+     * on the render thread). A count-0 push drops the tile, so clear there. */
+    if (instanceCount > 0) {
+        vulkanBrixelizerPassPropsTileSet(tileX, tileZ, readyStamp, instances, instanceCount);
+    } else {
+        vulkanBrixelizerPassPropsTileClear(tileX, tileZ);
+    }
 }
 
 void vulkanAzgaarPropsClearTile(i32 tileX, i32 tileZ) {
@@ -404,6 +414,8 @@ void vulkanAzgaarPropsClearTile(i32 tileX, i32 tileZ) {
     utils::threadLock(&uploadLock);
     pendingTiles.push_back(p);
     utils::threadUnlock(&uploadLock);
+
+    vulkanBrixelizerPassPropsTileClear(tileX, tileZ);
 }
 
 void vulkanAzgaarPropsClearAll(void) {
@@ -478,24 +490,38 @@ void vulkanAzgaarPropsSetGlobal(const PropInstance* instances, u32 instanceCount
                                   const PropTileRange* ranges, u32 rangeCount,
                                   const float aabbMin[3], const float aabbMax[3]) {
     enqueueGlobal(&pendingGlobals, instances, instanceCount, ranges, rangeCount, aabbMin, aabbMax);
+    if (instanceCount > 0) {
+        vulkanBrixelizerPassPropsGlobalSet(instances, instanceCount);
+    } else {
+        vulkanBrixelizerPassPropsGlobalClear();
+    }
 }
 
 void vulkanAzgaarPropsClearGlobal(void) {
     utils::threadLock(&uploadLock);
     pendingGlobals.push_back(PendingGlobalUpload{.clear = true});
     utils::threadUnlock(&uploadLock);
+
+    vulkanBrixelizerPassPropsGlobalClear();
 }
 
 void vulkanAzgaarPropsSetLandmarks(const PropInstance* instances, u32 instanceCount,
                                     const PropTileRange* ranges, u32 rangeCount,
                                     const float aabbMin[3], const float aabbMax[3]) {
     enqueueGlobal(&pendingLandmarks, instances, instanceCount, ranges, rangeCount, aabbMin, aabbMax);
+    if (instanceCount > 0) {
+        vulkanBrixelizerPassPropsLandmarksSet(instances, instanceCount);
+    } else {
+        vulkanBrixelizerPassPropsLandmarksClear();
+    }
 }
 
 void vulkanAzgaarPropsClearLandmarks(void) {
     utils::threadLock(&uploadLock);
     pendingLandmarks.push_back(PendingGlobalUpload{.clear = true});
     utils::threadUnlock(&uploadLock);
+
+    vulkanBrixelizerPassPropsLandmarksClear();
 }
 
 void vulkanAzgaarPropsSetEnabled(bool e) {

@@ -84,6 +84,13 @@ typedef struct PropVariantRange {
     float swayFactor;
     u32   flags;   // bit 0 = alpha-test (flowers)
     u32   lodRole; // 0 = near LOD, 1 = far LOD, 2 = no LOD (always visible)
+    // Brixelizer GI SDF metadata (plan plans/brixelizer-gi.md Step 5). The
+    // voxelizer gets one position-only buffer per (species, variant); sdfPriority
+    // orders the instance budget (0 = highest — canopy species / buildings
+    // first, grass tufts last) and sdfMaxCascade limits which cascades carry
+    // this species (big / far-LOD geometry high, small ground cover low).
+    u32   sdfPriority;
+    u32   sdfMaxCascade;
 } PropVariantRange;
 
 // Within a tile's instance array, instances are grouped by (species, variant).

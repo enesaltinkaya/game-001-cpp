@@ -8,6 +8,8 @@ struct FfxInterface;
 namespace engine {
 struct Scene;
 struct VulkanImage;
+struct PropInstance;
+struct PropVariantRange;
 
 /* FidelityFX Brixelizer voxelizer (SDF brick pipeline). Steps 1–3 of
  * plans/brixelizer-gi.md: owns the shared FFX backend interface, the
@@ -41,4 +43,28 @@ struct VulkanImage* vulkanBrixelizerPassGetSdfDebug(void);
  * exists is picked up when the context (re)registers all ecs.scenes. */
 void vulkanBrixelizerPassSceneCreate(struct Scene* scene);
 void vulkanBrixelizerPassSceneDestroy(struct Scene* scene);
+
+/* Step 5: props (vegetation / buildings) SDF. The merged species mesh is
+ * pushed once per world load from azgaarPropsInit (main thread): the per-
+ * (species, variant) position-only sub-buffers (12 B/vertex — the 72 B
+ * PropsVertex does not fit the voxelizer's 6-bit stride field) + u16/u32
+ * index ranges are extracted here and registered with the voxelizer when
+ * its context exists. Per-tile / global / landmark instance lists arrive
+ * from the azgaar_props pass (worker threads), are queued thread-safely,
+ * and budgeted (ENGINE_BRIXGI_PROP_BUDGET, default 40 k; priority = species
+ * class then distance to camera) on the render thread before the bake. */
+void vulkanBrixelizerPassSetPropsMeshes(const void* verts, u32 vertCount,
+                                        const void* idx, u32 idxCount,
+                                        const struct PropVariantRange* variants,
+                                        u32 variantCount);
+void vulkanBrixelizerPassPropsTileSet(i32 tileX, i32 tileZ, u64 readyStamp,
+                                      const struct PropInstance* instances,
+                                      u32 instanceCount);
+void vulkanBrixelizerPassPropsTileClear(i32 tileX, i32 tileZ);
+void vulkanBrixelizerPassPropsGlobalSet(const struct PropInstance* instances,
+                                        u32 instanceCount);
+void vulkanBrixelizerPassPropsGlobalClear(void);
+void vulkanBrixelizerPassPropsLandmarksSet(const struct PropInstance* instances,
+                                           u32 instanceCount);
+void vulkanBrixelizerPassPropsLandmarksClear(void);
 }  // namespace engine

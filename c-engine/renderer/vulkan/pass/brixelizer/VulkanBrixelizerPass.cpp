@@ -17,6 +17,7 @@
 #include "renderer/vulkan/resources/VulkanImage.h"
 #include "renderer/vulkan/resources/VulkanResourceManager.h"
 #include "renderer/vulkan/scene/VulkanScene.h"
+#include "renderer/vulkan/pass/azgaar_props/VulkanAzgaarPropsPass.h"
 #include "renderer/vulkan/utils/VulkanFfxUtils.h"
 #include "timer/Timer.h"
 #pragma GCC diagnostic push
@@ -27,7 +28,9 @@
 #pragma GCC diagnostic pop
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 #include <wchar.h>
+#include <algorithm>
 #include <vector>
 
 namespace engine {
@@ -80,7 +83,12 @@ namespace engine {
         FfxBrixelizerInstanceID instanceID;
         char instanceCreated;
     };
-    struct BrixelTerrainDeferred {
+    /* Deferred GPU-buffer teardown (3 frames past the GPU queue depth, like
+     * the heightmap pass's deferred descriptors): in-flight FFX dispatches
+     * still hold the wrapped handles, and the bindless slot may be
+     * re-registered for another owner before they drain. Shared by the
+     * terrain tiles (Step 4) and the props variant buffers (Step 5). */
+    struct BrixelDeferred {
         VulkanBuffer vertBuf;
         VulkanBuffer idxBuf;
         u32 vertBufIdx;
@@ -89,7 +97,7 @@ namespace engine {
         u32 framesLeft;
     };
     static std::vector<BrixelTerrainTile> terrainTiles;
-    static std::vector<BrixelTerrainDeferred> terrainDeferred;
+    static std::vector<BrixelDeferred> deferred;
     static HeightmapTerrain* terrainHt;
     static u32 terrainRes;
     static char terrainResSet;
@@ -98,6 +106,91 @@ namespace engine {
     static void terrainTileEvict(BrixelTerrainTile* e);
     static char terrainTileCreate(const HeightmapTileView* v);
     static void terrainClearAll(void);
+
+    /* Step 5: props SDF. Per-(species, variant) position-only sub-buffers
+     * (extracted from the merged 72 B species mesh — pitfall #8) + the
+     * accepted per-set instance lists (tiles / settlements / landmarks).
+     * `sdfPriority` / `sdfMaxCascade` come from the variant table the game
+     * builds (AzgaarProps::buildAllMeshes). */
+    struct BrixelPropsVariant {
+        u32 species, variant;
+        u32 vertBufIdx;
+        u32 idxBufIdx;
+        u32 vertCount;
+        u32 triCount;
+        u32 maxCascade;
+        u32 priority;
+        u32 indexType;
+        char registered;
+        float boundsMin[3];
+        float boundsMax[3];
+        VulkanBuffer vertBuf;
+        VulkanBuffer idxBuf;
+    };
+    struct BrixelPropsVariantCpu {
+        u32 species, variant;
+        u32 vertCount;
+        u32 triCount;
+        u32 maxCascade;
+        u32 priority;
+        u32 indexType;
+        float boundsMin[3];
+        float boundsMax[3];
+        std::vector<float> verts;
+        std::vector<u16> idx16;
+        std::vector<u32> idx32;
+    };
+    struct BrixelPropsSet {
+        u32 kind; /* 0 = tile, 1 = global (settlements), 2 = landmarks */
+        i32 tileX, tileZ;
+        u64 readyStamp;
+        char inUse;
+        std::vector<PropInstance> instances; /* the accepted (budgeted) set */
+        std::vector<FfxBrixelizerInstanceID> ids;
+        u32 accepted;
+        u32 dropped;
+        u32 tris; /* sum of the accepted instances' variant triangle counts */
+    };
+    enum BrixelPropsOp {
+        BRIX_PROPS_MESH_SET = 0,
+        BRIX_PROPS_MESH_CLEAR,
+        BRIX_PROPS_TILE_SET,
+        BRIX_PROPS_TILE_CLEAR,
+        BRIX_PROPS_GLOBAL_SET,
+        BRIX_PROPS_GLOBAL_CLEAR,
+        BRIX_PROPS_LANDMARKS_SET,
+        BRIX_PROPS_LANDMARKS_CLEAR,
+    };
+    struct BrixelPropsPending {
+        u32 kind;
+        i32 tileX, tileZ;
+        u64 readyStamp;
+        std::vector<PropInstance> instances;
+    };
+    static std::vector<BrixelPropsVariant> propsVariants;
+    static std::vector<PropVariantRange> propsVariantTable;
+    static std::vector<BrixelPropsVariantCpu> propsVariantCpu;
+    static std::vector<BrixelPropsSet> propsSets;
+    static std::vector<BrixelPropsPending> propsPending;
+    static utils::Thread propsLock = {.mutex = PTHREAD_MUTEX_INITIALIZER};
+    static char propsContextRegistered;
+    static char propsStatsLogged;
+    static u32 propsBudget;
+    static char propsBudgetSet;
+    /* Reserve of the shared 65536 instance table for Step 10's dynamic
+     * instances (the voxelizer asserts static+pending <= 65536). */
+    static const u32 BRIX_DYNAMIC_HEADROOM = 1024;
+    static void propsResolveBudget(void);
+    static BrixelPropsVariant* propsVariantFind(u32 species, u32 variant);
+    static void propsVariantRegister(u32 i);
+    static void propsEnsureRegistered(void);
+    static BrixelPropsSet* propsSetFind(u32 kind, i32 tileX, i32 tileZ);
+    static void propsSetDelete(BrixelPropsSet* s);
+    static void propsSetApply(u32 kind, i32 tileX, i32 tileZ, u64 readyStamp,
+                              const PropInstance* insts, u32 count, const float* camPos);
+    static void propsSyncPending(const float* camPos);
+    static char propsExtractMeshes(const void* verts, u32 vertCount, const void* idx, u32 idxCount,
+                                   const PropVariantRange* variants, u32 variantCount);
 
     /* FFX backend shared by the brixelizer + GI contexts (scratch sized for
      * 2; the FSR/CACAO/LPM passes keep their own single-context interfaces). */
@@ -185,10 +278,10 @@ namespace engine {
              * tracked in the log until Step 9 moves tuning to the GUI. */
             vulkanResetProfile(vulkan.currentCmd, &profile, 1);
         }
-        /* Deferred terrain-tile buffer destruction (3 frames past the GPU
-         * queue depth, like the heightmap pass's deferred descriptors). */
-        for (i32 i = (i32)terrainDeferred.size() - 1; i >= 0; i--) {
-            BrixelTerrainDeferred* d = &terrainDeferred[i];
+        /* Deferred GPU buffer destruction (3 frames past the GPU queue depth,
+         * like the heightmap pass's deferred descriptors). */
+        for (i32 i = (i32)deferred.size() - 1; i >= 0; i--) {
+            BrixelDeferred* d = &deferred[i];
             if (d->framesLeft > 1) {
                 d->framesLeft--;
                 continue;
@@ -197,7 +290,7 @@ namespace engine {
                 u32 dropIdx[2] = {d->vertBufIdx, d->idxBufIdx};
                 FfxErrorCode unregResult = ffxBrixelizerUnregisterBuffers(&brixelizerContext, dropIdx, 2);
                 if (unregResult != FFX_OK) {
-                    utils::error("vulkanBrixelizerPass: ffxBrixelizerUnregisterBuffers (terrain) failed: %d",
+                    utils::error("vulkanBrixelizerPass: ffxBrixelizerUnregisterBuffers (deferred) failed: %d",
                                  unregResult);
                 }
             }
@@ -207,8 +300,8 @@ namespace engine {
             if (d->idxBuf.buf) {
                 vulkanDestroyBuffer(&d->idxBuf, NULL);
             }
-            terrainDeferred[(u32)i] = terrainDeferred.back();
-            terrainDeferred.pop_back();
+            deferred[(u32)i] = deferred.back();
+            deferred.pop_back();
         }
     }
 
@@ -231,10 +324,23 @@ namespace engine {
         regBakeActive              = 0;
         regBakeGpuTotal            = 0;
         regBakeGpuMax              = 0.0;
+        propsStatsLogged           = 0;
         /* The FFX context (buffer/instance tables) died with the swapchain —
          * drop the terrain registrations and destroy the tile buffers. No
          * unregistration needed: the tables were recreated with the context. */
         terrainClearAll();
+        /* The props variant buffers are device-level and survive the swapchain
+         * (their contents do not change), but their FFX registrations and the
+         * prop instance IDs died with the context — ensureContext re-registers
+         * everything from the stored CPU data. */
+        for (u32 i = 0; i < propsSets.size(); i++) {
+            BrixelPropsSet* s = &propsSets[i];
+            if (!s->inUse) {
+                continue;
+            }
+            s->ids.clear();
+        }
+        propsContextRegistered = 0;
     }
 
     static void terrainClearAll(void) {
@@ -254,8 +360,8 @@ namespace engine {
             *e = BrixelTerrainTile{};
         }
         terrainTiles.clear();
-        for (u32 i = 0; i < terrainDeferred.size(); i++) {
-            BrixelTerrainDeferred* d = &terrainDeferred[i];
+        for (u32 i = 0; i < deferred.size(); i++) {
+            BrixelDeferred* d = &deferred[i];
             if (d->vertBuf.buf) {
                 vulkanDestroyBuffer(&d->vertBuf, NULL);
             }
@@ -263,7 +369,7 @@ namespace engine {
                 vulkanDestroyBuffer(&d->idxBuf, NULL);
             }
         }
-        terrainDeferred.clear();
+        deferred.clear();
         terrainHt = NULL;
     }
 
@@ -700,14 +806,14 @@ namespace engine {
         /* Defer the GPU buffer teardown: in-flight FFX dispatches still hold
          * the wrapped buffer handles, and the bindless slot may be re-registered
          * for another tile before they drain. */
-        BrixelTerrainDeferred d = {};
+        BrixelDeferred d = {};
         d.vertBuf    = e->vertBuf;
         d.idxBuf     = e->idxBuf;
         d.vertBufIdx = e->vertBufIdx;
         d.idxBufIdx  = e->idxBufIdx;
         d.unreg      = contextReady;
         d.framesLeft = 3;
-        terrainDeferred.push_back(d);
+        deferred.push_back(d);
         *e = BrixelTerrainTile{};
         utils::info("vulkanBrixelizerPass: terrain tile (%d,%d) evicted from SDF (stamp %llu)",
                     x,
@@ -989,6 +1095,641 @@ namespace engine {
         }
     }
 
+    /* The 3×4 ROW-major instance transform (plan pitfall #2 — the GLSL loads
+     * 3 rows and applies them row-vector style): T(pos)·R_y(yaw)·S(scale),
+     * matching azgaar_props.vert (x' = cy·x − sy·z, z' = sy·x + cy·z, both ×
+     * scale + pos). */
+    static void propsFillDesc(BrixelPropsVariant* v, const PropInstance* inst,
+                              FfxBrixelizerInstanceDescription* d) {
+        float cy     = cosf(inst->yaw);
+        float sy     = sinf(inst->yaw);
+        float s      = inst->scale;
+        d->transform[0]  = s * cy;
+        d->transform[1]  = 0.0f;
+        d->transform[2]  = s * sy;
+        d->transform[3]  = inst->pos[0];
+        d->transform[4]  = 0.0f;
+        d->transform[5]  = s;
+        d->transform[6]  = 0.0f;
+        d->transform[7]  = inst->pos[1];
+        d->transform[8]  = -s * sy;
+        d->transform[9]  = 0.0f;
+        d->transform[10] = s * cy;
+        d->transform[11] = inst->pos[2];
+
+        /* World AABB: the local bounds rotated around Y — only the four XZ
+         * corners move, Y is translation + scale. */
+        float xs[2] = {v->boundsMin[0] * s, v->boundsMax[0] * s};
+        float zs[2] = {v->boundsMin[2] * s, v->boundsMax[2] * s};
+        float rx0 = cy * xs[0] - sy * zs[0];
+        float rx1 = cy * xs[0] - sy * zs[1];
+        float rx2 = cy * xs[1] - sy * zs[0];
+        float rx3 = cy * xs[1] - sy * zs[1];
+        float rz0 = cy * zs[0] - sy * xs[0];
+        float rz1 = cy * zs[1] - sy * xs[0];
+        float rz2 = cy * zs[0] - sy * xs[1];
+        float rz3 = cy * zs[1] - sy * xs[1];
+        d->aabb.min[0] = inst->pos[0] + fminf(fminf(rx0, rx1), fminf(rx2, rx3));
+        d->aabb.max[0] = inst->pos[0] + fmaxf(fmaxf(rx0, rx1), fmaxf(rx2, rx3));
+        d->aabb.min[1] = inst->pos[1] + v->boundsMin[1] * s;
+        d->aabb.max[1] = inst->pos[1] + v->boundsMax[1] * s;
+        d->aabb.min[2] = inst->pos[2] + fminf(fminf(rz0, rz1), fminf(rz2, rz3));
+        d->aabb.max[2] = inst->pos[2] + fmaxf(fmaxf(rz0, rz1), fmaxf(rz2, rz3));
+        /* 0.1 m inflation: the SDF is voxel-resolution, keep grazing traces
+         * from clipping the surface. */
+        for (u32 a = 0; a < 3; a++) {
+            d->aabb.min[a] -= 0.1f;
+            d->aabb.max[a] += 0.1f;
+        }
+        d->vertexBuffer           = v->vertBufIdx;
+        d->vertexStride           = 12;
+        d->vertexBufferOffset     = 0;
+        d->vertexCount            = v->vertCount;
+        d->vertexFormat           = FFX_SURFACE_FORMAT_R32G32B32_FLOAT;
+        d->indexBuffer            = v->idxBufIdx;
+        d->indexBufferOffset      = 0;
+        d->indexFormat            = (v->indexType == FFX_INDEX_TYPE_UINT32) ? FFX_INDEX_TYPE_UINT32
+                                                                             : FFX_INDEX_TYPE_UINT16;
+        d->triangleCount          = v->triCount;
+        d->maxCascade             = v->maxCascade;
+        d->flags                  = FFX_BRIXELIZER_INSTANCE_FLAG_NONE;
+    }
+
+    static BrixelPropsSet* propsSetFind(u32 kind, i32 tileX, i32 tileZ) {
+        for (u32 i = 0; i < propsSets.size(); i++) {
+            BrixelPropsSet* s = &propsSets[i];
+            if (s->inUse && s->kind == kind && s->tileX == tileX && s->tileZ == tileZ) {
+                return s;
+            }
+        }
+        if (kind == 0) {
+            BrixelPropsSet* s = &propsSets.emplace_back(BrixelPropsSet{});
+            s->kind           = 0;
+            s->tileX          = tileX;
+            s->tileZ          = tileZ;
+            s->inUse          = 1;
+            return s;
+        }
+        for (u32 i = 0; i < propsSets.size(); i++) {
+            if (propsSets[i].inUse && propsSets[i].kind == kind) {
+                return &propsSets[i];
+            }
+        }
+        BrixelPropsSet* s = &propsSets.emplace_back(BrixelPropsSet{});
+        s->kind           = kind;
+        s->inUse          = 1;
+        return s;
+    }
+
+    static void propsSetDelete(BrixelPropsSet* s) {
+        if (s->ids.size() > 0 && contextReady) {
+            FfxErrorCode delResult =
+                ffxBrixelizerDeleteInstances(&brixelizerContext, s->ids.data(), (u32)s->ids.size());
+            if (delResult != FFX_OK) {
+                utils::error("vulkanBrixelizerPass: ffxBrixelizerDeleteInstances (props set) failed: %d",
+                             delResult);
+            }
+        }
+        s->ids.clear();
+        totalRegisteredInstances -= s->accepted;
+        totalRegisteredTriangles -= s->tris;
+        s->accepted = 0;
+        s->tris     = 0;
+    }
+
+    static void propsResolveBudget(void) {
+        if (propsBudgetSet) {
+            return;
+        }
+        propsBudgetSet = 1;
+        const char* env = getenv("ENGINE_BRIXGI_PROP_BUDGET");
+        propsBudget     = (env && *env) ? (u32)atoi(env) : 40960;
+    }
+
+    /* Creates one FFX static instance per accepted PropInstance of a set.
+     * `kind` selects the set (0 tile / 1 global / 2 landmarks); the camera
+     * position drives the distance-based budget priority. Replacing an
+     * existing set deletes its instances first (LOD re-culls, tile re-scatter,
+     * variant-table swap all re-push the same set). */
+    static void propsSetApply(u32 kind, i32 tileX, i32 tileZ, u64 readyStamp,
+                             const PropInstance* insts, u32 count, const float* camPos) {
+        propsResolveBudget();
+        if (!contextReady || count == 0) {
+            return;
+        }
+        BrixelPropsSet* s = propsSetFind(kind, tileX, tileZ);
+        if (s->inUse && (s->ids.size() > 0 || s->accepted > 0)) {
+            propsSetDelete(s);
+            s->instances.clear();
+            s->accepted = 0;
+            s->dropped  = 0;
+        }
+
+        /* Candidates: only instances whose (species, variant) has a registered
+         * SDF buffer — the rest (unloaded / unregistered species) never reach
+         * the voxelizer and must not count against the budget. */
+        std::vector<u32> cand;
+        cand.reserve(count);
+        for (u32 i = 0; i < count; i++) {
+            const BrixelPropsVariant* v =
+                propsVariantFind(insts[i].species, insts[i].variant);
+            if (v && v->registered) {
+                cand.push_back(i);
+            }
+        }
+
+        /* Budget: the global prop cap (default 40 k) plus the shared instance
+         * table headroom for Step 10's dynamic instances. */
+        u32 others = 0;
+        for (u32 i = 0; i < propsSets.size(); i++) {
+            if (propsSets[i].inUse && &propsSets[i] != s) {
+                others += propsSets[i].accepted;
+            }
+        }
+        u32 capacity = (propsBudget > others) ? (propsBudget - others) : 0;
+        u32 tableCap = (totalRegisteredInstances + BRIX_DYNAMIC_HEADROOM < FFX_BRIXELIZER_MAX_INSTANCES)
+                           ? (FFX_BRIXELIZER_MAX_INSTANCES - totalRegisteredInstances - BRIX_DYNAMIC_HEADROOM)
+                           : 0;
+        if (tableCap < capacity) {
+            capacity = tableCap;
+        }
+
+        if (capacity < cand.size()) {
+            /* Priority (plan Step 5.2): species class (sdfPriority — canopy /
+             * buildings first, grass tufts last), then distance to the camera.
+             * camPos may be NULL (the context-recreation reapply has no live
+             * camera at that point) — the distance term is then a constant and
+             * the sort degrades to pure species priority. */
+            float cam[3];
+            if (camPos) {
+                cam[0] = camPos[0];
+                cam[1] = camPos[1];
+                cam[2] = camPos[2];
+            } else {
+                cam[0] = 0.0f;
+                cam[1] = 0.0f;
+                cam[2] = 0.0f;
+            }
+            std::stable_sort(cand.begin(),
+                             cand.end(),
+                             [&](u32 a, u32 b) {
+                                 const PropInstance* ia = &insts[a];
+                                 const PropInstance* ib = &insts[b];
+                                 u32 pa = 255, pb = 255;
+                                 const BrixelPropsVariant* va = propsVariantFind(ia->species, ia->variant);
+                                 const BrixelPropsVariant* vb = propsVariantFind(ib->species, ib->variant);
+                                 if (va) {
+                                     pa = va->priority;
+                                 }
+                                 if (vb) {
+                                     pb = vb->priority;
+                                 }
+                                 if (pa != pb) {
+                                     return pa < pb;
+                                 }
+                                 float dx = ia->pos[0] - cam[0];
+                                 float dy = ia->pos[1] - cam[1];
+                                 float dz = ia->pos[2] - cam[2];
+                                 float ex = ib->pos[0] - cam[0];
+                                 float ey = ib->pos[1] - cam[1];
+                                 float ez = ib->pos[2] - cam[2];
+                                 return dx * dx + dy * dy + dz * dz < ex * ex + ey * ey + ez * ez;
+                             });
+            for (u32 i = 0; i < capacity; i++) {
+                s->instances.push_back(insts[cand[i]]);
+            }
+            s->dropped = count - (u32)s->instances.size();
+        } else {
+            for (u32 i = 0; i < cand.size(); i++) {
+                s->instances.push_back(insts[cand[i]]);
+            }
+            s->dropped = count - (u32)s->instances.size();
+        }
+        s->accepted = (u32)s->instances.size();
+        s->readyStamp = readyStamp;
+
+        if (s->accepted == 0) {
+            return;
+        }
+
+        std::vector<FfxBrixelizerInstanceDescription> descs(s->accepted);
+        std::vector<FfxBrixelizerInstanceID> ids(s->accepted);
+        u32 setTris = 0;        for (u32 i = 0; i < s->accepted; i++) {
+            FfxBrixelizerInstanceDescription* d = &descs[i];
+            PropInstance* inst                   = &s->instances[i];
+            BrixelPropsVariant* v =
+                propsVariantFind(inst->species, inst->variant);
+            if (!v || !v->registered) {
+                continue; /* filtered above; defensive */
+            }
+            propsFillDesc(v, inst, d);
+            d->outInstanceID = &ids[i];
+            setTris += v->triCount;
+        }
+        FfxErrorCode instResult =
+            ffxBrixelizerCreateInstances(&brixelizerContext, descs.data(), s->accepted);
+        if (instResult != FFX_OK) {
+            utils::error("vulkanBrixelizerPass: ffxBrixelizerCreateInstances (props) failed: %d",
+                         instResult);
+            s->instances.clear();
+            s->accepted = 0;
+            return;
+        }
+        for (u32 i = 0; i < s->accepted; i++) {
+            s->ids.push_back(ids[i]);
+        }
+        s->tris = setTris;
+        totalRegisteredInstances += s->accepted;
+        totalRegisteredTriangles += s->tris;
+        const char* setKind = (kind == 0) ? "tile" : (kind == 1) ? "settlements" : "landmarks";
+        utils::info("vulkanBrixelizerPass: props %s(%d,%d) SDF: %u/%u accepted (dropped %u, "
+                    "budget %u; totals: %u instances / %u tris, cap %u)",
+                    setKind,
+                    tileX,
+                    tileZ,
+                    s->accepted,
+                    count,
+                    s->dropped,
+                    propsBudget,
+                    totalRegisteredInstances,
+                    totalRegisteredTriangles,
+                    FFX_BRIXELIZER_MAX_INSTANCES);
+        if (!propsStatsLogged) {
+            propsStatsLogged = 1;
+            utils::info("vulkanBrixelizerPass: props registration frame: pass gpu=%.3f ms (includes the first prop bakes)",
+                        profile.elapsed / MILLION);
+        }
+    }
+
+    static BrixelPropsVariant* propsVariantFind(u32 species, u32 variant) {
+        for (u32 i = 0; i < propsVariants.size(); i++) {
+            if (propsVariants[i].species == species && propsVariants[i].variant == variant) {
+                return &propsVariants[i];
+            }
+        }
+        return NULL;
+    }
+
+    static void propsSyncPending(const float* camPos) {
+        /* Move the queue out under the lock (worker threads push into it);
+         * the FFX work runs unlocked on the render thread. */
+        std::vector<BrixelPropsPending> batch;
+        utils::threadLock(&propsLock);
+        batch = std::move(propsPending);
+        propsPending.clear();
+        utils::threadUnlock(&propsLock);
+        if (!batch.size()) {
+            return;
+        }
+        for (u32 i = 0; i < batch.size(); i++) {
+            BrixelPropsPending* p = &batch[i];
+            switch (p->kind) {
+            case BRIX_PROPS_MESH_SET:
+                if (contextReady) {
+                    /* The new variant table replaces the old buffers — delete
+                     * every prop instance (they reference the old variants),
+                     * defer-destroy the old variant buffers, register the new
+                     * ones, and recreate the stored accepted sets against the
+                     * new buffers. */
+                    for (u32 j = 0; j < propsSets.size(); j++) {
+                        if (propsSets[j].inUse) {
+                            propsSetDelete(&propsSets[j]);
+                        }
+                    }
+                    for (u32 j = 0; j < propsVariants.size(); j++) {
+                        BrixelPropsVariant* v = &propsVariants[j];
+                        if (!v->registered) {
+                            continue;
+                        }
+                        v->registered = 0;
+                        if (v->vertBuf.buf || v->idxBuf.buf) {
+                            BrixelDeferred d = {};
+                            d.vertBuf    = v->vertBuf;
+                            d.idxBuf     = v->idxBuf;
+                            d.vertBufIdx = v->vertBufIdx;
+                            d.idxBufIdx  = v->idxBufIdx;
+                            d.unreg      = 1;
+                            d.framesLeft = 3;
+                            deferred.push_back(d);
+                            v->vertBuf = VulkanBuffer{};
+                            v->idxBuf  = VulkanBuffer{};
+                        }
+                    }
+                    propsEnsureRegistered();
+                    for (u32 j = 0; j < propsSets.size(); j++) {
+                        BrixelPropsSet* s = &propsSets[j];
+                        if (s->inUse && s->instances.size() > 0) {
+                            s->ids.clear();
+                            s->accepted = 0;
+                            s->tris     = 0;
+                            propsSetApply(s->kind, s->tileX, s->tileZ, s->readyStamp,
+                                          s->instances.data(), (u32)s->instances.size(), camPos);
+                        }
+                    }
+                }
+                break;
+            case BRIX_PROPS_MESH_CLEAR:
+                /* propsVariantCpu / propsVariantTable are owned by the game
+                 * thread (cleared under the lock when this item was pushed);
+                 * the render thread only resets its own registered state here. */
+                for (u32 j = 0; j < propsSets.size(); j++) {
+                    if (propsSets[j].inUse) {
+                        propsSetDelete(&propsSets[j]);
+                        propsSets[j] = BrixelPropsSet{};
+                    }
+                }
+                for (u32 j = 0; j < propsVariants.size(); j++) {
+                    BrixelPropsVariant* v = &propsVariants[j];
+                    if (!v->registered) {
+                        continue;
+                    }
+                    v->registered = 0;
+                    if (v->vertBuf.buf || v->idxBuf.buf) {
+                        BrixelDeferred d = {};
+                        d.vertBuf    = v->vertBuf;
+                        d.idxBuf     = v->idxBuf;
+                        d.vertBufIdx = v->vertBufIdx;
+                        d.idxBufIdx  = v->idxBufIdx;
+                        d.unreg      = 1;
+                        d.framesLeft = 3;
+                        deferred.push_back(d);
+                        v->vertBuf = VulkanBuffer{};
+                        v->idxBuf  = VulkanBuffer{};
+                    }
+                }
+                /* propsVariantCpu / propsVariantTable are owned by the game
+                 * thread (cleared under the lock when this item was pushed);
+                 * the render thread only resets its own registered state. */
+                break;
+            case BRIX_PROPS_TILE_SET:
+                propsSetApply(0, p->tileX, p->tileZ, p->readyStamp, p->instances.data(),
+                              (u32)p->instances.size(), camPos);
+                break;
+            case BRIX_PROPS_TILE_CLEAR: {
+                BrixelPropsSet* s = propsSetFind(0, p->tileX, p->tileZ);
+                /* propsSetFind creates the entry — drop it again when absent
+                 * from the previous state. */
+                if (s->ids.size() == 0 && s->instances.size() == 0) {
+                    propsSets[(u32)std::distance(propsSets.data(), s)] = BrixelPropsSet{};
+                    break;
+                }
+                propsSetDelete(s);
+                s->instances.clear();
+                *s = BrixelPropsSet{};
+                break;
+            }
+            case BRIX_PROPS_GLOBAL_SET:
+                propsSetApply(1, 0, 0, p->readyStamp, p->instances.data(), (u32)p->instances.size(),
+                              camPos);
+                break;
+            case BRIX_PROPS_GLOBAL_CLEAR: {
+                BrixelPropsSet* s = propsSetFind(1, 0, 0);
+                if (s->ids.size() == 0 && s->instances.size() == 0) {
+                    propsSets[(u32)std::distance(propsSets.data(), s)] = BrixelPropsSet{};
+                    break;
+                }
+                propsSetDelete(s);
+                s->instances.clear();
+                *s = BrixelPropsSet{};
+                break;
+            }
+            case BRIX_PROPS_LANDMARKS_SET:
+                propsSetApply(2, 0, 0, p->readyStamp, p->instances.data(), (u32)p->instances.size(),
+                              camPos);
+                break;
+            case BRIX_PROPS_LANDMARKS_CLEAR: {
+                BrixelPropsSet* s = propsSetFind(2, 0, 0);
+                if (s->ids.size() == 0 && s->instances.size() == 0) {
+                    propsSets[(u32)std::distance(propsSets.data(), s)] = BrixelPropsSet{};
+                    break;
+                }
+                propsSetDelete(s);
+                s->instances.clear();
+                *s = BrixelPropsSet{};
+                break;
+            }
+            default:
+                break;
+            }
+        }
+    }
+
+    static void propsEnsureRegistered(void) {
+        if (!contextReady) {
+            return;
+        }
+        /* propsVariantCpu is written by the game thread (azgaarPropsInit /
+         * propsRebuildAndPushMeshes) under propsLock — hold the lock while
+         * reading it. The GPU upload inside propsVariantRegister is a fence
+         * wait; the game thread only holds the lock during extraction, so a
+         * few ms of blocking at world load is the worst case. */
+        utils::threadLock(&propsLock);
+        if (propsVariantCpu.size() == 0) {
+            utils::threadUnlock(&propsLock);
+            return;
+        }
+        /* propsVariants stays index-aligned with propsVariantCpu: a world
+         * switch (MESH_SET) resets the entries in place, swapchain recreation
+         * keeps the device-level buffers and only re-registers them with the
+         * new FFX context. */
+        if (propsVariants.size() != propsVariantCpu.size()) {
+            propsVariants.resize(propsVariantCpu.size());
+        }
+        for (u32 i = 0; i < propsVariantCpu.size(); i++) {
+            propsVariantRegister(i);
+        }
+        utils::threadUnlock(&propsLock);
+        if (propsContextRegistered) {
+            return;
+        }
+        propsContextRegistered = 1;
+        /* The FFX instance tables were recreated with the context — recreate
+         * the stored accepted sets (swapchain recreation; nothing re-pushes
+         * them). */
+        for (u32 i = 0; i < propsSets.size(); i++) {
+            BrixelPropsSet* s = &propsSets[i];
+            if (s->inUse && s->instances.size() > 0) {
+                s->ids.clear();
+                s->accepted = 0;
+                s->tris     = 0;
+                propsSetApply(s->kind, s->tileX, s->tileZ, s->readyStamp, s->instances.data(),
+                              (u32)s->instances.size(), NULL);
+            }
+        }
+    }
+
+    /* Uploads + FFX-registers one variant's position-only + index buffers (the
+     * CPU data comes from the extraction at SetPropsMeshes time). Render
+     * thread only; called from propsEnsureRegistered. */
+    static void propsVariantRegister(u32 i) {
+        BrixelPropsVariantCpu* c = &propsVariantCpu[i];
+        BrixelPropsVariant* v    = &propsVariants[i];
+        if (c->vertCount == 0) {
+            return;
+        }
+        if (v->registered) {
+            return;
+        }
+        v->species    = c->species;
+        v->variant    = c->variant;
+        v->vertCount  = c->vertCount;
+        v->triCount   = c->triCount;
+        v->maxCascade = c->maxCascade;
+        v->priority   = c->priority;
+        v->indexType  = c->indexType;
+        memcpy(v->boundsMin, c->boundsMin, sizeof(v->boundsMin));
+        memcpy(v->boundsMax, c->boundsMax, sizeof(v->boundsMax));
+        if (!v->vertBuf.buf) {
+            v->vertBuf = vulkanCreateGpuBuffer(utils::strtmp("BrixelPropsVerts %u_%u", c->species,
+                                                              c->variant),
+                                               (u64)c->vertCount * 12,
+                                               VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+                                                   VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+            u32 idxCount =
+                (c->indexType == FFX_INDEX_TYPE_UINT32) ? (u32)c->idx32.size() : (u32)c->idx16.size();
+            v->idxBuf = vulkanCreateGpuBuffer(utils::strtmp("BrixelPropsIdx %u_%u", c->species,
+                                                             c->variant),
+                                              (u64)idxCount * ((c->indexType == FFX_INDEX_TYPE_UINT32) ? 4u : 2u),
+                                              VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+                                                  VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+            if (!v->vertBuf.buf || !v->idxBuf.buf) {
+                utils::error("vulkanBrixelizerPass: props variant (%u,%u) buffer creation failed",
+                             c->species,
+                             c->variant);
+                if (v->vertBuf.buf) {
+                    vulkanDestroyBuffer(&v->vertBuf, NULL);
+                    v->vertBuf = VulkanBuffer{};
+                }
+                if (v->idxBuf.buf) {
+                    vulkanDestroyBuffer(&v->idxBuf, NULL);
+                    v->idxBuf = VulkanBuffer{};
+                }
+                return;
+            }
+            VulkanCommand* tcmd = vulkanTransientBegin();
+            vulkanCopy(.cmd         = tcmd,
+                       .source.data = c->verts.data(),
+                       .target.buf  = &v->vertBuf,
+                       .size        = (u32)(c->vertCount * 12));
+            if (c->indexType == FFX_INDEX_TYPE_UINT32) {
+                vulkanCopy(.cmd         = tcmd,
+                           .source.data = c->idx32.data(),
+                           .target.buf  = &v->idxBuf,
+                           .size        = (u32)(c->idx32.size() * sizeof(u32)));
+            } else {
+                vulkanCopy(.cmd         = tcmd,
+                           .source.data = c->idx16.data(),
+                           .target.buf  = &v->idxBuf,
+                           .size        = (u32)(c->idx16.size() * sizeof(u16)));
+            }
+            /* Wait: the FFX voxelizer reads these as SSBs, the data must be
+             * complete before the bake dispatch. */
+            vulkanTransientEnd(tcmd, 1);
+        }
+        FfxResource vRes =
+            vulkanFfxWrapBufferResource(&v->vertBuf,
+                                        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                                        FFX_RESOURCE_STATE_PIXEL_COMPUTE_READ,
+                                        L"BrixelPropsVerts");
+        FfxResource iRes =
+            vulkanFfxWrapBufferResource(&v->idxBuf,
+                                        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                                        FFX_RESOURCE_STATE_PIXEL_COMPUTE_READ,
+                                        L"BrixelPropsIdx");
+        FfxBrixelizerBufferDescription bufDescs[2] = {};
+        bufDescs[0].buffer   = vRes;
+        bufDescs[0].outIndex = &v->vertBufIdx;
+        bufDescs[1].buffer   = iRes;
+        bufDescs[1].outIndex = &v->idxBufIdx;
+        FfxErrorCode regResult = ffxBrixelizerRegisterBuffers(&brixelizerContext, bufDescs, 2);
+        if (regResult != FFX_OK) {
+            utils::error("vulkanBrixelizerPass: props variant (%u,%u) ffxBrixelizerRegisterBuffers failed: %d",
+                         c->species,
+                         c->variant,
+                         regResult);
+            return;
+        }
+        v->registered = 1;
+    }
+
+    /* Extracts the per-(species, variant) position-only sub-buffers from the
+     * merged 72 B species mesh (plan Step 5.1 — pitfall #8): one 12 B/vertex
+     * buffer + a u16 (u32 when the variant spans > 64 k vertices) index
+     * sub-range per variant. Runs on the game thread at azgaarPropsInit; the
+     * GPU upload / FFX registration happens in propsEnsureRegistered (render
+     * thread, once the context exists). */
+    static char propsExtractMeshes(const void* verts, u32 vertCount, const void* idx, u32 idxCount,
+                                   const PropVariantRange* variants, u32 variantCount) {
+        propsVariantCpu.clear();
+        propsVariantTable.clear();
+        if (!verts || vertCount == 0 || !idx || idxCount == 0 || !variants || variantCount == 0) {
+            return 1;
+        }
+        const PropsVertex* pv = (const PropsVertex*)verts;
+        const u32* mi        = (const u32*)idx;
+        propsVariantTable.assign(variants, variants + variantCount);
+        propsVariantCpu.resize(variantCount);
+        for (u32 r = 0; r < variantCount; r++) {
+            const PropVariantRange* vr = &variants[r];
+            BrixelPropsVariantCpu* c   = &propsVariantCpu[r];
+            c->species    = vr->species;
+            c->variant    = vr->variant;
+            c->maxCascade = vr->sdfMaxCascade;
+            c->priority   = vr->sdfPriority;
+            memcpy(c->boundsMin, vr->boundsMin, sizeof(c->boundsMin));
+            memcpy(c->boundsMax, vr->boundsMax, sizeof(c->boundsMax));
+            u32 i0 = vr->indexOffset;
+            u32 ic = vr->indexCount;
+            if (i0 >= idxCount || i0 + ic > idxCount || ic == 0) {
+                continue;
+            }
+            u32 minV = vertCount, maxV = 0;
+            for (u32 k = 0; k < ic; k++) {
+                u32 vi = mi[i0 + k];
+                if (vi < minV) {
+                    minV = vi;
+                }
+                if (vi >= maxV) {
+                    maxV = vi + 1;
+                }
+            }
+            if (minV >= maxV || minV >= vertCount || maxV > vertCount) {
+                utils::error("vulkanBrixelizerPass: props variant (%u,%u) index range out of bounds", vr->species, vr->variant);
+                continue;
+            }
+            c->vertCount = maxV - minV;
+            c->triCount  = ic / 3;
+            c->verts.resize((size_t)c->vertCount * 3);
+            for (u32 v = minV; v < maxV; v++) {
+                c->verts[(v - minV) * 3 + 0] = pv[v].position[0];
+                c->verts[(v - minV) * 3 + 1] = pv[v].position[1];
+                c->verts[(v - minV) * 3 + 2] = pv[v].position[2];
+            }
+            if (c->vertCount > 0xFFFF) {
+                c->indexType = FFX_INDEX_TYPE_UINT32;
+                c->idx32.resize(ic);
+                for (u32 k = 0; k < ic; k++) {
+                    c->idx32[k] = mi[i0 + k] - minV;
+                }
+            } else {
+                c->indexType = FFX_INDEX_TYPE_UINT16;
+                c->idx16.resize(ic);
+                for (u32 k = 0; k < ic; k++) {
+                    c->idx16[k] = (u16)(mi[i0 + k] - minV);
+                }
+            }
+            utils::info("vulkanBrixelizerPass: props SDF variant (%u,%u): %u verts / %u tris (%s indices, maxCascade %u, priority %u)",
+                         vr->species,
+                         vr->variant,
+                         c->vertCount,
+                         c->triCount,
+                         c->indexType == FFX_INDEX_TYPE_UINT32 ? "u32" : "u16",
+                         c->maxCascade,
+                         c->priority);
+        }
+        return 1;
+    }
+
     static char ensureContext(void) {
         if (!backendReady) {
             scratchBufferSize = ffxGetScratchMemorySizeVK(vulkan.physicalDevice, 2);
@@ -1071,6 +1812,9 @@ namespace engine {
         for (u32 i = 0; i < ecs.scenes.size(); i++) {
             registerScene(ecs.scenes[i]);
         }
+        /* Step 5: re-register the props variant buffers + recreate the stored
+         * prop instance sets (no-op when no props world is loaded). */
+        propsEnsureRegistered();
         return 1;
     }
 
@@ -1126,6 +1870,11 @@ namespace engine {
          * bake dispatch so new tiles are baked with the rest. */
         terrainSyncTiles();
 
+        /* Step 5: drain the thread-safe props queue (tile scatters / global
+         * sets pushed by the azgaar_props pass, mesh-table pushes pushed by
+         * azgaarPropsInit) — budgeted instance creation before this frame's
+         * bake. */
+        propsSyncPending(camera->cameraUbo.renderLocation);
         /* Step 2.2: read the debug-visualization mode once (ENGINE_BRIX_SDF_DEBUG;
          * "off" disables the extra dispatch). */
         getSdfDebugMode();
@@ -1403,5 +2152,97 @@ namespace engine {
             sceneRegs.erase(sceneRegs.begin() + (ptrdiff_t)i);
             return;
         }
+    }
+
+    /* ── Step 5: props SDF public API ─────────────────────────────────────────
+     * All of these are thread-safe (worker-thread callers from the azgaar
+     * scatter / cull paths): state is queued under propsLock and applied on
+     * the render thread in update() (propsSyncPending), once the voxelizer
+     * context exists. */
+
+    void vulkanBrixelizerPassSetPropsMeshes(const void* verts, u32 vertCount,
+                                            const void* idx, u32 idxCount,
+                                            const PropVariantRange* variants, u32 variantCount) {
+        utils::threadLock(&propsLock);
+        BrixelPropsPending p = {};
+        if (verts && vertCount && idx && idxCount && variants && variantCount) {
+            p.kind = BRIX_PROPS_MESH_SET;
+            /* Extract the per-variant position-only sub-buffers NOW (the merged
+             * arrays are caller-owned and transient); the GPU upload + FFX
+             * registration happens in the render-thread drain. */
+            propsExtractMeshes(verts, vertCount, idx, idxCount, variants, variantCount);
+        } else {
+            p.kind = BRIX_PROPS_MESH_CLEAR;
+            propsVariantCpu.clear();
+            propsVariantTable.clear();
+        }
+        propsPending.push_back(p);
+        utils::threadUnlock(&propsLock);
+    }
+
+    void vulkanBrixelizerPassPropsTileSet(i32 tileX, i32 tileZ, u64 readyStamp,
+                                          const PropInstance* instances, u32 instanceCount) {
+        if (!instances || instanceCount == 0) {
+            return;
+        }
+        utils::threadLock(&propsLock);
+        BrixelPropsPending p = {};
+        p.kind       = BRIX_PROPS_TILE_SET;
+        p.tileX      = tileX;
+        p.tileZ      = tileZ;
+        p.readyStamp = readyStamp;
+        p.instances.assign(instances, instances + instanceCount);
+        propsPending.push_back(p);
+        utils::threadUnlock(&propsLock);
+    }
+
+    void vulkanBrixelizerPassPropsTileClear(i32 tileX, i32 tileZ) {
+        utils::threadLock(&propsLock);
+        BrixelPropsPending p = {};
+        p.kind  = BRIX_PROPS_TILE_CLEAR;
+        p.tileX = tileX;
+        p.tileZ = tileZ;
+        propsPending.push_back(p);
+        utils::threadUnlock(&propsLock);
+    }
+
+    void vulkanBrixelizerPassPropsGlobalSet(const PropInstance* instances, u32 instanceCount) {
+        if (!instances || instanceCount == 0) {
+            return;
+        }
+        utils::threadLock(&propsLock);
+        BrixelPropsPending p = {};
+        p.kind      = BRIX_PROPS_GLOBAL_SET;
+        p.instances.assign(instances, instances + instanceCount);
+        propsPending.push_back(p);
+        utils::threadUnlock(&propsLock);
+    }
+
+    void vulkanBrixelizerPassPropsGlobalClear(void) {
+        utils::threadLock(&propsLock);
+        BrixelPropsPending p = {};
+        p.kind = BRIX_PROPS_GLOBAL_CLEAR;
+        propsPending.push_back(p);
+        utils::threadUnlock(&propsLock);
+    }
+
+    void vulkanBrixelizerPassPropsLandmarksSet(const PropInstance* instances, u32 instanceCount) {
+        if (!instances || instanceCount == 0) {
+            return;
+        }
+        utils::threadLock(&propsLock);
+        BrixelPropsPending p = {};
+        p.kind      = BRIX_PROPS_LANDMARKS_SET;
+        p.instances.assign(instances, instances + instanceCount);
+        propsPending.push_back(p);
+        utils::threadUnlock(&propsLock);
+    }
+
+    void vulkanBrixelizerPassPropsLandmarksClear(void) {
+        utils::threadLock(&propsLock);
+        BrixelPropsPending p = {};
+        p.kind = BRIX_PROPS_LANDMARKS_CLEAR;
+        propsPending.push_back(p);
+        utils::threadUnlock(&propsLock);
     }
 }  // namespace engine

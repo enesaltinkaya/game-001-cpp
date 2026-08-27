@@ -23,7 +23,8 @@ FFX passes (`VulkanFsrPass`, CACAO in `VulkanAOPass`, `VulkanLpmPass`, `VulkanLe
       2026-08-27; streaming/eviction accepted as verified via the
       world-unload path (mechanism identical to a camera move), the
       moving-camera check folds into Step 7's mv-scale gate
-- [ ] Step 5 — Props (vegetation / buildings) SDF, budgeted
+- [x] Step 5 — Props (vegetation / buildings) SDF, budgeted — verified 2026-08-27;
+      fixed a transform-flattening bug (all props were flat sheets); see Status below
 - [ ] Step 6 — GI inputs: blue noise, environment cube, history buffers
 - [ ] Step 7 — GI context + dispatch + raw GI output verified
 - [ ] Step 8 — Albedo G-buffer + GI compositing into the lit image
@@ -672,6 +673,36 @@ grass low). The 65536 cap (pitfall #9) is **shared** — scene instances (Step 3
 respected (log line); bake cost with props included measured (the fork's
 dense-scene patches should keep reference counts sane); no wedge-locks after
 streaming in/out of tiles with props.
+
+**Status 2026-08-27 — verified; one blocking bug found and fixed:**
+
+- **Flattening bug (fixed):** `propsFillDesc()` hardcoded `transform[5] = 0.0f`,
+  i.e. the row-major T·R_y·S matrix had **Y-scale = 0** — every prop instance
+  voxelized as a degenerate zero-height sheet at its base height. In SDF debug
+  dumps near props were invisible (only a faint sliver at the horizon), and the
+  fix path is trivially `transform[5] = s`. While there, `transform[2]/[8]` (and
+  the AABB's rz corner terms) had `sy` signs flipped — the old math baked
+  R_y(-yaw), mirrored vs `azgaar_props.vert`'s `rot * local`. Harmless for
+  near-symmetric procedural props but corrected to match the vertex shader
+  exactly.
+- **Verification (post-fix):** rebuilt; A/B SDF dumps (`ENGINE_BRIXGI_PROP_BUDGET=0`
+  vs normal) at default `ENGINE_BRIX_SDF_TMAX=100`: 533k px differ across the
+  whole horizon band (y 0–561, full width) — far prop trees bake with real 3D
+  volume. `TMAX=20`: the hut (species 13, d=13.2 m) appears as a solid
+  silhouette with correct gable, matching the rendered building.
+- Budget/counts re-confirmed post-fix: tile(2,−1) 31549/31549 accepted,
+  settlements 53/53, totals 31669 inst / 8.48M tris vs cap 65536; first-bake
+  478 ms total / 177.5 ms heaviest single update (pre-fix numbers unchanged —
+  flattening only removed triangles, so this was invisible in bake cost);
+  steady state ~1 ms/update; no validation errors; no wedge-locks.
+- **Open deviation (for later decision, not a correctness defect of the mirror
+  plumbing itself):** props sets mirror the **render-culled** scatter (kCullDist
+  + LOD + frustum), not the world-space scatter: landmarks (263) cull to 0 and
+  settlements 21211 → 53, so GI misses everything outside the render cull even
+  though GI tMax is 10 km. Same for the initial global pushes draining before
+  variant registration (silently discarded; self-heals for settlements via the
+  per-frame cull re-push). Fixing this means feeding the SDF from the unculled
+  scatter — deferred to a follow-up.
 
 ## Step 6 — GI inputs: blue noise, environment cube, history buffers
 
