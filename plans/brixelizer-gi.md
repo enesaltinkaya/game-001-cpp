@@ -401,10 +401,12 @@ fix before moving on.
 
 **Gate 2 verified:** distance dump shows a clean SDF of the cube (cyan zero
 level set, thin dark-red rim hugging the silhouette); grad view is a coherent
-normal field; brick-ID view shows brick boundaries; `stats` = 240 staticTris /
-85 staticRefs / 26 staticBricks (> 0); no failed-voxel / scratch-overflow. The
-only validation CRIT is the known deferred FFX shutdown leak at `vkDestroyDevice`
-(Step 1) — no per-frame validation errors.
+normal field; brick-ID view shows brick boundaries; `stats` = 288 staticTris /
+108 staticRefs / 26 staticBricks (> 0) — the 26 = 3×3×3 block minus the
+interior-center brick (freed by `CompressBrick`, legitimate for an unsigned
+SDF); all 26 held (free-brick pool 262118); no failed-voxel / scratch-overflow.
+The only validation CRIT is the known deferred FFX shutdown leak at
+`vkDestroyDevice` (Step 1) — no per-frame validation errors.
 
 **The red rim is a debug-viz property, not an SDF defect** (checked 2026-08-27
 against `ffx_brixelizer_debug_visualization.h`): in `TRACE_DEBUG_MODE_DISTANCE`
