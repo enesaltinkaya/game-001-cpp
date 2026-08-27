@@ -177,6 +177,26 @@ static void vulkanDebugDumpFrameImages(const char* shotPath) {
             img = vulkanBloomPassGetBloomImage();
         } else if (!strcmp(tok, "brixelSdf")) {
             img = vulkanBrixelizerPassGetSdfDebug();
+        } else if (!strcmp(tok, "giNoise")) {
+            img = vulkanBrixelizerPassGetBlueNoise();
+        } else if (!strcmp(tok, "giEnv")) {
+            img = vulkanBrixelizerPassGetEnvFace(0);
+        } else if (!strcmp(tok, "giEnv1")) {
+            img = vulkanBrixelizerPassGetEnvFace(1);
+        } else if (!strcmp(tok, "giEnv2")) {
+            img = vulkanBrixelizerPassGetEnvFace(2);
+        } else if (!strcmp(tok, "giEnv3")) {
+            img = vulkanBrixelizerPassGetEnvFace(3);
+        } else if (!strcmp(tok, "giEnv4")) {
+            img = vulkanBrixelizerPassGetEnvFace(4);
+        } else if (!strcmp(tok, "giEnv5")) {
+            img = vulkanBrixelizerPassGetEnvFace(5);
+        } else if (!strcmp(tok, "giHistDepth")) {
+            img = vulkanBrixelizerPassGetHistoryDepth();
+        } else if (!strcmp(tok, "giHistNormal")) {
+            img = vulkanBrixelizerPassGetHistoryNormal();
+        } else if (!strcmp(tok, "giHistLit")) {
+            img = vulkanBrixelizerPassGetHistoryLit();
         } else if (strstr(tok, "Raw")) {
             /* <name>Raw: raw byte dump of the image named <name> (dispatches
              * through the regular token table by stripping the suffix). */
@@ -208,6 +228,14 @@ static void vulkanDebugDumpFrameImages(const char* shotPath) {
                 rawImg = vulkanBloomPassGetBloomImage();
             } else if (!strcmp(sub, "brixelSdf")) {
                 rawImg = vulkanBrixelizerPassGetSdfDebug();
+            } else if (!strcmp(sub, "giNoise")) {
+                rawImg = vulkanBrixelizerPassGetBlueNoise();
+            } else if (!strcmp(sub, "giHistDepth")) {
+                rawImg = vulkanBrixelizerPassGetHistoryDepth();
+            } else if (!strcmp(sub, "giHistNormal")) {
+                rawImg = vulkanBrixelizerPassGetHistoryNormal();
+            } else if (!strcmp(sub, "giHistLit")) {
+                rawImg = vulkanBrixelizerPassGetHistoryLit();
             }
             if (!rawImg) {
                 continue;
@@ -734,12 +762,29 @@ void initLogicalDevice(void) {
     dynamicRenderingFeatures.dynamicRendering = VK_TRUE;
     dynamicRenderingFeatures.pNext            = &vulkan12Features;
 
+    /* maintenance8 (Vulkan 1.3, KHR alias in this SDK): allows
+     * vkCmdCopyImage between different aspect masks — the brixelizer
+     * history-depth copy (D32 → R32F, plans/brixelizer-gi.md Step 6) relies
+     * on it. Only enabled when the device supports it. */
+    VkPhysicalDeviceMaintenance8FeaturesKHR maintenance8Features = {};
+    maintenance8Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_8_FEATURES_KHR;
+    VkPhysicalDeviceFeatures2 maintenance8Query                   = {};
+    maintenance8Query.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+    maintenance8Query.pNext = &maintenance8Features;
+    vkGetPhysicalDeviceFeatures2(vulkan.physicalDevice, &maintenance8Query);
+    char maintenance8Supported = maintenance8Features.maintenance8;
+    if (maintenance8Supported) {
+        maintenance8Features.maintenance8 = VK_TRUE;
+        maintenance8Features.pNext        = &dynamicRenderingFeatures;
+    }
+
     if (utils::isDebug()) {
         vulkan12Features.bufferDeviceAddressCaptureReplay = VK_TRUE;
     }
 
     VkDeviceCreateInfo deviceCreateInfo      = {};
-    deviceCreateInfo.pNext                   = &dynamicRenderingFeatures;
+    deviceCreateInfo.pNext                   =
+        maintenance8Supported ? (const void*)&maintenance8Features : (const void*)&dynamicRenderingFeatures;
     deviceCreateInfo.sType                   = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
     deviceCreateInfo.queueCreateInfoCount    = queueCreateInfoCount;
     deviceCreateInfo.pQueueCreateInfos       = queueCreateInfos;
@@ -748,6 +793,9 @@ void initLogicalDevice(void) {
     deviceCreateInfo.ppEnabledExtensionNames = extensions.data();
     VkResult result =
         vkCreateDevice(vulkan.physicalDevice, &deviceCreateInfo, nullptr, &vulkan.device);
+    if (result == VK_SUCCESS && maintenance8Supported) {
+        utils::info("vulkanCore: maintenance8 enabled (depth→color copies)");
+    }
     if (result != VK_SUCCESS) {
         utils::terminate("vulkanCore: failed to create logical device! code: %d", result);
     }

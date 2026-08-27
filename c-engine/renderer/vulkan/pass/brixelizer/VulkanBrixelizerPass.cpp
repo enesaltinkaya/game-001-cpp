@@ -13,7 +13,9 @@
 #include "renderer/vulkan/command/VulkanCommand.h"
 #include "renderer/vulkan/barrier/VulkanBarrier.h"
 #include "renderer/vulkan/pipeline/VulkanProfile.h"
+#include "renderer/vulkan/pipeline/VulkanPipe.h"
 #include "renderer/vulkan/resources/VulkanBuffer.h"
+#include "renderer/vulkan/resources/VulkanFrameResources.h"
 #include "renderer/vulkan/resources/VulkanImage.h"
 #include "renderer/vulkan/resources/VulkanResourceManager.h"
 #include "renderer/vulkan/scene/VulkanScene.h"
@@ -212,6 +214,37 @@ namespace engine {
      * by the FFX debug pass as a UAV, dumped via brixelSdf). */
     static VulkanImage sdfDebug;
 
+    /* ── Step 6: GI inputs (plans/brixelizer-gi.md) ──────────────
+     * - blueNoise: 128² RG8 CPU-generated blue-noise rank mask (Bridson
+     *   best-candidate). The GI shader masks pixel coords with & 127 and
+     *   reads .xy — 128² is the native tile size.
+     * - envCube: 128²×6 RGBA16F cube (CUBE_COMPATIBLE) — one-shot compute
+     *   bake of the shared procedural sky (includes/sky.shader, the same
+     *   function skybox.frag renders). Re-baked on swapchain creation.
+     * - history*: render-res temporal inputs for the GI context (Step 7):
+     *   HistoryDepth R32F (D32 copy; clear 0.0 = background, reverse-Z),
+     *   HistoryNormal RGBA16F (copy of worldNormal), HistoryLitOutput
+     *   RGBA16F (copy of the composited color — after GI compositing in
+     *   Step 8). Copied at end of frame (postUpdate runs after every
+     *   pass's update, so compositeColor is current-frame). */
+    static VulkanImage blueNoise;
+    static VulkanImage envCube;
+    static VulkanImage envFaceDump;
+    static VulkanImage historyDepth;
+    static VulkanImage historyNormal;
+    static VulkanImage historyLit;
+    static VulkanPipe  envCubePipe;
+    static char        envCubePipeReady;
+    /* Dirty by default: the swapchainCreated signal can fire before the pass
+     * subscribes (it is registered in added(), the signal is emitted during
+     * renderer init) — the first update after context creation bakes the
+     * cube. Later swapchain recreations re-flag it via the handler. */
+    static char        envCubeDirty = 1;
+    static char        giInputsLogged;
+    static void renderEnvCube(void);
+    static void giHistoryCopy(void);
+    static void blueNoiseGenerate(u8* out, u32 width);
+
     /* Step 3: registered scene geometry. One entry per scene (its VBO/IBO
      * registered once, one static instance per non-skinned draw). The FFX
      * instance/buffer tables die with the context, so the list is cleared on
@@ -270,6 +303,12 @@ namespace engine {
         utils::signalSubscribe("swapchainCreated", swapchainCreated);
         profile      = vulkanCreateProfile("brixelizer");
         profileReady = 1;
+        envCubePipe  = vulkanCreatePipe(.name = "brixelizer_envcube",
+                                        .comp = "shaders/pass/brixelizer/spv/envcube.comp.spv");
+        envCubePipeReady = envCubePipe.pipe != 0;
+        if (!envCubePipeReady) {
+            utils::warn("vulkanBrixelizerPass: env-cube bake pipeline unavailable, environment cube stays empty");
+        }
     }
 
     void VulkanBrixelizerPass::preUpdate() {
@@ -313,6 +352,10 @@ namespace engine {
         stats           = FfxBrixelizerStats{};
         statsLiveLogged = 0;
         statsTrisLogged = 0;
+        /* The GI env cube is re-baked with the (re)created resources (the
+         * directional light is static for v1; the swapchain hook is the
+         * plan's one-shot re-render point). */
+        envCubeDirty = 1;
         /* The registered-buffer + instance tables live inside the FFX
          * context — both are recreated with it; ensureContext re-registers
          * all scenes on the next update. */
@@ -381,6 +424,30 @@ namespace engine {
         if (sdfDebug.img) {
             vulkanDestroyImage(&sdfDebug, NULL);
             sdfDebug = VulkanImage{};
+        }
+        if (blueNoise.img) {
+            vulkanDestroyImage(&blueNoise, NULL);
+            blueNoise = VulkanImage{};
+        }
+        if (envCube.img) {
+            vulkanDestroyImage(&envCube, NULL);
+            envCube = VulkanImage{};
+        }
+        if (envFaceDump.img) {
+            vulkanDestroyImage(&envFaceDump, NULL);
+            envFaceDump = VulkanImage{};
+        }
+        if (historyDepth.img) {
+            vulkanDestroyImage(&historyDepth, NULL);
+            historyDepth = VulkanImage{};
+        }
+        if (historyNormal.img) {
+            vulkanDestroyImage(&historyNormal, NULL);
+            historyNormal = VulkanImage{};
+        }
+        if (historyLit.img) {
+            vulkanDestroyImage(&historyLit, NULL);
+            historyLit = VulkanImage{};
         }
         if (brickAABBs.buf) {
             vulkanDestroyBuffer(&brickAABBs, NULL);
@@ -482,13 +549,89 @@ namespace engine {
             return 0;
         }
 
+        /* ── Step 6: GI inputs ──────────────────────────────────── */
+        const u32 giResW = renderW;
+        const u32 giResH = renderH;
+
+        /* 6.1 Blue noise: 128² RG8 rank mask, generated on the CPU once and
+         * uploaded (the GI shader masks pixel coords with & 127 and reads
+         * .xy — 128² is the native tile size). */
+        static const u32 GI_NOISE_SIZE = 128;
+        std::vector<u8> noiseData((size_t)GI_NOISE_SIZE * GI_NOISE_SIZE * 2);
+        blueNoiseGenerate(noiseData.data(), GI_NOISE_SIZE);
+        blueNoise = vulkanCreateImage(.name    = "BrixelBlueNoise",
+                                      .format  = VK_FORMAT_R8G8_UNORM,
+                                      .usage   = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+                                                  VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                                      .width   = (int)GI_NOISE_SIZE,
+                                      .height  = (int)GI_NOISE_SIZE);
+
+        /* 6.2 Environment cube: 128²×6 RGBA16F, CUBE_COMPATIBLE (the FFX
+         * backend keys the cube wrap on that flag — pitfall #14). Both
+         * SAMPLED + STORAGE: the engine bake writes it through the
+         * imageCube storage pool, GI reads it as a samplerCube. */
+        static const u32 GI_ENV_CUBE_SIZE = 128;
+        envCube = vulkanCreateImage(.name     = "BrixelEnvCube",
+                                    .format   = VK_FORMAT_R16G16B16A16_SFLOAT,
+                                    .usage    = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
+                                                VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                                    .flags    = VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT,
+                                    .viewType = VK_IMAGE_VIEW_TYPE_CUBE,
+                                    .width    = (int)GI_ENV_CUBE_SIZE,
+                                    .height   = (int)GI_ENV_CUBE_SIZE,
+                                    .layers   = 6);
+
+        /* 6.3 History buffers (render res). STORAGE|SAMPLED: the GI context
+         * (Step 7) re-wraps them as UAVs; TRANSFER for the per-frame copies
+         * and dumps. */
+        historyDepth =
+            vulkanCreateImage(.name   = "BrixelHistoryDepth",
+                              .format = VK_FORMAT_R32_SFLOAT,
+                              .usage  = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
+                                        VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                              .width  = (int)giResW,
+                              .height = (int)giResH);
+        historyNormal =
+            vulkanCreateImage(.name   = "BrixelHistoryNormal",
+                              .format = VK_FORMAT_R16G16B16A16_SFLOAT,
+                              .usage  = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
+                                        VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                              .width  = (int)giResW,
+                              .height = (int)giResH);
+        historyLit =
+            vulkanCreateImage(.name   = "BrixelHistoryLitOutput",
+                              .format = VK_FORMAT_R16G16B16A16_SFLOAT,
+                              .usage  = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
+                                        VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                              .width  = (int)giResW,
+                              .height = (int)giResH);
+        if (!blueNoise.img || !envCube.img || !historyDepth.img || !historyNormal.img || !historyLit.img) {
+            utils::error("vulkanBrixelizerPass: GI input resource creation failed");
+            destroyResources();
+            return 0;
+        }
+
         /* One-time: SDF atlas clear so pre-bake dumps are predictable
          * (0 = no brick allocated yet); the FFX clear-bricks pass only
-         * rewrites bricks that were previously allocated. */
+         * rewrites bricks that were previously allocated. History buffers
+         * clear to 0.0 (background — reverse-Z) and the noise mask is
+         * uploaded in the same transient command. */
         VulkanCommand* cmd = vulkanTransientBegin();
         vulkanTransition(cmd, &sdfAtlas, VK_IMAGE_LAYOUT_GENERAL, 0, 1);
         VkClearColorValue black = {};
         vulkanClearColorImage(cmd, &sdfAtlas, black);
+        vulkanTransition(cmd, &blueNoise, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 0, 1);
+        vulkanCopy(.cmd         = cmd,
+                   .target.img  = &blueNoise,
+                   .source.data = noiseData.data(),
+                   .size        = (u32)noiseData.size());
+        vulkanTransition(cmd, &blueNoise, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
+        vulkanTransition(cmd, &historyDepth, VK_IMAGE_LAYOUT_GENERAL, 0, 1);
+        vulkanClearColorImage(cmd, &historyDepth, black);
+        vulkanTransition(cmd, &historyNormal, VK_IMAGE_LAYOUT_GENERAL, 0, 1);
+        vulkanClearColorImage(cmd, &historyNormal, black);
+        vulkanTransition(cmd, &historyLit, VK_IMAGE_LAYOUT_GENERAL, 0, 1);
+        vulkanClearColorImage(cmd, &historyLit, black);
         vulkanTransientEnd(cmd, 1);
         return 1;
     }
@@ -1865,6 +2008,15 @@ namespace engine {
             return;
         }
 
+        /* Step 6.2: re-bake the environment cube after the (re)created
+         * resources — one-shot compute in a fence-waiting transient command.
+         * The directional light is static for v1, so the swapchain hook is
+         * the only re-bake trigger. */
+        if (envCubeDirty) {
+            renderEnvCube();
+            envCubeDirty = 0;
+        }
+
         /* Step 4: sync the streaming heightmap tiles with the SDF (register
          * newly READY tiles, evict out-of-window ones) before this frame's
          * bake dispatch so new tiles are baked with the rest. */
@@ -2065,6 +2217,7 @@ namespace engine {
     void VulkanBrixelizerPass::postUpdate() {
         vulkanBrixelizerPass.cpuElapsed = elapsedCPU;
         vulkanBrixelizerPass.gpuElapsed = elapsedGPU;
+        giHistoryCopy();
     }
 
     void VulkanBrixelizerPass::removed() {
@@ -2104,6 +2257,226 @@ namespace engine {
 
     struct VulkanImage* vulkanBrixelizerPassGetSdfDebug(void) {
         return sdfDebug.img ? &sdfDebug : NULL;
+    }
+
+    /* ── Step 6: GI inputs ───────────────────────────────────────── */
+
+    /* Deterministic PRNG for the blue-noise generation (file scope: the
+     * noise mask is generated once per resource creation, not per frame). */
+    static u32 noiseRandState = 0x9E3779B9u;
+    static float noiseRand(void) {
+        noiseRandState ^= noiseRandState << 13;
+        noiseRandState ^= noiseRandState >> 17;
+        noiseRandState ^= noiseRandState << 5;
+        return (float)(noiseRandState >> 8) * (1.0f / 16777216.0f);
+    }
+
+    /* 6.1: 128² blue-noise rank mask (RG8). Bridson's fast Poisson-disk
+     * (best-candidate) sampling on the pixel-grid torus: each new point sits
+     * 1–2 px from a random existing point and is the most isolated of 30
+     * darts. The generation order is the rank, stored 16-bit as r = low byte
+     * / g = high byte (the sample's LDR_RG01_* masks are 8-bit RG pairs the
+     * same way). The GI shader masks pixel coords with & 127 and reads .xy,
+     * so 128² is the native tile size. */
+    static void blueNoiseGenerate(u8* out, u32 width) {
+        const u32 W     = width;
+        const u32 COUNT = W * W;
+        std::vector<float> px(COUNT);
+        std::vector<float> py(COUNT);
+        std::vector<int> pixIdx((size_t)COUNT, -1);
+        std::vector<int> active;
+        active.reserve(COUNT);
+
+        u32 count = 0;
+        px[count] = ((float)((u32)(noiseRand() * (float)W) % W) + 0.5f) / (float)W;
+        py[count] = ((float)((u32)(noiseRand() * (float)W) % W) + 0.5f) / (float)W;
+        pixIdx[(u32)(py[count] * (float)W) * W + (u32)(px[count] * (float)W)] = (int)count;
+        active.push_back((int)count);
+        count++;
+
+        while (count < COUNT && !active.empty()) {
+            u32 ai = (u32)(noiseRand() * (float)active.size()) % active.size();
+            int  p  = active[ai];
+            float bestD2 = -1.0f;
+            int bestIx = -1;
+            int bestIy = -1;
+            for (u32 c = 0; c < 30; c++) {
+                float ang = noiseRand() * 2.0f * (float)M_PI;
+                float rad = 1.0f + noiseRand();
+                float fx  = px[p] + cosf(ang) * rad * (1.0f / (float)W);
+                float fy  = py[p] + sinf(ang) * rad * (1.0f / (float)W);
+                fx -= floorf(fx);
+                fy -= floorf(fy);
+                int ix = (int)(fx * (float)W) % (int)W;
+                int iy = (int)(fy * (float)W) % (int)W;
+                if (ix < 0) ix += (int)W;
+                if (iy < 0) iy += (int)W;
+                if (pixIdx[(size_t)iy * W + ix] >= 0) {
+                    continue;
+                }
+                /* Squared distance (px, toroidal) to the nearest existing
+                 * point in the candidate's 5×5 pixel window — the dart
+                 * radius is ≤ 2 px, so the window covers the constraint. */
+                float d2min = 1e30f;
+                for (int dy = -2; dy <= 2; dy++) {
+                    int jy = (iy + dy + (int)W) % (int)W;
+                    for (int dx = -2; dx <= 2; dx++) {
+                        int jx = (ix + dx + (int)W) % (int)W;
+                        int j  = pixIdx[(size_t)jy * W + jx];
+                        if (j < 0) {
+                            continue;
+                        }
+                        float ddx = fx * (float)W - (float)(jx + 0.5);
+                        float ddy = fy * (float)W - (float)(jy + 0.5);
+                        ddx       = fminf(fabsf(ddx), (float)W - fabsf(ddx));
+                        ddy       = fminf(fabsf(ddy), (float)W - fabsf(ddy));
+                        float d2  = ddx * ddx + ddy * ddy;
+                        if (d2 < d2min) {
+                            d2min = d2;
+                        }
+                    }
+                }
+                if (d2min > bestD2) {
+                    bestD2 = d2min;
+                    bestIx = ix;
+                    bestIy = iy;
+                }
+            }
+            if (bestIx < 0) {
+                active[ai] = active.back();
+                active.pop_back();
+                continue;
+            }
+            px[count] = ((float)bestIx + 0.5f) / (float)W;
+            py[count] = ((float)bestIy + 0.5f) / (float)W;
+            pixIdx[(size_t)bestIy * W + bestIx] = (int)count;
+            active.push_back((int)count);
+            count++;
+        }
+        /* Any stragglers (Bridson can run dry before full coverage) fill the
+        * remaining pixels at their later ranks. */
+        while (count < COUNT) {
+            u32 k = (u32)(noiseRand() * (float)COUNT) % COUNT;
+            if (pixIdx[k] >= 0) {
+                continue;
+            }
+            px[count] = ((float)(k % W) + 0.5f) / (float)W;
+            py[count] = ((float)(k / W) + 0.5f) / (float)W;
+            pixIdx[k] = (int)count;
+            count++;
+        }
+        memset(out, 0, (size_t)COUNT * 2);
+        for (u32 k = 0; k < COUNT; k++) {
+            u32 pix = (u32)(py[k] * (float)W) * W + (u32)(px[k] * (float)W);
+            out[(size_t)pix * 2 + 0] = (u8)(k & 0xFFu);
+            out[(size_t)pix * 2 + 1] = (u8)(k >> 8);
+        }
+    }
+
+    /* 6.2: one-shot compute bake of the env cube (face z = cube layer; the
+     * shader maps each texel to its standard cube face direction). */
+    static void renderEnvCube(void) {
+        if (!envCubePipeReady || !envCube.img) {
+            return;
+        }
+        u32 face = envCube.extent.width;
+        VulkanCommand* cmd = vulkanTransientBegin();
+        vulkanTransition(cmd, &envCube, VK_IMAGE_LAYOUT_GENERAL, 0, envCube.layers);
+        vulkanBindPipe(cmd, &envCubePipe);
+        u32 pc[2] = {(u32)envCube.storagePoolIndex, face};
+        vulkanPush(cmd, &envCubePipe, sizeof(pc), pc);
+        vulkanDispatch(cmd, &envCubePipe, (int)(face / 8), (int)(face / 8), 6);
+        vulkanTransition(cmd, &envCube, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, envCube.layers);
+        vulkanTransientEnd(cmd, 1);
+        if (!giInputsLogged) {
+            giInputsLogged = 1;
+            utils::info("vulkanBrixelizerPass: env cube baked: %ux%ux6 RGBA16F (storage pool index %d)",
+                        face,
+                        face,
+                        envCube.storagePoolIndex);
+        }
+    }
+
+    /* 6.3: end-of-frame history copies. postUpdate() runs after every pass's
+     * update() (the vulkanPostUpdate loop), so compositeColor already holds
+     * this frame's composited color. Step 8 switches the copy point to
+     * after GI compositing. */
+    static void giHistoryCopy(void) {
+        if (vulkan.skipFrame || !contextReady || !historyDepth.img) {
+            return;
+        }
+        VulkanCommand* cmd   = vulkan.currentCmd;
+        VulkanImage* depth   = vulkanFrameResourcesGetDepth();
+        VulkanImage* wnorm   = vulkanFrameResourcesGetWorldNormal();
+        VulkanImage* lit     = vulkanFrameResourcesGetCompositeColor();
+        if (!cmd || !depth || !wnorm || !lit) {
+            return;
+        }
+        if (depth->extent.width != historyDepth.extent.width ||
+            depth->extent.height != historyDepth.extent.height) {
+            return; /* dynamic-resolution mismatch (upscaler) — skip the frame */
+        }
+        /* History depth clears/copies to 0.0 = background (reverse-Z — plan
+         * pitfall #3); the layout ends shader-readable for the Step-7 GI
+         * context's re-wrap. */
+        vulkanCopyDepthToColorImage(cmd, depth, &historyDepth, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        vulkanCopyColorImage(cmd, wnorm, &historyNormal, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        vulkanCopyColorImage(cmd, lit, &historyLit, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    }
+
+    struct VulkanImage* vulkanBrixelizerPassGetBlueNoise(void) {
+        return blueNoise.img ? &blueNoise : NULL;
+    }
+
+    struct VulkanImage* vulkanBrixelizerPassGetHistoryDepth(void) {
+        return historyDepth.img ? &historyDepth : NULL;
+    }
+
+    struct VulkanImage* vulkanBrixelizerPassGetHistoryNormal(void) {
+        return historyNormal.img ? &historyNormal : NULL;
+    }
+
+    struct VulkanImage* vulkanBrixelizerPassGetHistoryLit(void) {
+        return historyLit.img ? &historyLit : NULL;
+    }
+
+    struct VulkanImage* vulkanBrixelizerPassGetEnvFace(u32 face) {
+        if (!envCube.img || face > 5u) {
+            return NULL;
+        }
+        if (!envFaceDump.img) {
+            envFaceDump = vulkanCreateImage(.name   = "BrixelEnvFaceDump",
+                                            .format = VK_FORMAT_R16G16B16A16_SFLOAT,
+                                            .usage  = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+                                                      VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                                            .width  = (int)envCube.extent.width,
+                                            .height = (int)envCube.extent.height);
+        }
+        if (!envFaceDump.img) {
+            return NULL;
+        }
+        VulkanCommand* cmd = vulkanTransientBegin();
+        vulkanTransition(cmd, &envCube, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, 0, 6);
+        vulkanTransition(cmd, &envFaceDump, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 0, 1);
+        VkImageCopy region = {};
+        region.srcSubresource.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
+        region.srcSubresource.baseArrayLayer = face;
+        region.srcSubresource.layerCount     = 1;
+        region.dstSubresource.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
+        region.dstSubresource.baseArrayLayer = 0;
+        region.dstSubresource.layerCount     = 1;
+        region.extent                        = {envCube.extent.width, envCube.extent.height, 1};
+        vkCmdCopyImage(cmd->cmd,
+                       envCube.img,
+                       VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                       envFaceDump.img,
+                       VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                       1,
+                       &region);
+        vulkanTransition(cmd, &envFaceDump, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
+        vulkanTransition(cmd, &envCube, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 6);
+        vulkanTransientEnd(cmd, 1);
+        return &envFaceDump;
     }
 
     void vulkanBrixelizerPassSceneCreate(Scene* scene) {

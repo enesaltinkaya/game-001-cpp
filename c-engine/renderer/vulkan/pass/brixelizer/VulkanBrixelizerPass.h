@@ -37,6 +37,16 @@ char vulkanBrixelizerPassIsReady(void);
 /* SDF debug visualization image (R16F RGBA, render res, Step 2). Null until
  * the first update after swapchain creation. */
 struct VulkanImage* vulkanBrixelizerPassGetSdfDebug(void);
+
+/* Step 6: GI input resources. All null until the first update after
+ * swapchain creation (created with the voxelizer resources). */
+struct VulkanImage* vulkanBrixelizerPassGetBlueNoise(void);
+/* Face N of the 128² environment cube (copied into a plain 2D image for
+ * dumping). Null until the env cube has been baked. */
+struct VulkanImage* vulkanBrixelizerPassGetEnvFace(u32 face);
+struct VulkanImage* vulkanBrixelizerPassGetHistoryDepth(void);
+struct VulkanImage* vulkanBrixelizerPassGetHistoryNormal(void);
+struct VulkanImage* vulkanBrixelizerPassGetHistoryLit(void);
 /* Scene hooks (called from rendererSceneCreate/Destroy in Renderer.cpp).
  * Scene create runs on the scene-load worker thread, so the FFX registration
  * is deferred to a main-thread task; a scene created before the context

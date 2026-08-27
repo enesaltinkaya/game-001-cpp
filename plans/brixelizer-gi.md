@@ -25,7 +25,8 @@ FFX passes (`VulkanFsrPass`, CACAO in `VulkanAOPass`, `VulkanLpmPass`, `VulkanLe
       moving-camera check folds into Step 7's mv-scale gate
 - [x] Step 5 — Props (vegetation / buildings) SDF, budgeted — verified 2026-08-27;
       fixed a transform-flattening bug (all props were flat sheets); see Status below
-- [ ] Step 6 — GI inputs: blue noise, environment cube, history buffers
+- [x] Step 6 — GI inputs: blue noise, environment cube, history buffers
+      2026-08-27; gate met, see Status below
 - [ ] Step 7 — GI context + dispatch + raw GI output verified
 - [ ] Step 8 — Albedo G-buffer + GI compositing into the lit image
 - [ ] Step 9 — Settings / debug GUI + performance tuning
@@ -740,6 +741,61 @@ static texture is fine for v1 — revisit if banding shows up.)
 blue noise (no large low-freq blobs); the cube face shows the sky gradient + sun
 at the right elevation; the history depth copy matches the D32 dump. Validation
 clean.
+
+## Step 6 — GI inputs: blue noise, environment cube, history buffers
+
+**Status 2026-08-27 — verified (Gate 6 met).** All sub-steps landed:
+
+- 6.1 `BrixelBlueNoise` 128² RG8: CPU best-candidate (Bridson Poisson-disk, 30 darts,
+  fixed-seed xorshift) rank mask, generation order = 16-bit rank in (.r,.g). Upload
+  once per swapchain. Dump shows clean salt-and-pepper noise, no low-freq blobs
+  (two small dark patches = the straggler-fill corner where Bridson ran dry).
+- 6.2 `BrixelEnvCube` 128²×6 R16G16B16A16 (CUBE_COMPATIBLE): one-shot compute
+  (`shaders/pass/brixelizer/envcube.comp`, 8×8 local, dispatch 16×16×6) in a
+  fence-waiting transient command — bakes the shared `skyEvaluate()` (new
+  `includes/sky.shader`, factored out of `skybox.frag`, which now calls it too)
+  into every face via the standard cube face table. Re-baked on swapchain
+  recreation + once at first update. Storage write path: new `imageCube
+  storageImagesCube[MAX_IMAGES]` declaration at the existing STORAGE_IMAGE binding
+  in `globalset.shader` (the pool writes whatever view type the image was created
+  with, so cube images bind through it).
+- 6.3 History buffers (render res, STORAGE|SAMPLED|TRANSFER, cleared 0.0): `BrixelHistoryDepth`
+  R32F (`vulkanCopyDepthToColorImage` from the D32), `BrixelHistoryNormal` RGBA16F
+  (copy of `worldNormal`), `BrixelHistoryLitOutput` RGBA16F (copy of
+  `compositeColor`). Copies run in the brixelizer pass's `postUpdate()` — that
+  loop runs after every pass's `update()`, so the lit copy is current-frame
+  (Step 8 keeps the same hook, copy is GI-inclusive there).
+
+**Gate 6 (met 2026-08-27):**
+- `giNoise` dump: uniform blue noise, no large low-freq blobs.
+- `giEnv` (+ `giEnv1`..`giEnv5` per-face tokens): side faces show the sky gradient
+  (zenith blue → white horizon → dark ground below); sun disc on the +Y face at
+  world dir ≈ (0.29, 0.80, −0.53) (≈53° elevation), glow bleeding onto the -Z
+  face's +X corner — azimuth/elevation consistent with the scene's shadows and
+  compass (camera facing WSW; +X≈west, +Z≈north at the parked spot).
+- `giHistDepth` vs the `depth` (D32) dump of the same frame: remapped dumps
+  pixel-identical (mean abs diff 0.0) — copy is exact, reverse-Z (sky = 0).
+- `giHistNormal` = world-space normal map (green terrain, blue wall); `giHistLit`
+  = the full lit composite.
+- Validation layer: 0 errors during gameplay (only the known Step-1 deferred
+  FFX shutdown crash at teardown).
+
+**Deviations (recorded 2026-08-27):**
+
+- _`maintenance8` device feature enabled_ (queried via
+  `VkPhysicalDeviceMaintenance8FeaturesKHR` — this SDK header only ships the KHR
+  struct — then chained into the device pNext): `vulkanCopyDepthToColorImage`
+  (D32 → R32F aspect-converted `vkCmdCopyImage`) is invalid without it; the helper
+  was dead code before Step 6.
+- _`swapchainCreated` fires before the pass subscribes_ (subscription happens in
+  `added()`, the signal during renderer init) — `envCubeDirty` is initialized
+  dirty so the first update after context creation bakes the cube; later
+  swapchain recreations re-flag it via the handler.
+- _`worldNormal`'s alpha is unwritten_ (garbage half-floats in dumps) — GI unpacks
+  `.xyz` only (plan pitfall #4), no action.
+- _Env-cube sun check is elevation + azimuth vs scene_, not a pixel A/B against a
+  skybox render: the cube and the skybox share `skyEvaluate()`, so equality with
+  the rendered sky holds by construction once the face table is standard.
 
 ## Step 7 — GI context + dispatch + raw GI output
 

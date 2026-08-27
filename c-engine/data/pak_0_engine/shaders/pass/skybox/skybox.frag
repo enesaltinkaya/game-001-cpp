@@ -10,6 +10,7 @@ layout(location = 1) out vec2 outVelocity;
 
 #include "../../includes/utils.shader"
 #include "../../includes/globalset.shader"
+#include "../../includes/sky.shader"
 
 void main() {
     vec2 ndc = inUV * 2.0 - 1.0;
@@ -18,9 +19,6 @@ void main() {
     vec4 view    = sceneBuffer.cameras[0].invProjection * vec4(ndc, 1.0, 1.0);
     vec3 viewDir = normalize(view.xyz / max(view.w, 1e-6));
     vec3 worldDir = normalize(mat3(sceneBuffer.cameras[0].invView) * viewDir);
-
-    // Elevation: 1 at zenith, -1 at nadir
-    float elevation = worldDir.y;
 
     /* Camera-only motion vector for the sky.  The sky is not geometry, so it
      * gets no velocity from the depth pass and the velocity buffer stays at
@@ -44,38 +42,8 @@ void main() {
     skyVelocity.y    = -skyVelocity.y;
     outVelocity      = clamp(skyVelocity, vec2(-32767.0), vec2(32767.0));
 
-    // ── Procedural blue-sky gradient ──────────────────────────────
-    // Blend between a deep zenith blue and a lighter horizon color.
-    // Below the horizon we fade into a darker ground colour.
-
-    // Sky colours (linear)
-    vec3 zenithColor  = vec3(0.15, 0.35, 0.75);   // deep blue
-    vec3 horizonColor = vec3(0.55, 0.75, 0.95);    // light blue-white
-    vec3 groundColor  = vec3(0.25, 0.28, 0.32);    // muted dark
-
-    float t = clamp(elevation, 0.0, 1.0);
-    // Use a pow curve so the transition spends more range near the horizon
-    float skyMix = pow(t, 0.5);
-
-    vec3 skyColor = mix(horizonColor, zenithColor, skyMix);
-
-    // Below-horizon fade
-    float groundFade = smoothstep(0.0, -0.15, elevation);
-    skyColor = mix(skyColor, groundColor, groundFade);
-
-    // ── Simple sun disc ───────────────────────────────────────────
-    vec3 sunDir = normalize(-sceneBuffer.directionalLight.direction.xyz);
-    float sunDot = max(dot(worldDir, sunDir), 0.0);
-
-    // Tight sun disc
-    float sunDisc = smoothstep(0.9985, 0.9995, sunDot);
-    // Wider warm glow around the sun
-    float sunGlow = pow(sunDot, 64.0) * 0.4;
-
-    vec3 sunColor = sceneBuffer.directionalLight.color.rgb
-                  * sceneBuffer.directionalLight.direction.w;  // intensity
-    skyColor += sunDisc * sunColor * 8.0;
-    skyColor += sunGlow  * sunColor;
+    // Procedural sky (shared with the brixelizer env-cube bake).
+    vec3 skyColor = skyEvaluate(worldDir);
 
     outColor = vec4(skyColor, 1.0);
 }

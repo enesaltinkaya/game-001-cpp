@@ -352,6 +352,10 @@ layout(set = 0, binding = SLOT_CUBE_IMAGE) uniform textureCube cubeTextures[MAX_
 layout(set = 0, binding = SLOT_IMAGE) uniform texture3D textures3D[MAX_IMAGES];
 layout(set = 0, binding = SLOT_STORAGE_IMAGE) uniform image2D storageImages[MAX_IMAGES];
 layout(set = 0, binding = SLOT_STORAGE_IMAGE) uniform image3D storageImages3D[MAX_IMAGES];
+// Cube storage views (same STORAGE_IMAGE binding — the pool stores whatever
+// VkImageView type the image was created with; the brixelizer env-cube bake
+// in pass/brixelizer/envcube.comp writes its cube through this).
+layout(set = 0, binding = SLOT_STORAGE_IMAGE) uniform imageCube storageImagesCube[MAX_IMAGES];
 layout(set = 0, binding = SLOT_ADDRESS_BUFFER) uniform AddressUniform { AddressBuffer addressBuffer; };
 
 SceneBuffer sceneBuffer = SceneBuffer(addressBuffer.sceneBufferAddress);
