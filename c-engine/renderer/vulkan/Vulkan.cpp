@@ -78,6 +78,46 @@ static char screenshotArmed;
 // recorded into the frame's flight command buffer before present releases the
 // swapchain image — a separate submit touching the released image is a spec
 // violation). Stopping after the final shot is handled there.
+/* VRAM accounting (ENGINE_VRAM_REPORT). VK_EXT_memory_budget is the only way
+ * to see the whole device footprint: the FidelityFX backend allocates its
+ * internal SDF / GI resources through raw vkAllocateMemory, so VMA's own
+ * statistics do not include them. `tag` marks when the snapshot was taken. */
+static void vulkanMemoryReport(const char* tag) {
+    if (!vulkan.memoryBudgetAvailable) {
+        utils::warn("vulkanCore: ENGINE_VRAM_REPORT unavailable (VK_EXT_memory_budget missing)");
+        return;
+    }
+    double totalUsed = 0.0;
+    double totalSize = 0.0;
+    VkPhysicalDeviceMemoryBudgetPropertiesEXT memBudget = {};
+    memBudget.sType                                     = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT;
+    VkPhysicalDeviceMemoryProperties2 props2            = {};
+    props2.sType                                        = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2;
+    props2.pNext                                        = &memBudget;
+    vkGetPhysicalDeviceMemoryProperties2(vulkan.physicalDevice, &props2);
+
+    for (u32 i = 0; i < props2.memoryProperties.memoryHeapCount; i++) {
+        VkDeviceSize usage = memBudget.heapUsage[i];
+        double sizeM       = (double)props2.memoryProperties.memoryHeaps[i].size / 1048576.0;
+        if (sizeM < 1.0) {
+            continue; /* ignore the tiny 8 MiB device-local tier */
+        }
+        totalUsed += (double)usage;
+        totalSize += (double)props2.memoryProperties.memoryHeaps[i].size;
+        utils::info("vulkanMemory[%s]: heap %u used=%.0f MiB budget=%.0f MiB size=%.0f MiB%s",
+                    tag,
+                    i,
+                    (double)usage / 1048576.0,
+                    (double)memBudget.heapBudget[i] / 1048576.0,
+                    sizeM,
+                    (usage > memBudget.heapBudget[i]) ? " OVER-BUDGET" : "");
+    }
+    utils::info("vulkanMemory[%s]: TOTAL used=%.2f GiB of %.2f GiB",
+                tag,
+                totalUsed / 1073741824.0,
+                totalSize / 1073741824.0);
+}
+
 static void vulkanScreenshotArm(void* _path) {
     (void)_path;
     screenshotArmed = 1;
@@ -406,12 +446,39 @@ void vulkanPostUpdate(void) {
             vulkanResetProfileStats(vulkan.currentCmd, &passProfiles[i], 1);
         }
 
+        /* ENGINE_VRAM_REPORT=<frame>: dump the device memory around that
+         * frame. The two snapshots bracketing the brixelizer pass split the
+         * footprint into "engine" and "brixelizer + GI context" (the FFX
+         * backend allocates through raw vkAllocateMemory, so it is invisible
+         * to VMA's statistics). Reported once, then disabled. */
+        static char vramReportInit  = 0;
+        static u32  vramReportFrame = 0xFFFFFFFFu;
+        static char vramReportDone  = 0;
+        if (!vramReportInit) {
+            vramReportInit = 1;
+            const char* env = getenv("ENGINE_VRAM_REPORT");
+            if (env && *env) vramReportFrame = (u32)atoi(env);
+        }
+        char reportThisFrame = !vramReportDone && vramReportFrame != 0xFFFFFFFFu &&
+                               (u64)vramReportFrame == utils::timer.frameCounter;
+        if (reportThisFrame) {
+            vramReportDone = 1;
+        }
+
         for (size_t i = 0; i < renderer.passes.size(); i++) {
+            char isBrixelizer =
+                reportThisFrame && strcmp(renderer.passes[i]->name, "brixelizer") == 0;
+            if (isBrixelizer) {
+                vulkanMemoryReport("pre-brixelizer");
+            }
             vulkanBeginProfile(vulkan.currentCmd, &passProfiles[i], 1);
             vulkanBeginProfileStats(vulkan.currentCmd, &passProfiles[i], 1);
             systemUpdate(renderer.passes[i]);
             vulkanEndProfileStats(vulkan.currentCmd, &passProfiles[i], 1);
             vulkanEndProfile(vulkan.currentCmd, &passProfiles[i], 1);
+            if (isBrixelizer) {
+                vulkanMemoryReport("post-brixelizer");
+            }
         }
 
         for (size_t i = 0; i < renderer.passes.size(); i++) {
@@ -631,6 +698,17 @@ void initLogicalDevice(void) {
         for (u32 i = 0; i < extCount; i++) {
             if (strcmp(exts[i].extensionName, VK_AMD_DEVICE_COHERENT_MEMORY_EXTENSION_NAME) == 0) {
                 extensions.push_back(VK_AMD_DEVICE_COHERENT_MEMORY_EXTENSION_NAME);
+                break;
+            }
+        }
+        /* VRAM accounting (ENGINE_VRAM_REPORT): VK_EXT_memory_budget reports
+         * bytes allocated / budget / limit per memory heap, including the
+         * allocations the FidelityFX backend makes directly through
+         * vkAllocateMemory (VMA's own statistics cannot see those). */
+        for (u32 i = 0; i < extCount; i++) {
+            if (strcmp(exts[i].extensionName, VK_EXT_MEMORY_BUDGET_EXTENSION_NAME) == 0) {
+                vulkan.memoryBudgetAvailable = 1;
+                extensions.push_back(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
                 break;
             }
         }

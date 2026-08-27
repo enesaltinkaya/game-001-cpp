@@ -1183,6 +1183,57 @@ screenshot /tmp/x.jpg` → `<x>_<token>.jpg` next to the screenshot.
 6. A reference screenshot from the Step 0 sample is the visual yardstick for
    "does the GI look right".
 
+## VRAM reduction (2026-08-28, post-Step-9)
+
+The layer was eating the sample's worst-case budgets regardless of scene:
+1 GiB hardcoded `gpuScratch` + the 32 M ref / 300 M swap budgets the FFX
+sample used. Measured on the 7900 XTX via the new `ENGINE_VRAM_REPORT=<frame>`
+(VK_EXT_memory_budget — the only way to see FFX's raw `vkAllocateMemory`
+allocations; VMA stats don't cover them):
+
+- Game process total: **4889 MiB** of the driver's 6.9 GiB budget
+  (heap 1 = the 23.98 GiB VRAM heap; heap 0 is system/shared memory). The
+  19.1 GiB the GPU shows is mostly other processes.
+- Scratch at the sample budgets: **855 MiB** (bake-reported required size).
+- Peak per-update `referencesAllocated` in the azgaar world (8.5 M SDF
+  tris, 31 k props): **~170–315 k** — 100–180× under the 32 M budget.
+
+Changes (all in `VulkanBrixelizerPass` unless noted):
+
+- `gpuScratch` is now allocated **lazily on the first bake, sized exactly**
+  from `ffxBrixelizerBakeUpdate`'s `outScratchBufferSize` (+ 4 MiB headroom
+  for job-counter growth as props register) instead of the hardcoded 1 GiB.
+- Bake budgets are data-driven now: defaults **16 M refs / 128 M swap**
+  (was 32 M / 300 M), env-tunable via `ENGINE_BRIXGI_REFS_MB` /
+  `ENGINE_BRIXGI_SWAP_MB`. The budget is a quality floor, not a correctness
+  limit — the fork's per-voxel clamp patches make overflow degrade to SDF
+  holes instead of crashing. The 120-frame stats line now logs
+  `peakRefs=<peak>/<budget>` for ongoing sizing.
+- `sdfDebug` and `giDebug` (render-res R16F, ~18.6 MiB each) are allocated
+  **lazily** when their debug view is actually enabled — off by default for
+  the GI cache view, so normal runs never hold it.
+- `ENGINE_BRIXGI_RES=25` is now accepted (the SDK's 25% internal resolution;
+  was clamped to 50/75/100) — GI 0.92 ms vs 1.6 ms at 50%, identical parked
+  screenshot; a few MiB of internal buffers.
+- `ENGINE_BRIXGI_CASCADES` (1–8, default 8) trims the cascade layout; the
+  invalidation ring depth follows. NOTE: the per-cascade brick-map/AABB
+  tables are still allocated for all 24 slots — trimming them trips the FFX
+  bindless pool (unregistered slot keeps a stale null descriptor →
+  "descriptor never updated" validation error at dispatch). 24 MiB is not
+  worth the fight.
+
+Measured A/B (2880×1627, parked player, heap 1 = VRAM):
+
+| config (refs/swap/GI) | scratch | heap used | GI ms |
+| --- | --- | --- | --- |
+| old defaults 32/300/50% | 855 MiB | 4889 MiB | 1.6 |
+| new defaults 16/128/50% | 427 MiB | 4461 MiB | 1.6 |
+| aggressive 8/64/25% | 235 MiB | 4269 MiB | 0.9 |
+
+Parked-player A/B screenshots (default vs aggressive) are visually
+identical; validation clean in all runs (only the known Step-1 shutdown
+leak at `vkDestroyDevice`).
+
 ## Open questions (decide as the steps land)
 
 1. Cascade layout: static-only 8 cascades (Steps 1–9) vs the sample's 24-cascade

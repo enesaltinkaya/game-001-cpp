@@ -39,18 +39,47 @@
 
 namespace engine {
     /* Static-only cascade layout (Steps 1–9; Step 10 switches to the sample's
-     * 3-per-level layout): 8 cascades, voxel size doubling per level —
-     * 2, 4, …, 256 m. The far cascade spans 256 m × 64 bricks = 16.4 km,
-     * which covers the 10.24 km heightmap streaming window. */
-    static const u32 BRIX_NUM_CASCADES      = 8;
+     * 3-per-level layout): voxel size doubling per level — 2, 4, …, 256 m.
+     * The far cascade spans 256 m × 64 bricks = 16.4 km, which covers the
+     * 10.24 km heightmap streaming window.
+     * The cascade COUNT is a runtime value (BRIX_MAX_CASCADES is the hard
+     * cap, ENGINE_BRIXGI_CASCADES overrides it, clamped 1..8): each cascade
+     * costs 1 MiB of brick map + 4.3 KiB of AABB table, and fewer cascades
+     * also shrink the invalidation queue. Distant-cascade occlusion trades
+     * off against the VRAM cost — the GI only reads them for far terrain. */
+    static const u32 BRIX_MAX_CASCADES      = 8;
     static const float BRIX_BASE_VOXEL_SIZE = 2.0f;
-    /* Bake budgets from the FFX sample (tuned in Step 9). The scratch buffer must
-     * hold the reference/swap partitions sized by those budgets (~892 MB at the
-     * sample values) — the sample allocates 1 GiB, which we match. */
-    static const u32 BRIX_MAX_REFERENCES      = 32u * (1u << 20);
-    static const u32 BRIX_TRIANGLE_SWAP_SIZE  = 300u * (1u << 20);
+    /* Runtime cascade count (resolved from the environment in added() before
+     * any instance traffic; a change recreates the voxelizer context). */
+    static u32 brixNumCascades = BRIX_MAX_CASCADES;
+    /* Depth of the invalidation-window ring: the top cascade updates once per
+     * (1 << brixNumCascades) updates, so the FFX invalidation queue is a
+     * (1 << brixNumCascades)-frame moving window. Fixed-size storage indexed
+     * by (1u << BRIX_MAX_CASCADES) + 1 entries. */
+    static u32 brixInvalRingDepth = (1u << BRIX_MAX_CASCADES) + 1;
+    /* Bake budgets, runtime-tunable via ENGINE_BRIXGI_REFS_MB /
+     * ENGINE_BRIXGI_SWAP_MB (MiB). They drive the GPU scratch size: the
+     * scratch's dominant partitions are the reference lists (maxReferences ×
+     * 12 B + × 4 B) and the triangle swap list, so the reference budget is
+     * the main VRAM lever of the voxelizer (32 M refs ≈ 892 MB scratch;
+     * 16 M ≈ 454 MB; 8 M ≈ 235 MB at the 128 M / 64 M swap sizes).
+     * The defaults below are ~50× the measured per-update peak for the
+     * azgaar world (peakRefs in the periodic stats log; ~316 k at the
+     * parked scene, 8.5 M SDF triangles incl. 31 k props) — the sample's
+     * 32 M / 300 M were sized without scene data. If a per-update ref count
+     * ever exceeds the budget the fork's clamp patches mark the excess
+     * voxels failed (SDF hole, degraded GI in that brick) instead of
+     * crashing, so the budget is a quality floor, not a correctness limit. */
+    static u32 brixMaxReferences     = 16u * (1u << 20);
+    static u32 brixTriangleSwapSize  = 128u * (1u << 20);
+    /* Peak per-update referencesAllocated (lagged GPU readback) — logged with
+     * the periodic stats line so the reference budget can be sized from data. */
+    static u32 brixPeakRefs          = 0;
     static const u32 BRIX_MAX_BRICKS_PER_BAKE = 1u << 14;
-    static const u64 BRIX_GPU_SCRATCH_SIZE    = 1u << 30;
+    /* The GPU scratch is allocated LAZILY on the first bake, sized exactly
+     * from the bake's outScratchBufferSize (the same value the overflow
+     * check compares against) instead of the sample's hardcoded 1 GiB. */
+    static u64 brixGpuScratchSize = 0;
     /* SceneVertex stride (56 B) — the voxelizer fetches positions from offset 0
      * at this stride; the index buffer is u32 (4 B per index). */
     static const u32 BRIX_SCENE_VERTEX_STRIDE = 56;
@@ -60,6 +89,11 @@ namespace engine {
     static void destroyContext(void);
     static char createResources(void);
     static char ensureContext(void);
+    /* SDF debug visualization target, lazily allocated when a debug view is
+     * enabled (18.6 MiB at render res — not worth holding for the default-off
+     * cache view; the SDF view default is 'distance', so it allocates on the
+     * first update unless ENGINE_BRIXGI_SDF_DEBUG=off). */
+    static char ensureSdfDebug(void);
     /* Step 7: GI context + outputs (recreated on resolution change). */
     static void giDestroyContext(void);
     static void giCreateOutputs(u32 renderW, u32 renderH);
@@ -214,7 +248,7 @@ namespace engine {
      * the window + 1: at frame start the current frame's slot (holding the
      * adds of frame −257) is zeroed, and those invalidations are guaranteed
      * drained by the top-cascade turn of the previous frame. */
-    static u32 invalRing[(1u << BRIX_NUM_CASCADES) + 1] = {0};
+    static u32 invalRing[(1u << BRIX_MAX_CASCADES) + 1] = {0};
     static const u32 INVAL_WINDOW_LIMIT = FFX_BRIXELIZER_MAX_INSTANCES - 2048;
     static u32 invalDeferrals;
     static void invalAccount(u32 n);
@@ -416,8 +450,19 @@ namespace engine {
             if (env && *env) giEnabled = atoi(env) ? 1 : 0;
             env             = getenv("ENGINE_BRIXGI_RES");
             if (env && *env) giResolutionPct = atoi(env);
+            /* VRAM levers (env-only, no persistence — A/B knobs). */
+            env = getenv("ENGINE_BRIXGI_CASCADES");
+            if (env && *env) {
+                u32 c = (u32)atoi(env);
+                brixNumCascades = c < 1 ? 1 : (c > BRIX_MAX_CASCADES ? BRIX_MAX_CASCADES : c);
+            }
+            brixInvalRingDepth = (1u << brixNumCascades) + 1;
+            env = getenv("ENGINE_BRIXGI_REFS_MB");
+            if (env && *env) brixMaxReferences = (u32)atoi(env) * (1u << 20);
+            env = getenv("ENGINE_BRIXGI_SWAP_MB");
+            if (env && *env) brixTriangleSwapSize = (u32)atoi(env) * (1u << 20);
         }
-        if (giResolutionPct != 50 && giResolutionPct != 75 && giResolutionPct != 100) {
+        if (giResolutionPct != 25 && giResolutionPct != 50 && giResolutionPct != 75 && giResolutionPct != 100) {
             giResolutionPct = 50;
         }
         /* SDF debug visualization mode (ENGINE_BRIXGI_SDF_DEBUG, legacy
@@ -500,6 +545,7 @@ namespace engine {
         stats           = FfxBrixelizerStats{};
         statsLiveLogged = 0;
         statsTrisLogged = 0;
+        brixPeakRefs    = 0;
         /* The GI env cube is re-baked with the (re)created resources (the
          * directional light is static for v1; the swapchain hook is the
          * plan's one-shot re-render point). */
@@ -532,7 +578,7 @@ namespace engine {
             s->ids.clear();
         }
         propsContextRegistered = 0;
-        for (u32 i = 0; i < ((1u << BRIX_NUM_CASCADES) + 1); i++) {
+        for (u32 i = 0; i < brixInvalRingDepth; i++) {
             invalRing[i] = 0;
         }
     }
@@ -684,6 +730,12 @@ namespace engine {
         brickAABBs = vulkanCreateGpuBuffer("BrixelBrickAABBs",
                                            FFX_BRIXELIZER_BRICK_AABBS_SIZE,
                                            VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+        /* All 24 cascade tables are allocated even though only the first
+         * brixNumCascades are used: the FFX bindless pool pre-creates a
+         * descriptor slot per (resource, frame) and an unregistered slot
+         * keeps a stale null descriptor — dispatching with it trips
+         * "descriptor never updated" validation errors. 24 × 1 MiB brick
+         * maps is cheap. */
         for (u32 i = 0; i < FFX_BRIXELIZER_MAX_CASCADES; i++) {
             cascadeAABBTrees[i] = vulkanCreateGpuBuffer("BrixelCascadeAABBTrees",
                                                         FFX_BRIXELIZER_CASCADE_AABB_TREE_SIZE,
@@ -695,14 +747,7 @@ namespace engine {
                                                         VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
                                                             VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
         }
-        /* TRANSFER_SRC: the FFX backend vkCmdCopyBuffer's job/constant data into
-         * the scratch buffer each update (Cauldron's VK backend adds the same
-         * flag for its upload buffers). */
-        gpuScratch = vulkanCreateGpuBuffer(
-            "BrixelGpuScratch",
-            BRIX_GPU_SCRATCH_SIZE,
-            VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
-        if (!brickAABBs.buf || !gpuScratch.buf) {
+        if (!brickAABBs.buf) {
             utils::error("vulkanBrixelizerPass: brixelizer buffer creation failed");
             destroyResources();
             return 0;
@@ -714,27 +759,13 @@ namespace engine {
                 return 0;
             }
         }
-
-        /* SDF debug visualization target (Step 2.2): STORAGE (the FFX debug
-         * pass writes it as a UAV) + SAMPLED (dumps / later sampling) +
-         * TRANSFER_SRC (vulkanSaveImage dumps it). */
-        u32 renderW = window.renderWidth > 0 ? (u32)window.renderWidth : (u32)window.width;
-        u32 renderH = window.renderHeight > 0 ? (u32)window.renderHeight : (u32)window.height;
-        sdfDebug    = vulkanCreateImage(.name   = "BrixelSdfDebug",
-                                        .format = VK_FORMAT_R16G16B16A16_SFLOAT,
-                                        .usage  = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
-                                                  VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
-                                        .width  = (int)renderW,
-                                        .height = (int)renderH);
-        if (!sdfDebug.img) {
-            utils::error("vulkanBrixelizerPass: brixelizer debug resource creation failed");
-            destroyResources();
-            return 0;
-        }
+        /* gpuScratch is allocated lazily on the first bake (sized exactly from
+         * the bake's outScratchBufferSize — see update()). The SDF debug image
+         * is likewise lazy (ensureSdfDebug). */
 
         /* ── Step 6: GI inputs ──────────────────────────────────── */
-        const u32 giResW = renderW;
-        const u32 giResH = renderH;
+        const u32 giResW = window.renderWidth > 0 ? (u32)window.renderWidth : (u32)window.width;
+        const u32 giResH = window.renderHeight > 0 ? (u32)window.renderHeight : (u32)window.height;
 
         /* 6.1 Blue noise: 128² RG8 rank mask, generated on the CPU once and
          * uploaded (the GI shader masks pixel coords with & 127 and reads
@@ -1027,7 +1058,7 @@ namespace engine {
              * cascades — lands in Step 9 with the bake-cost tuning; a too
              * aggressive filter here would silently drop world geometry from
              * the SDF, since the cascade regions are camera-centered). */
-            inst->maxCascade = BRIX_NUM_CASCADES - 1;
+            inst->maxCascade = brixNumCascades - 1;
 
             Transform t   = {};
             memcpy(t.rot, wrot, sizeof(wrot));
@@ -1354,7 +1385,7 @@ namespace engine {
         /* A 2048 m tile spans every cascade region that reaches it — the far
          * cascade's 16.4 km block covers the streaming window, so submit all
          * cascades (the voxelizer only stamps the bricks the AABB overlaps). */
-        desc.maxCascade = BRIX_NUM_CASCADES - 1;
+        desc.maxCascade = brixNumCascades - 1;
         FfxBrixelizerInstanceID instanceID;
         desc.outInstanceID = &instanceID;
         FfxErrorCode instResult = ffxBrixelizerCreateInstances(&brixelizerContext, &desc, 1);
@@ -1544,12 +1575,12 @@ namespace engine {
     }
 
     static void invalAccount(u32 n) {
-        invalRing[frameIndex % ((1u << BRIX_NUM_CASCADES) + 1)] += n;
+        invalRing[frameIndex % brixInvalRingDepth] += n;
     }
 
     static u32 invalWindow(void) {
         u32 sum = 0;
-        for (u32 i = 0; i < ((1u << BRIX_NUM_CASCADES) + 1); i++) {
+        for (u32 i = 0; i < brixInvalRingDepth; i++) {
             sum += invalRing[i];
         }
         return sum;
@@ -2271,12 +2302,12 @@ namespace engine {
         }
 
         FfxBrixelizerContextDescription desc = {};
-        desc.numCascades                     = BRIX_NUM_CASCADES;
+        desc.numCascades                     = brixNumCascades;
         /* ALL_DEBUG carries the context/cascade readback flags, which are
          * required for outStats: the readback buffers are only allocated when
          * set, and the stats are filled from that (lagged) GPU readback. */
         desc.flags = FFX_BRIXELIZER_CONTEXT_FLAG_ALL_DEBUG;
-        for (u32 i = 0; i < BRIX_NUM_CASCADES; i++) {
+        for (u32 i = 0; i < brixNumCascades; i++) {
             desc.cascadeDescs[i].flags     = FFX_BRIXELIZER_CASCADE_STATIC;
             desc.cascadeDescs[i].voxelSize = BRIX_BASE_VOXEL_SIZE * (float)(1u << i);
         }
@@ -2299,11 +2330,12 @@ namespace engine {
         contextReady = 1;
         utils::info(
             "vulkanBrixelizerPass: created voxelizer context (%u cascades, voxel %.0f-%.0f m, "
-            "gpu scratch %llu MiB)",
-            BRIX_NUM_CASCADES,
+            "refs budget %u MiB, swap budget %u MiB)",
+            brixNumCascades,
             BRIX_BASE_VOXEL_SIZE,
-            BRIX_BASE_VOXEL_SIZE * (float)(1u << (BRIX_NUM_CASCADES - 1)),
-            BRIX_GPU_SCRATCH_SIZE >> 20);
+            BRIX_BASE_VOXEL_SIZE * (float)(1u << (brixNumCascades - 1)),
+            brixMaxReferences >> 20,
+            brixTriangleSwapSize >> 20);
 
         /* (Re)register every loaded scene — the FFX buffer/instance tables
          * were recreated with the context. All scenes (not just the
@@ -2315,6 +2347,29 @@ namespace engine {
         /* Step 5: re-register the props variant buffers + recreate the stored
          * prop instance sets (no-op when no props world is loaded). */
         propsEnsureRegistered();
+        return 1;
+    }
+
+    /* Lazily allocate the SDF debug visualization target (render-res R16F
+     * RGBA, ~18.6 MiB at 2880×1627) the first frame a debug view is active.
+     * createResources no longer holds it unconditionally — an SDF debug view
+     * is a development tool, and the image is only written when one is on. */
+    static char ensureSdfDebug(void) {
+        if (sdfDebug.img) {
+            return 1;
+        }
+        u32 renderW = window.renderWidth > 0 ? (u32)window.renderWidth : (u32)window.width;
+        u32 renderH = window.renderHeight > 0 ? (u32)window.renderHeight : (u32)window.height;
+        sdfDebug = vulkanCreateImage(.name   = "BrixelSdfDebug",
+                                     .format = VK_FORMAT_R16G16B16A16_SFLOAT,
+                                     .usage  = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
+                                                 VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+                                     .width  = (int)renderW,
+                                     .height = (int)renderH);
+        if (!sdfDebug.img) {
+            utils::error("vulkanBrixelizerPass: brixelizer debug resource creation failed");
+            return 0;
+        }
         return 1;
     }
 
@@ -2352,6 +2407,9 @@ namespace engine {
         }
         if (percent >= 75) {
             return FFX_BRIXELIZER_GI_INTERNAL_RESOLUTION_75_PERCENT;
+        }
+        if (percent >= 25) {
+            return FFX_BRIXELIZER_GI_INTERNAL_RESOLUTION_25_PERCENT;
         }
         return FFX_BRIXELIZER_GI_INTERNAL_RESOLUTION_50_PERCENT;
     }
@@ -2408,7 +2466,7 @@ namespace engine {
         /* Drop the frame's add slot (it still holds the add count of the
          * frame 256 updates ago — whose invalidations the queue just drained
          * with the last top-cascade turn). */
-        invalRing[frameIndex % ((1u << BRIX_NUM_CASCADES) + 1)] = 0;
+        invalRing[frameIndex % brixInvalRingDepth] = 0;
         /* Retry the invalidation-gate-deferred scene registrations before this
          * frame's bake so an admitted scene is baked with the rest. */
         sceneRetryDrain();
@@ -2420,8 +2478,12 @@ namespace engine {
          * bake. */
         propsSyncPending(camera->cameraUbo.renderLocation);
         /* Step 2.2: read the debug-visualization mode once (ENGINE_BRIX_SDF_DEBUG;
-         * "off" disables the extra dispatch). */
+         * "off" disables the extra dispatch). The debug target image itself is
+         * lazily allocated when a view is active (render-res R16F, ~18.6 MiB). */
         getSdfDebugMode();
+        if (sdfDebugEnabled) {
+            ensureSdfDebug();
+        }
         /* Step 7.3: parse the GI cache debug mode once (ENGINE_BRIXGI_DEBUG;
          * off by default — a second per-frame FFX dispatch would halve the FFX
          * view lifetime). giDebugDispatch checks giDebugEnabled. */
@@ -2486,7 +2548,7 @@ namespace engine {
                    sizeof(debugVisDesc.inverseProjectionMatrix));
             debugVisDesc.debugState        = getSdfDebugMode();
             debugVisDesc.startCascadeIndex = 0;
-            debugVisDesc.endCascadeIndex   = BRIX_NUM_CASCADES - 1;
+            debugVisDesc.endCascadeIndex   = brixNumCascades - 1;
             debugVisDesc.sdfSolveEps       = 0.5f;
             debugVisDesc.tMin              = 0.0f;
             debugVisDesc.tMax              = sdfDebugTMax;
@@ -2499,8 +2561,8 @@ namespace engine {
             updateDesc.debugVisualizationDesc = &debugVisDesc;
         }
 
-        updateDesc.maxReferences           = BRIX_MAX_REFERENCES;
-        updateDesc.triangleSwapSize        = BRIX_TRIANGLE_SWAP_SIZE;
+        updateDesc.maxReferences           = brixMaxReferences;
+        updateDesc.triangleSwapSize        = brixTriangleSwapSize;
         updateDesc.maxBricksPerBake        = BRIX_MAX_BRICKS_PER_BAKE;
         updateDesc.outStats                = &stats;
 
@@ -2511,10 +2573,44 @@ namespace engine {
         FfxErrorCode bakeResult =
             ffxBrixelizerBakeUpdate(&brixelizerContext, &updateDesc, &bakedUpdateDesc);
         if (bakeResult == FFX_OK) {
-            if (scratchNeeded > BRIX_GPU_SCRATCH_SIZE) {
-                utils::error("vulkanBrixelizerPass: brixelizer scratch overflow: %zu > %llu",
-                             scratchNeeded,
-                             BRIX_GPU_SCRATCH_SIZE);
+            if (!gpuScratch.buf) {
+                /* Lazy, exact-sized scratch (replaces the sample's hardcoded
+                 * 1 GiB): the bake above just reported the size the current
+                 * budgets need. Add headroom for the job-counter partitions,
+                 * which grow with the instance count as props register later
+                 * (a few bytes per instance at the 65536 cap). */
+                u64 size = (u64)scratchNeeded + (4u << 20);
+                gpuScratch =
+                    vulkanCreateGpuBuffer("BrixelGpuScratch",
+                                          size,
+                                          VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+                brixGpuScratchSize = size;
+                if (!gpuScratch.buf) {
+                    utils::error("vulkanBrixelizerPass: brixelizer scratch allocation failed (%llu MiB) — "
+                                 "lowering ENGINE_BRIXGI_REFS_MB / ENGINE_BRIXGI_SWAP_MB frees VRAM",
+                                 size >> 20);
+                    /* Skip this frame's update; leave the atlas readable for GI. */
+                    vulkanTransition(cmd, &sdfAtlas, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
+                    if (sdfDebugEnabled && sdfDebug.img) {
+                        vulkanTransition(cmd, &sdfDebug, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
+                    }
+                    return;
+                }
+                utils::info("vulkanBrixelizerPass: allocated gpu scratch %llu MiB "
+                            "(bake required %zu MiB, refs budget %u MiB, swap budget %u MiB)",
+                            size >> 20,
+                            scratchNeeded >> 20,
+                            brixMaxReferences >> 20,
+                            brixTriangleSwapSize >> 20);
+            } else if (scratchNeeded > brixGpuScratchSize) {
+                static char scratchOverflowLogged = 0;
+                if (!scratchOverflowLogged) {
+                    scratchOverflowLogged = 1;
+                    utils::error("vulkanBrixelizerPass: brixelizer scratch overflow: %zu > %llu "
+                                 "(raise ENGINE_BRIXGI_REFS_MB / ENGINE_BRIXGI_SWAP_MB)",
+                                 scratchNeeded,
+                                 brixGpuScratchSize);
+                }
             }
             FfxResource scratch = vulkanFfxWrapBufferResource(
                 &gpuScratch,
@@ -2600,16 +2696,24 @@ namespace engine {
                 regBakeActive = 0;
             }
         }
+        /* Peak per-update reference allocation (lagged readback) — the signal
+         * for sizing ENGINE_BRIXGI_REFS_MB: the budget must stay comfortably
+         * above the peak or dense cascades start dropping references. */
+        if (stats.staticCascadeStats.referencesAllocated > brixPeakRefs) {
+            brixPeakRefs = stats.staticCascadeStats.referencesAllocated;
+        }
         if (frameIndex % 120 == 0) {
             utils::info(
                 "vulkanBrixelizerPass: stats cascade=%u freeBricks=%u bricksCleared=%u "
-                "staticTris=%u staticRefs=%u staticBricks=%u gpu=%.3f ms cam=(%.1f, %.1f, %.1f)",
+                "staticTris=%u staticRefs=%u staticBricks=%u peakRefs=%u/%u gpu=%.3f ms cam=(%.1f, %.1f, %.1f)",
                 stats.cascadeIndex,
                 stats.contextStats.freeBricks,
                 stats.contextStats.bricksCleared,
                 stats.staticCascadeStats.trianglesAllocated,
                 stats.staticCascadeStats.referencesAllocated,
                 stats.staticCascadeStats.bricksAllocated,
+                brixPeakRefs,
+                brixMaxReferences,
                 profile.elapsed / MILLION, /* ns → ms */
                 camera->cameraUbo.renderLocation[0],
                 camera->cameraUbo.renderLocation[1],
@@ -2878,12 +2982,10 @@ namespace engine {
                                        .usage  = GI_OUT_USAGE,
                                        .width  = (int)renderW,
                                        .height = (int)renderH);
-        giDebug = vulkanCreateImage(.name   = "BrixelGiDebug",
-                                    .format = VK_FORMAT_R16G16B16A16_SFLOAT,
-                                    .usage  = GI_OUT_USAGE,
-                                    .width  = (int)renderW,
-                                    .height = (int)renderH);
-        if (!giDiffuse.img || !giSpecular.img || !giDebug.img) {
+        /* giDebug (render-res, ~18.6 MiB at 2880×1627) is NOT created here —
+         * it is only written by the one-shot GI cache debug view, so it is
+         * allocated lazily in giDebugDispatch (ensureGiDebug). */
+        if (!giDiffuse.img || !giSpecular.img) {
             utils::error("vulkanBrixelizerPass: GI output resource creation failed");
             return;
         }
@@ -2895,10 +2997,35 @@ namespace engine {
         vulkanTransition(cmd, &giSpecular, VK_IMAGE_LAYOUT_GENERAL, 0, 1);
         vulkanClearColorImage(cmd, &giSpecular, black);
         vulkanTransition(cmd, &giSpecular, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
+        vulkanTransientEnd(cmd, 1);
+    }
+
+    /* Lazily allocate + clear the GI cache debug image (render-res R16F RGBA,
+     * ~18.6 MiB at 2880×1627) the first time the one-shot cache debug view
+     * actually runs — off by default, so normal runs never hold it. */
+    static char ensureGiDebug(u32 renderW, u32 renderH) {
+        if (giDebug.img) {
+            return 1;
+        }
+        static const VkImageUsageFlags GI_OUT_USAGE =
+            VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+            VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+        giDebug = vulkanCreateImage(.name   = "BrixelGiDebug",
+                                    .format = VK_FORMAT_R16G16B16A16_SFLOAT,
+                                    .usage  = GI_OUT_USAGE,
+                                    .width  = (int)renderW,
+                                    .height = (int)renderH);
+        if (!giDebug.img) {
+            utils::error("vulkanBrixelizerPass: GI debug image creation failed");
+            return 0;
+        }
+        VulkanCommand* cmd = vulkanTransientBegin();
+        VkClearColorValue black = {};
         vulkanTransition(cmd, &giDebug, VK_IMAGE_LAYOUT_GENERAL, 0, 1);
         vulkanClearColorImage(cmd, &giDebug, black);
         vulkanTransition(cmd, &giDebug, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
         vulkanTransientEnd(cmd, 1);
+        return 1;
     }
 
     /* Creates (or, on a resolution / internal-resolution change, recreates)
@@ -3025,7 +3152,7 @@ namespace engine {
          * `for (c = start; c <= end; c++)` — INCLUSIVE, so [0, 7] covers all
          * 8 static cascades (matches the sample's 8-level merged range). */
         desc.startCascade = 0;
-        desc.endCascade   = BRIX_NUM_CASCADES - 1;
+        desc.endCascade   = brixNumCascades - 1;
         desc.rayPushoff           = 0.25f;
         desc.sdfSolveEps          = 0.5f;
         desc.specularRayPushoff   = 0.25f;
@@ -3125,7 +3252,7 @@ namespace engine {
      * at render resolution. Runs after the main dispatch (it reads the cache
      * the dispatch just updated). */
     static void giDebugDispatch(VulkanCommand* cmd, Camera* camera) {
-        if (!giContextReady || !giDebug.img || !giDebugEnabled) {
+        if (!giContextReady || !giDebugEnabled) {
             return;
         }
         /* ONE-SHOT: run the extra FFX dispatch on exactly one frame. A per-frame
@@ -3144,8 +3271,7 @@ namespace engine {
         if (!depth || !wnorm) {
             return;
         }
-        if ((u32)depth->extent.width != (u32)giDebug.extent.width ||
-            (u32)depth->extent.height != (u32)giDebug.extent.height) {
+        if (!ensureGiDebug((u32)depth->extent.width, (u32)depth->extent.height)) {
             return;
         }
         vulkanTransition(cmd, depth, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
@@ -3157,7 +3283,7 @@ namespace engine {
         memcpy(desc.view, camera->cameraUbo.view, sizeof(desc.view));
         memcpy(desc.projection, camera->cameraUbo.projection, sizeof(desc.projection));
         desc.startCascade = 0;
-        desc.endCascade   = BRIX_NUM_CASCADES - 1;
+        desc.endCascade   = brixNumCascades - 1;
         desc.outputSize[0] = (u32)giDebug.extent.width;
         desc.outputSize[1] = (u32)giDebug.extent.height;
         desc.debugMode         = getGIDebugMode();
@@ -3233,7 +3359,7 @@ namespace engine {
     }
 
     void vulkanBrixelizerPassSetGiResolution(int percent) {
-        if (percent != 50 && percent != 75 && percent != 100) {
+        if (percent != 25 && percent != 50 && percent != 75 && percent != 100) {
             percent = 50;
         }
         /* giEnsureContext recreates the GI context on the next update (the

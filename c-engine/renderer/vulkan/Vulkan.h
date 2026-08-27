@@ -16,6 +16,7 @@ struct Vulkan {
     struct VulkanCommand* currentCmd;  // current cmd in flight
     u32 graphicsFamilyIndex;
     bool skipFrame;
+    char memoryBudgetAvailable;  // VK_EXT_memory_budget enabled (ENGINE_VRAM_REPORT)
 };
 
 extern struct Vulkan vulkan;
