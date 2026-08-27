@@ -83,11 +83,9 @@ static void recreatePipelines(void) {
         .colorFormat1       = VK_FORMAT_R16G16_SFLOAT,
         .colorFormat2       = VK_FORMAT_R16G16_SNORM,
         .colorFormat3       = VK_FORMAT_R16G16B16A16_SFLOAT,
-        .colorFormat4       = VK_FORMAT_R8G8B8A8_UNORM,
         .clearColor1        = {0, 0, 0, 0}, .clearColor1Enabled = 1,
         .clearColor2        = {0, 0, 0, 0}, .clearColor2Enabled = 1,
         .clearColor3        = {0, 0, 0, 0}, .clearColor3Enabled = 1,
-        .clearColor4        = {0, 0, 0, 0}, .clearColor4Enabled = 1,
         .depthFormat        = VK_FORMAT_D32_SFLOAT,
         .clearDepth         = {0, 0}, .clearDepthEnabled = 1,
         .vertexAttributes   = sceneVertexAttrs,
@@ -102,7 +100,6 @@ static void recreatePipelines(void) {
         .colorFormat1       = VK_FORMAT_R16G16_SFLOAT,
         .colorFormat2       = VK_FORMAT_R16G16_SNORM,
         .colorFormat3       = VK_FORMAT_R16G16B16A16_SFLOAT,
-        .colorFormat4       = VK_FORMAT_R8G8B8A8_UNORM,
         .depthFormat        = VK_FORMAT_D32_SFLOAT,
         .noCull             = 1,
         .vertexAttributes   = sceneVertexAttrs,
@@ -130,7 +127,6 @@ static void recreatePipelines(void) {
         .colorFormat1       = VK_FORMAT_R16G16_SFLOAT,
         .colorFormat2       = VK_FORMAT_R16G16_SNORM,
         .colorFormat3       = VK_FORMAT_R16G16B16A16_SFLOAT,
-        .colorFormat4       = VK_FORMAT_R8G8B8A8_UNORM,
         .clearColor1        = {0, 0, 0, 0}, .clearColor1Enabled = 0,
         .clearColor2        = {0, 0, 0, 0}, .clearColor2Enabled = 0,
         .clearColor3        = {0, 0, 0, 0}, .clearColor3Enabled = 0,
@@ -167,7 +163,6 @@ void VulkanDepthPass::preUpdate() {
     VulkanImage* velocityImage   = vulkanFrameResourcesGetVelocity();
     VulkanImage* viewNormalImage = vulkanFrameResourcesGetViewNormal();
     VulkanImage* worldNormalImage = vulkanFrameResourcesGetWorldNormal();
-    VulkanImage* albedoImage     = vulkanFrameResourcesGetAlbedo();
     VulkanImage* sceneColorImage = vulkanFrameResourcesGetSceneColor();
     VulkanImage* normalsImage    = vulkanFrameResourcesGetNormals();
     VulkanImage* materialImage   = vulkanFrameResourcesGetMaterial();
@@ -176,7 +171,6 @@ void VulkanDepthPass::preUpdate() {
     if (velocityImage)  vulkanTransition(vulkan.currentCmd, velocityImage,  VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, 0, 1);
     if (viewNormalImage) vulkanTransition(vulkan.currentCmd, viewNormalImage, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, 0, 1);
     if (worldNormalImage) vulkanTransition(vulkan.currentCmd, worldNormalImage, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, 0, 1);
-    if (albedoImage)    vulkanTransition(vulkan.currentCmd, albedoImage,    VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, 0, 1);
     if (sceneColorImage) vulkanTransition(vulkan.currentCmd, sceneColorImage, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, 0, 1);
     if (normalsImage)   vulkanTransition(vulkan.currentCmd, normalsImage,   VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, 0, 1);
     if (materialImage)  vulkanTransition(vulkan.currentCmd, materialImage,  VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, 0, 1);
@@ -189,7 +183,6 @@ void VulkanDepthPass::update() {
     VulkanImage* velocityImage   = vulkanFrameResourcesGetVelocity();
     VulkanImage* viewNormalImage = vulkanFrameResourcesGetViewNormal();
     VulkanImage* worldNormalImage = vulkanFrameResourcesGetWorldNormal();
-    VulkanImage* albedoImage     = vulkanFrameResourcesGetAlbedo();
 
     if (vulkan.skipFrame || !depthImage) return;
 
@@ -205,7 +198,6 @@ void VulkanDepthPass::update() {
                       .color1 = velocityImage,
                       .color2 = viewNormalImage,
                       .color3 = worldNormalImage,
-                      .color4 = albedoImage,
                       .depth  = depthImage);
 
     vulkanViewport(cmd, 0, depthImage->extent.height, depthImage->extent.width, -((i32)depthImage->extent.height));
@@ -372,8 +364,7 @@ Entity* camEntity = cameraGetEntity();
                           .pipe = &waterDepthPipe,
                           .color1 = velocityImage,
                           .color2 = viewNormalImage,
-                          .color3 = worldNormalImage,
-                          .color4 = albedoImage);
+                          .color3 = worldNormalImage);
 
         vulkanViewport(cmd, 0, depthImage->extent.height, depthImage->extent.width,
                        -((i32)depthImage->extent.height));

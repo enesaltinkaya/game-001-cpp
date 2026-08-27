@@ -1056,6 +1056,38 @@ and all dumps write.
   leak. If Step 9 wants a stable exposure for A/B comparisons, a longer capture
   delay or a pinned exposure value is the lever.
 
+**Re-test 2026-08-28 (user report: "when GI is on, the player character is
+grey") — one bug found and fixed:**
+
+- *Opaque textured materials wrote their flat `baseColor` (often white) into
+  the albedo G-buffer.* The albedo is written by the depth pre-pass
+  (`scene_depth.frag`), which sampled the base-colour texture **only on the
+  `MAT_ALPHA_MASK` path** (there it is needed for the alpha discard). But
+  `scene.frag` (the lit pass) samples the texture for **every**
+  `MAT_HAS_TEXTURE_COLOR` material — opaque or cutout. The player character
+  (`eve_material`: opaque, white baseColor factor + base-colour texture) is the
+  case this missed: her albedo was written as flat white (1,1,1), so the GI
+  diffuse term `albedo × E_diffuse` added full-strength sky ambient on top of
+  her → a washed-out silvery-grey figure (A/B: GI-off torso (36,34,28) →
+  GI-on (106,115,124); albedo dump flat white vs 0.5-grey terrain). Fix: hoist
+  the colour-texture sample out of the alpha-mask branch in
+  `scene_depth.frag` so the albedo mirrors `scene.frag` exactly (jitter
+  compensation stays alpha-mask-only, same as `scene.frag`). The occlusion
+  pass' phase-2 redraw reuses the same shader, so it stays consistent.
+- *Verified (parked player, red-roof hut):* albedo dump now shows the
+  character's actual per-pixel texture (dark clothing/hair; torso avg
+  231→26); GI-on torso (36,34,28)→(86,92,97) — soft cool ambient on dark
+  albedo, no white-wash; GI-off frame pixel-stable vs the pre-fix GI-off run
+  (hut region bit-identical; only the documented auto-exposure/TAA shimmer
+  elsewhere); validation clean (only the known Step-1 `vkDestroyDevice`
+  teardown leak at exit).
+- *Cost note:* the depth pre-pass (and the occlusion phase-2 redraw) now
+  sample the base-colour texture for opaque textured scene geometry. Measured
+  frame cost is unchanged within noise (gpu ~10 ms both runs; pre-pass is
+  small-screen-fraction for this scene — the character + huts; trees were
+  already sampled via the alpha-mask path). Revisit if a scene with large
+  opaque-textured meshes makes the pre-pass measurably slower.
+
 ## Step 9 — Settings, debug GUI, performance
 
 - Settings: GI on/off (persisted like other settings, `settingsGetBool`),

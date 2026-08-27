@@ -1,8 +1,6 @@
 #include "VulkanCompositePass.h"
-#include "VulkanCompositePass.h"
 #include "renderer/vulkan/pass/ao/VulkanAOPass.h"
 #include "renderer/vulkan/pass/azgaar_weather/VulkanAzgaarWeatherPass.h"
-#include "renderer/vulkan/pass/brixelizer/VulkanBrixelizerPass.h"
 #include "renderer/vulkan/pass/volumetric/VulkanVolumetricPass.h"
 #include "ecs/system/System.h"
 #include "renderer/vulkan/Vulkan.h"
@@ -19,29 +17,6 @@ static double     elapsedGPU;
 
 VulkanCompositePass vulkanCompositePass;
 
-/* Step 8/9: Brixelizer GI composite strength. Persisted settings
- * (giDiffuseFactor / giSpecularFactor, resolved in added() with the
- * ENGINE_BRIXGI_DIFFUSE / ENGINE_BRIXGI_SPECULAR env overrides — env wins so
- * A/B test runs are deterministic), live-settable from the settings GUI.
- * Defaults lower than the FFX sample (1.5 / 3.0): this world is open-sky
- * outdoors, so the raw GI radiance is bright and the sample factors wash out
- * the sunlit scene (Step 8 A/B). */
-static float giDiffuseFactor  = 0.6f;
-static float giSpecularFactor = 1.0f;
-
-float vulkanCompositePassGetGiDiffuseFactor(void) {
-    return giDiffuseFactor;
-}
-
-float vulkanCompositePassGetGiSpecularFactor(void) {
-    return giSpecularFactor;
-}
-
-void vulkanCompositePassSetGiFactors(float diffuse, float specular) {
-    giDiffuseFactor  = diffuse;
-    giSpecularFactor = specular;
-}
-
 VulkanCompositePass::VulkanCompositePass() : System("composite") {}
 
 typedef struct CompositePushConstants {
@@ -54,11 +29,6 @@ typedef struct CompositePushConstants {
     u32 volumetricColorIndex;
     u32 weatherMaskIndex;
     u32 aoIndex;
-    u32 albedoIndex;
-    u32 giDiffuseIndex;
-    u32 giSpecularIndex;
-    float diffuseFactor;
-    float specularFactor;
     u32 width;
     u32 height;
 } CompositePushConstants;
@@ -67,14 +37,6 @@ void VulkanCompositePass::added() {
     pipeline = vulkanCreatePipe(
         .name = "composite",
         .comp = "shaders/pass/composite/spv/composite.comp.spv");
-
-    /* Step 9: persisted GI composite factors + env overrides (see above). */
-    giDiffuseFactor  = (float)utils::settingsGetDouble("giDiffuseFactor");
-    giSpecularFactor = (float)utils::settingsGetDouble("giSpecularFactor");
-    const char* d    = getenv("ENGINE_BRIXGI_DIFFUSE");
-    if (d && *d) giDiffuseFactor = strtof(d, NULL);
-    const char* s = getenv("ENGINE_BRIXGI_SPECULAR");
-    if (s && *s) giSpecularFactor = strtof(s, NULL);
 }
 
 void VulkanCompositePass::preUpdate() {
@@ -101,14 +63,6 @@ void VulkanCompositePass::update() {
      * frame, so this frame's mask is ready.  Used to keep the screen-space
      * fog from erasing particles that float in front of fogged geometry. */
     VulkanImage   *weatherMask = vulkanAzgaarWeatherPassGetMask();
-    /* Step 8: per-pixel albedo + the Brixelizer GI outputs. All three are
-     * sampled only when GI is enabled; when disabled the push-constant
-     * sentinels make the composite skip the GI terms entirely (pixel-identical
-     * to pre-GI). */
-    char giEnabled = vulkanBrixelizerPassIsGiEnabled();
-    VulkanImage *albedo = vulkanFrameResourcesGetAlbedo();
-    VulkanImage *giDiffuse  = giEnabled ? vulkanBrixelizerPassGetGiDiffuse() : NULL;
-    VulkanImage *giSpecular = giEnabled ? vulkanBrixelizerPassGetGiSpecular() : NULL;
     if (!sceneColor || !depth || !reflColor || !normals || !material || !composite) {
         elapsedCPU = utils::nanos() - elapsedCPU;
         return;
@@ -118,15 +72,6 @@ void VulkanCompositePass::update() {
     vulkanTransition(cmd, depth, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
     vulkanTransition(cmd, normals, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
     vulkanTransition(cmd, material, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
-    if (giEnabled && albedo) {
-        vulkanTransition(cmd, albedo, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
-    }
-    if (giEnabled && giDiffuse) {
-        vulkanTransition(cmd, giDiffuse, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
-    }
-    if (giEnabled && giSpecular) {
-        vulkanTransition(cmd, giSpecular, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
-    }
 
     if (volumetric) {
         vulkanTransition(cmd, volumetric, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
@@ -156,19 +101,6 @@ void VulkanCompositePass::update() {
                                    : (vulkanAOPassGetOutput()
                                          ? (u32)vulkanAOPassGetOutput()->sampledPoolIndex
                                          : 0xFFFFFFFFu),
-        .albedoIndex          = albedo ? (u32)albedo->sampledPoolIndex : 0u,
-        /* Absent-sentinel (like the AO / weather masks above): while GI is off
-         * (or its outputs are absent) the indices are 0xFFFFFFFF and the
-         * composite skips the GI terms entirely — the frame stays pixel-identical
-         * to pre-GI. */
-        .giDiffuseIndex       = (giEnabled && giDiffuse)
-                                   ? (u32)giDiffuse->sampledPoolIndex
-                                   : 0xFFFFFFFFu,
-        .giSpecularIndex      = (giEnabled && giSpecular)
-                                   ? (u32)giSpecular->sampledPoolIndex
-                                   : 0xFFFFFFFFu,
-        .diffuseFactor        = giDiffuseFactor,
-        .specularFactor       = giSpecularFactor,
         .width                = composite->extent.width,
         .height               = composite->extent.height,
     };

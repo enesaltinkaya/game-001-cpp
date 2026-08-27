@@ -13,7 +13,6 @@
 #include "ecs/system/mesh/MeshComponent.h"
 #include "ecs/Ecs.h"
 #include "renderer/vulkan/pass/azgaar_props/VulkanAzgaarPropsPass.h"
-#include "renderer/vulkan/pass/brixelizer/VulkanBrixelizerPass.h"
 #include "renderer/vulkan/resources/VulkanResourceManager.h"
 #include "player/Player.h"
 #include "renderer/vulkan/scene/VulkanScene.h"
@@ -208,10 +207,6 @@ namespace game {
         buildAllMeshes(variants, variantCount, vCount, iCount, verts, idx);
         engine::vulkanAzgaarPropsSetMeshes(verts.data(), vCount, idx.data(), iCount);
         engine::vulkanAzgaarPropsSetVariants(variants.data(), variantCount);
-        /* Step 5 (plans/brixelizer-gi.md): the merged mesh also feeds the
-         * Brixelizer SDF voxelizer (position-only per-variant sub-buffers). */
-        engine::vulkanBrixelizerPassSetPropsMeshes(verts.data(), vCount, idx.data(), iCount,
-                                                   variants.data(), variantCount);
 
         // The variant table changed: drop all scattered tiles so the update loop
         // re-scatters them with the updated counts.
@@ -331,53 +326,6 @@ namespace game {
         return 2;
     }
 
-    // Brixelizer GI SDF metadata per species (plans/brixelizer-gi.md Step 5).
-    // priority: 0 = budgeted first (canopy / buildings), 3 = last (ground cover
-    // — little SDF value at cascade resolutions).  maxCascade: the farthest
-    // cascade that carries this species (cascade i = 2^(i+1) m voxels, reach
-    // 2^(i+1)×64 m); sized against the species' cull distance (kCullDist) —
-    // geometry beyond the cull never renders, so its SDF presence is wasted.
-    // LOD pairs: the near variant only renders inside ~100 m (low cascade), the
-    // far variant out to the 800 m cull (full cascade).
-    static void propsSdfMeta(u32 species, u32* outPriority, u32* outMaxCascade) {
-        u32 priority   = 2;
-        u32 maxCascade = 4;
-        switch (species) {
-        case AZGAAR_PROP_GRASS_TUFT:
-        case AZGAAR_PROP_FLOWER:     priority = 3; maxCascade = 1; break;
-        case AZGAAR_PROP_REED:
-        case AZGAAR_PROP_SHRUB:      priority = 2; maxCascade = 2; break;
-        case AZGAAR_PROP_CACTUS:     priority = 2; maxCascade = 2; break;
-        case AZGAAR_PROP_DEAD_TREE:  priority = 2; maxCascade = 4; break;
-        case AZGAAR_PROP_CONIFER:
-        case AZGAAR_PROP_DECIDUOUS:  priority = 1; maxCascade = 2; break; /* near LOD: ~100 m */
-        case AZGAAR_PROP_CONIFER_FAR:
-        case AZGAAR_PROP_DECIDUOUS_FAR:
-            priority = 1;
-            maxCascade = 7;
-            break;
-        case AZGAAR_PROP_ACACIA:
-        case AZGAAR_PROP_PALM:       priority = 1; maxCascade = 5; break;
-        case AZGAAR_PROP_ROCK:       priority = 1; maxCascade = 4; break;
-        case AZGAAR_PROP_HUT:
-        case AZGAAR_PROP_HOUSE:
-        case AZGAAR_PROP_WALL:       priority = 0; maxCascade = 4; break;
-        case AZGAAR_PROP_TOWER:
-        case AZGAAR_PROP_TEMPLE:
-        case AZGAAR_PROP_GATE:
-        case AZGAAR_PROP_LIGHTHOUSE:
-        case AZGAAR_PROP_LIGHTHOUSE_CAP:
-        case AZGAAR_PROP_BRIDGE:     priority = 0; maxCascade = 5; break;
-        case AZGAAR_PROP_DOCK:       priority = 0; maxCascade = 4; break;
-        case AZGAAR_PROP_VOLCANO:    priority = 0; maxCascade = 7; break;
-        case AZGAAR_PROP_RUIN_COLUMN:
-        case AZGAAR_PROP_RUIN_ARCH:
-        case AZGAAR_PROP_MINE_FRAME: priority = 1; maxCascade = 5; break;
-        default: break;
-        }
-        *outPriority   = priority;
-        *outMaxCascade = maxCascade;
-    }
 
     // ── Mesh builder (procedural placeholders, all in PropsVertex layout) ──────
 
@@ -1562,7 +1510,6 @@ namespace game {
                     vr->swayFactor = kSpecies[s].sway;
                     vr->flags      = kSpecies[s].flags;
                     vr->lodRole    = propsLodRole(s);
-                    propsSdfMeta(s, &vr->sdfPriority, &vr->sdfMaxCascade);
                     propsStoreVariantSphere(row, bmin, bmax);
                     row++;
                     v++;
@@ -1588,7 +1535,6 @@ namespace game {
                     vr->swayFactor = kSpecies[s].sway;
                     vr->flags      = kSpecies[s].flags;
                     vr->lodRole    = propsLodRole(s);
-                    propsSdfMeta(s, &vr->sdfPriority, &vr->sdfMaxCascade);
                     propsStoreVariantSphere(row, vr->boundsMin, vr->boundsMax);
                     row++;
                 }
@@ -1614,7 +1560,6 @@ namespace game {
                 vr->swayFactor = kSpecies[s].sway;
                 vr->flags      = kSpecies[s].flags;
                 vr->lodRole    = propsLodRole(s);
-                propsSdfMeta(s, &vr->sdfPriority, &vr->sdfMaxCascade);
                 propsStoreVariantSphere(row, bmin, bmax);
                 row++;
             }
@@ -3587,10 +3532,6 @@ namespace game {
         buildAllMeshes(variants, variantCount, vCount, iCount, verts, idx);
         engine::vulkanAzgaarPropsSetMeshes(verts.data(), vCount, idx.data(), iCount);
         engine::vulkanAzgaarPropsSetVariants(variants.data(), variantCount);
-        /* Step 5 (plans/brixelizer-gi.md): the merged mesh also feeds the
-         * Brixelizer SDF voxelizer (position-only per-variant sub-buffers). */
-        engine::vulkanBrixelizerPassSetPropsMeshes(verts.data(), vCount, idx.data(), iCount,
-                                                   variants.data(), variantCount);
 
         // Give the pass' per-tile frustum cull a Y range that covers this world's
         // terrain (its default [-20, 40] m wrongly culls whole tiles whenever the
@@ -3829,8 +3770,6 @@ namespace game {
         engine::vulkanAzgaarPropsClearAll();
         engine::vulkanAzgaarPropsSetMeshes(nullptr, 0, nullptr, 0);
         engine::vulkanAzgaarPropsSetVariants(nullptr, 0);
-        /* Step 5: drop the old world's SDF variant buffers + prop instances. */
-        engine::vulkanBrixelizerPassSetPropsMeshes(nullptr, 0, nullptr, 0, nullptr, 0);
         engine::VulkanAzgaarPropsData off = {
             .wind    = {0, 0, 0, 0},
             .density = {0, 0, 0, 0},

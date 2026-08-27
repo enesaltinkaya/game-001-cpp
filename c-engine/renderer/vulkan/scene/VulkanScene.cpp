@@ -103,7 +103,6 @@ void vulkanSceneCreate(Scene* scene) {
     std::vector<SceneVertex> tempVertices(totalVertices);
     std::vector<u32> tempIndices(totalIndices);
     std::vector<GpuDrawInstance> tempDraws(totalDraws);
-    std::vector<u32> tempDrawVertexCounts(totalDraws);
 
     SceneVertex* currVert = tempVertices.data();
     u32* currIdx          = tempIndices.data();
@@ -176,7 +175,6 @@ void vulkanSceneCreate(Scene* scene) {
                 draw->_pad0           = 0;
                 draw->_pad1           = 0;
                 memcpy(draw->boundingSphere, boundingSphere, sizeof(float) * 4);
-                tempDrawVertexCounts[drawIndex] = prim->vertexCount;
                 drawIndex++;
             }
 
@@ -186,31 +184,20 @@ void vulkanSceneCreate(Scene* scene) {
     }
 
     // Create GPU buffers
-    // STORAGE usage: the brixelizer voxelizer binds vertex/index data as shader
-    // storage buffers (plan pitfall #13) — no VRAM cost, one flag.
     vs->vertexBuffer =
         vulkanCreateGpuBuffer(utils::strtmp("SceneVBO %s", scene->name.data),
                               totalVertices * sizeof(SceneVertex),
-                              VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
-                                  VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+                              VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
 
     vs->indexBuffer =
         vulkanCreateGpuBuffer(utils::strtmp("SceneIBO %s", scene->name.data),
                               totalIndices * sizeof(u32),
-                              VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
-                                  VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+                              VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
 
     vs->drawInstanceBuffer = vulkanCreateGpuBuffer(
         utils::strtmp("SceneDrawInst %s", scene->name.data),
         totalDraws * sizeof(GpuDrawInstance),
         VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
-
-    // CPU-side copy of the draw list (brixelizer SDF registration, Step 3)
-    vs->cpuDraws.resize(totalDraws);
-    for (u32 i = 0; i < totalDraws; i++) {
-        vs->cpuDraws[i].draw       = tempDraws[i];
-        vs->cpuDraws[i].vertexCount = tempDrawVertexCounts[i];
-    }
 
     // Upload geometry + draw instances
     VulkanCommand* cmd = vulkanTransientBegin();

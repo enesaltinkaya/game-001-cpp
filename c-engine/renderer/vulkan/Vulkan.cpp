@@ -35,7 +35,6 @@
 #include "renderer/vulkan/pass/azgaar_water/VulkanAzgaarWaterPass.h"
 #include "renderer/vulkan/pass/azgaar_river/VulkanAzgaarRiverPass.h"
 #include "renderer/vulkan/pass/ao/VulkanAOPass.h"
-#include "renderer/vulkan/pass/brixelizer/VulkanBrixelizerPass.h"
 #include "renderer/vulkan/pass/azgaar_props/VulkanAzgaarPropsPass.h"
 #include "renderer/vulkan/pass/azgaar_weather/VulkanAzgaarWeatherPass.h"
 #include "renderer/vulkan/pass/oit/VulkanOitAccumulatePass.h"
@@ -203,8 +202,6 @@ static void vulkanDebugDumpFrameImages(const char* shotPath) {
             img = vulkanAOPassGetOutput();
         } else if (!strcmp(tok, "scene")) {
             img = vulkanFrameResourcesGetSceneColor();
-        } else if (!strcmp(tok, "albedo")) {
-            img = vulkanFrameResourcesGetAlbedo();
         } else if (!strcmp(tok, "oitReveal")) {
             img = vulkanFrameResourcesGetOitReveal();
         } else if (!strcmp(tok, "oitAccum")) {
@@ -217,34 +214,6 @@ static void vulkanDebugDumpFrameImages(const char* shotPath) {
             img = vulkanDofPassGetOutput();
         } else if (!strcmp(tok, "bloom")) {
             img = vulkanBloomPassGetBloomImage();
-        } else if (!strcmp(tok, "brixelSdf")) {
-            img = vulkanBrixelizerPassGetSdfDebug();
-        } else if (!strcmp(tok, "giNoise")) {
-            img = vulkanBrixelizerPassGetBlueNoise();
-        } else if (!strcmp(tok, "giEnv")) {
-            img = vulkanBrixelizerPassGetEnvFace(0);
-        } else if (!strcmp(tok, "giEnv1")) {
-            img = vulkanBrixelizerPassGetEnvFace(1);
-        } else if (!strcmp(tok, "giEnv2")) {
-            img = vulkanBrixelizerPassGetEnvFace(2);
-        } else if (!strcmp(tok, "giEnv3")) {
-            img = vulkanBrixelizerPassGetEnvFace(3);
-        } else if (!strcmp(tok, "giEnv4")) {
-            img = vulkanBrixelizerPassGetEnvFace(4);
-        } else if (!strcmp(tok, "giEnv5")) {
-            img = vulkanBrixelizerPassGetEnvFace(5);
-        } else if (!strcmp(tok, "giHistDepth")) {
-            img = vulkanBrixelizerPassGetHistoryDepth();
-        } else if (!strcmp(tok, "giHistNormal")) {
-            img = vulkanBrixelizerPassGetHistoryNormal();
-        } else if (!strcmp(tok, "giHistLit")) {
-            img = vulkanBrixelizerPassGetHistoryLit();
-        } else if (!strcmp(tok, "giDiffuse")) {
-            img = vulkanBrixelizerPassGetGiDiffuse();
-        } else if (!strcmp(tok, "giSpecular")) {
-            img = vulkanBrixelizerPassGetGiSpecular();
-        } else if (!strcmp(tok, "giCache")) {
-            img = vulkanBrixelizerPassGetGiDebug();
         } else if (strstr(tok, "Raw")) {
             /* <name>Raw: raw byte dump of the image named <name> (dispatches
              * through the regular token table by stripping the suffix). */
@@ -268,30 +237,12 @@ static void vulkanDebugDumpFrameImages(const char* shotPath) {
                 rawImg = vulkanAOPassGetOutput();
             } else if (!strcmp(sub, "scene")) {
                 rawImg = vulkanFrameResourcesGetSceneColor();
-            } else if (!strcmp(sub, "albedo")) {
-                rawImg = vulkanFrameResourcesGetAlbedo();
             } else if (!strcmp(sub, "lensIn")) {
                 rawImg = vulkanLensPassGetInput();
             } else if (!strcmp(sub, "dof")) {
                 rawImg = vulkanDofPassGetOutput();
             } else if (!strcmp(sub, "bloom")) {
                 rawImg = vulkanBloomPassGetBloomImage();
-            } else if (!strcmp(sub, "brixelSdf")) {
-                rawImg = vulkanBrixelizerPassGetSdfDebug();
-            } else if (!strcmp(sub, "giNoise")) {
-                rawImg = vulkanBrixelizerPassGetBlueNoise();
-            } else if (!strcmp(sub, "giHistDepth")) {
-                rawImg = vulkanBrixelizerPassGetHistoryDepth();
-            } else if (!strcmp(sub, "giHistNormal")) {
-                rawImg = vulkanBrixelizerPassGetHistoryNormal();
-            } else if (!strcmp(sub, "giHistLit")) {
-                rawImg = vulkanBrixelizerPassGetHistoryLit();
-            } else if (!strcmp(sub, "giDiffuse")) {
-                rawImg = vulkanBrixelizerPassGetGiDiffuse();
-            } else if (!strcmp(sub, "giSpecular")) {
-                rawImg = vulkanBrixelizerPassGetGiSpecular();
-            } else if (!strcmp(sub, "giCache")) {
-                rawImg = vulkanBrixelizerPassGetGiDebug();
             }
             if (!rawImg) {
                 continue;
@@ -346,7 +297,6 @@ void vulkanInit(void) {
     addPass(&vulkanOitCompositePass);
     addPass(&vulkanSsrPass);
     addPass(&vulkanAOPass);
-    addPass(&vulkanBrixelizerPass);
     addPass(&vulkanVolumetricPass);
     addPass(&vulkanDecalPass);
     addPass(&vulkanCompositePass);
@@ -446,11 +396,8 @@ void vulkanPostUpdate(void) {
             vulkanResetProfileStats(vulkan.currentCmd, &passProfiles[i], 1);
         }
 
-        /* ENGINE_VRAM_REPORT=<frame>: dump the device memory around that
-         * frame. The two snapshots bracketing the brixelizer pass split the
-         * footprint into "engine" and "brixelizer + GI context" (the FFX
-         * backend allocates through raw vkAllocateMemory, so it is invisible
-         * to VMA's statistics). Reported once, then disabled. */
+        /* ENGINE_VRAM_REPORT=<frame>: dump the device memory before the
+         * passes of that frame. Reported once, then disabled. */
         static char vramReportInit  = 0;
         static u32  vramReportFrame = 0xFFFFFFFFu;
         static char vramReportDone  = 0;
@@ -459,26 +406,18 @@ void vulkanPostUpdate(void) {
             const char* env = getenv("ENGINE_VRAM_REPORT");
             if (env && *env) vramReportFrame = (u32)atoi(env);
         }
-        char reportThisFrame = !vramReportDone && vramReportFrame != 0xFFFFFFFFu &&
-                               (u64)vramReportFrame == utils::timer.frameCounter;
-        if (reportThisFrame) {
+        if (!vramReportDone && vramReportFrame != 0xFFFFFFFFu &&
+            (u64)vramReportFrame == utils::timer.frameCounter) {
             vramReportDone = 1;
+            vulkanMemoryReport("pre-passes");
         }
 
         for (size_t i = 0; i < renderer.passes.size(); i++) {
-            char isBrixelizer =
-                reportThisFrame && strcmp(renderer.passes[i]->name, "brixelizer") == 0;
-            if (isBrixelizer) {
-                vulkanMemoryReport("pre-brixelizer");
-            }
             vulkanBeginProfile(vulkan.currentCmd, &passProfiles[i], 1);
             vulkanBeginProfileStats(vulkan.currentCmd, &passProfiles[i], 1);
             systemUpdate(renderer.passes[i]);
             vulkanEndProfileStats(vulkan.currentCmd, &passProfiles[i], 1);
             vulkanEndProfile(vulkan.currentCmd, &passProfiles[i], 1);
-            if (isBrixelizer) {
-                vulkanMemoryReport("post-brixelizer");
-            }
         }
 
         for (size_t i = 0; i < renderer.passes.size(); i++) {
@@ -856,29 +795,12 @@ void initLogicalDevice(void) {
     dynamicRenderingFeatures.dynamicRendering = VK_TRUE;
     dynamicRenderingFeatures.pNext            = &vulkan12Features;
 
-    /* maintenance8 (Vulkan 1.3, KHR alias in this SDK): allows
-     * vkCmdCopyImage between different aspect masks — the brixelizer
-     * history-depth copy (D32 → R32F, plans/brixelizer-gi.md Step 6) relies
-     * on it. Only enabled when the device supports it. */
-    VkPhysicalDeviceMaintenance8FeaturesKHR maintenance8Features = {};
-    maintenance8Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_8_FEATURES_KHR;
-    VkPhysicalDeviceFeatures2 maintenance8Query                   = {};
-    maintenance8Query.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
-    maintenance8Query.pNext = &maintenance8Features;
-    vkGetPhysicalDeviceFeatures2(vulkan.physicalDevice, &maintenance8Query);
-    char maintenance8Supported = maintenance8Features.maintenance8;
-    if (maintenance8Supported) {
-        maintenance8Features.maintenance8 = VK_TRUE;
-        maintenance8Features.pNext        = &dynamicRenderingFeatures;
-    }
-
     if (utils::isDebug()) {
         vulkan12Features.bufferDeviceAddressCaptureReplay = VK_TRUE;
     }
 
     VkDeviceCreateInfo deviceCreateInfo      = {};
-    deviceCreateInfo.pNext                   =
-        maintenance8Supported ? (const void*)&maintenance8Features : (const void*)&dynamicRenderingFeatures;
+    deviceCreateInfo.pNext                   = &dynamicRenderingFeatures;
     deviceCreateInfo.sType                   = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
     deviceCreateInfo.queueCreateInfoCount    = queueCreateInfoCount;
     deviceCreateInfo.pQueueCreateInfos       = queueCreateInfos;
@@ -887,9 +809,6 @@ void initLogicalDevice(void) {
     deviceCreateInfo.ppEnabledExtensionNames = extensions.data();
     VkResult result =
         vkCreateDevice(vulkan.physicalDevice, &deviceCreateInfo, nullptr, &vulkan.device);
-    if (result == VK_SUCCESS && maintenance8Supported) {
-        utils::info("vulkanCore: maintenance8 enabled (depth→color copies)");
-    }
     if (result != VK_SUCCESS) {
         utils::terminate("vulkanCore: failed to create logical device! code: %d", result);
     }

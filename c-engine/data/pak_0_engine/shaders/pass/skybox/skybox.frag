@@ -42,7 +42,7 @@ void main() {
     skyVelocity.y    = -skyVelocity.y;
     outVelocity      = clamp(skyVelocity, vec2(-32767.0), vec2(32767.0));
 
-    // Procedural sky (shared with the brixelizer env-cube bake).
+    // Procedural sky.
     vec3 skyColor = skyEvaluate(worldDir);
 
     outColor = vec4(skyColor, 1.0);

@@ -12,7 +12,6 @@
 #include "renderer/vulkan/scene/VulkanVisibleScenes.h"
 #include "renderer/vulkan/swapchain/VulkanSwapchain.h"
 #include "renderer/vulkan/pass/ao/VulkanAOPass.h"
-#include "renderer/vulkan/pass/brixelizer/VulkanBrixelizerPass.h"
 #include "renderer/vulkan/pass/bloom/VulkanBloomPass.h"
 #include "renderer/vulkan/pass/contact_shadow/VulkanContactShadowPass.h"
 #include "renderer/vulkan/pass/fsr/VulkanFsrUtils.h"
@@ -242,16 +241,10 @@ void rendererSetVisibleScenes(Scene** visibleScenes, u32 sceneCount) {
 
 void rendererSceneCreate(Scene* scene) {
     vulkanSceneCreate(scene);
-    /* Brixelizer SDF registration (Step 3): defers to the main thread inside
-     * the pass — this hook runs on the scene-load worker thread. */
-    vulkanBrixelizerPassSceneCreate(scene);
 }
 
 void rendererSceneDestroy(Scene* scene) {
     rendererWaitIdle("scene destroy");
-    /* Drop the FFX instance/buffer registration before the VulkanScene (and
-     * its buffers) go away. */
-    vulkanBrixelizerPassSceneDestroy(scene);
     vulkanSceneDestroy(scene);
 }
 

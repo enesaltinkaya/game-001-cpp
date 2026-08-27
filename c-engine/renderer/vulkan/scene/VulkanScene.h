@@ -46,23 +46,10 @@ struct SceneDrawIndexedCommand {
 #define DRAW_FLAG_TRANSPARENT  2u
 #define DRAW_FLAG_SKINNED      4u
 
-/* CPU-side copy of one GPU draw instance + its primitive's vertex count
- * (the per-draw vertex region is [vertexOffset, vertexOffset + vertexCount),
- * which GpuDrawInstance does not carry). Built by vulkanSceneCreate in the
- * same packing order as drawInstanceBuffer; consumed by the brixelizer pass
- * for SDF instance registration. */
-struct VulkanSceneDraw {
-    GpuDrawInstance draw;
-    u32 vertexCount;
-};
-
 struct VulkanScene {
     // Geometry buffers
     VulkanBuffer vertexBuffer;   // SceneVertex[]
     VulkanBuffer indexBuffer;    // u32[]
-
-    // CPU-side draw list (parallel to drawInstanceBuffer)
-    std::vector<VulkanSceneDraw> cpuDraws;
 
     // GPU-side draw instance buffer
     VulkanBuffer drawInstanceBuffer; // GpuDrawInstance[]

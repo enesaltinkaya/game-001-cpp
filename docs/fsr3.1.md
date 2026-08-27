@@ -721,80 +721,13 @@ comments in-tree:
 The build is incremental (`src -nt obj`); changes to the script's defines
 need a `rm -rf git/build/brixgi-win` first.
 
-## Brixelizer GI engine integration — final configuration (Step 9, 2026-08-27)
+## Brixelizer GI engine integration — removed
 
-The engine side lives in `c-engine/renderer/vulkan/pass/brixelizer/
-VulkanBrixelizerPass.{h,cpp}` (voxelizer + GI context + all SDF resources)
-and composites in `VulkanCompositePass` (albedo-weighted diffuse GI +
-specular GI terms; absent-sentinel skip while GI is off → pixel-identical
-to pre-GI). Full per-step history: `plans/brixelizer-gi.md`.
-
-### Settings / debug GUI (Step 9)
-
-Graphics settings page (`c-game/game/settingsGui/graphics/` +
-`c-game/data/pak_1/gui/settings/graphics/`) gained a GI section + a debug
-section. Persisted settings (`settings.json`, written by `settingsWrite()`
-on change) with env overrides (env wins → deterministic A/B runs,
-`ENGINE_AO_DISABLED` pattern):
-
-| Key                | Type    | Default | Env override            | Notes                                        |
-| ------------------ | ------- | ------- | ----------------------- | -------------------------------------------- |
-| `giEnabled`        | boolean | true    | `ENGINE_BRIXGI=0/1`     | off → GI dispatch skipped, composite sentinel (pixel-identical to pre-GI) |
-| `giResolution`     | double  | 50      | `ENGINE_BRIXGI_RES=…`   | 50/75/100 — a context-creation param; a change recreates the GI context on the next update (`giEnsureContext`) |
-| `giDiffuseFactor`  | double  | 0.6     | `ENGINE_BRIXGI_DIFFUSE` | composite `albedo × E_diffuse × factor`      |
-| `giSpecularFactor` | double  | 1.0     | `ENGINE_BRIXGI_SPECULAR`| composite `E_spec × factor × (1-rough)(1-metal)` |
-
-Sample defaults (1.5 / 3.0) wash out this open-sky world (Step 8 A/B) — the
-persisted defaults are the retuned 0.6 / 1.0.
-
-Debug-only (no persistence): SDF debug view mode cycle (off/distance/grad/
-brick/cascade/uvw/iter; env `ENGINE_BRIXGI_SDF_DEBUG`, legacy
-`ENGINE_BRIX_SDF_DEBUG`, + `ENGINE_BRIX_SDF_TMAX`) and the GI cache view
-cycle (off/radiance/irradiance; env `ENGINE_BRIXGI_DEBUG`[
-`_FRAME=N`]) — the cache viz runs as a one-shot FFX dispatch 32 frames after
-enable (the backend advances its dynamic-view frame index on every
-`ExecuteGpuJobs`; a per-frame second dispatch halves the view lifetime —
-see the `giDebugFrame` comment). Both write off-screen dump images
-(`ENGINE_DEBUG_DUMP_IMAGES=brixelSdf` / `giCache`). The live stats line
-(free bricks, static/dynamic tris/refs/bricks from the lagged
-`FfxBrixelizerStats`, voxelizer + GI GPU ms) refreshes twice per second.
-
-`ENGINE_OPEN_SETTINGS_GUI[=graphics]` (game `GameState.cpp`) opens the
-settings GUI headlessly a moment after gameplay starts — GUI screenshot
-verification without input.
-
-### Voxelizer configuration (kept at sample values)
-
-8 static-only cascades (Step-10 will switch to the sample's 24-cascade
-3-per-level layout), voxel size 2·2ⁱ m (2…256 m; the far cascade spans
-16.4 km ≥ the 10.24 km streaming window); `maxReferences` 32 M,
-`triangleSwapSize` 300 M, `maxBricksPerBake` 16384 (sample budgets —
-scratch 1 GiB holds them); `sdfCenter` = camera per frame; terrain SDF
-meshes at N=65 (32 m spacing, `ENGINE_BRIXEL_TERRAIN_RES`), props budgeted
-40 k (`ENGINE_BRIXGI_PROP_BUDGET`, ~31.7 k accepted in the azgaar world).
-
-### GI configuration (kept at sample values)
-
-`DEPTH_INVERTED` (reverse-Z), `internalResolution` 50% (setting),
-`startCascade 0` / `endCascade 7`, `rayPushoff` 0.25, `sdfSolveEps` 0.5,
-`specularRayPushoff` 0.25, `specularSDFSolveEps` 0.5, `tMin` 0, `tMax`
-10000, `normalsUnpack` mul=(1,1,1) add=(0,0,0) (world-space
-`worldNormal`), `isRoughnessPerceptual` true, `roughnessChannel` 0,
-`roughnessThreshold` 0.9, `environmentMapIntensity` 0.1, 128² blue-noise
-RG8, 128²×6 procedural-sky env cube, `motionVectorScale` =
-(-1/renderW, -1/renderH).
-
-### Steady-state cost (parked scene, 2880×1627, RADV NAVI31)
-
-| Component                        | GPU ms/frame |
-| -------------------------------- | ------------ |
-| Voxelizer update (8 cascades, ~32 k instances) | 0.78–0.80 |
-| GI 19 passes @ 50% internal      | 1.60–1.64 |
-| GI 19 passes @ 75% internal      | 2.83–2.88 |
-| GI 19 passes @ 100% internal     | ~3.29        |
-
-~2.4 ms total GI layer at the 50% default. No per-cascade tuning was
-warranted: the far cascades (5–7) carry the horizon occlusion the GI
-visible in Gate 7, the per-update cost is flat, and the free-brick pool is
-steady (no churn) at the sample budgets.
-
+The engine-side integration (the `c-engine/renderer/vulkan/pass/brixelizer/
+VulkanBrixelizerPass` voxelizer + GI pass, the composite GI terms, the
+per-pixel albedo depth-prepass attachment, the scene/props SDF registration
+and the `giEnabled` / `giResolution` / `giDiffuseFactor` /
+`giSpecularFactor` settings) was removed on 2026-09-02. The FFX static
+library still compiles the brixelizer + GI components (see the component
+tables above); the cross-build sample section above remains the reference
+for bringing it back. Full history: `plans/brixelizer-gi.md`.

@@ -18,17 +18,6 @@ layout(location = 6) in vec3 inWorldNormal;
 layout(location = 0) out vec2 outVelocity;
 layout(location = 1) out vec2 outViewNormalXY;
 layout(location = 2) out vec3 outWorldNormal;
-/* Per-pixel base colour (GI albedo — plan Step 8).  Flat material base for
- * opaque geometry; the texture-modulated colour for alpha-cutout (the one
- * path that samples the base-colour texture in this pass).  Water/roads leave
- * the cleared 0. */
-layout(location = 3) out vec4 outAlbedo;
-
-vec4 sampleMaterialTexture(uint texIndex, uint samplerIndex, vec2 uv) {
-    return texture(sampler2D(textures[nonuniformEXT(texIndex)],
-                             samplers[nonuniformEXT(samplerIndex)]),
-                   uv);
-}
 
 void main() {
     /* Per-pixel velocity from perspective-correct clip-space positions.
@@ -44,50 +33,10 @@ void main() {
     vec2 velocity = clamp(pixelVelocity, vec2(-32767.0), vec2(32767.0));
 
     Material material = materialBuffer.materials[inMaterialId];
-    vec3 albedo = material.baseColor.rgb;
 
     if ((material.featureMask & (1u << MAT_ALPHA_MASK)) != 0u) {
-        vec4 baseColor = material.baseColor;
-
-        /* ── Jitter compensation for alpha-cutout edges.
-         *
-         *    The jittered projection shifts which world point maps to each
-         *    pixel.  At alpha-cutout edges this shifts the discard boundary
-         *    between frames, causing the fragment to appear/disappear and
-         *    producing violent flickering under FSR / temporal AA.
-         *
-         *    Compensation strategy:
-         *    1. Compute the jitter-induced screen-space offset in pixels.
-         *    2. Convert to UV-space offset using the UV gradient
-         *       (dFdx/dFdy of the UV).  This tells us how much the UV
-         *       changes per pixel — the inverse gives us the UV offset
-         *       corresponding to the jitter.
-         *    3. Apply the offset BEFORE sampling the texture and BEFORE
-         *       the alpha test.  After correction the alpha test samples
-         *       at the same world-space position each frame.
-         *
-         *    This must run for ALL alpha-cutout geometry, not just
-         *    textured ones.  For untextured geometry the UV gradient
-         *    is still valid and ensures the discard pattern is stable.
-         */
-        vec2 jitterPx = -vec2(sceneBuffer.cameras[0].jitterX,
-                              sceneBuffer.cameras[0].jitterY)
-                        * sceneBuffer.cameras[0].viewport;
-        vec2 uv = inUV * material.baseColorOffsetScale.zw + material.baseColorOffsetScale.xy;
-
-        /* Apply jitter compensation using UV derivatives.  For
-         * untextured materials the texture lookup below is a no-op
-         * (baseColor is already correct), but the alpha test still
-         * benefits from the stable UV. */
-        uv += dFdx(uv) * jitterPx.x + dFdy(uv) * jitterPx.y;
-
-        if ((material.featureMask & (1u << MAT_HAS_TEXTURE_COLOR)) != 0u) {
-            baseColor *= sampleMaterialTexture(material.colorTexture, material.colorTextureSampler, uv);
-        }
-        albedo = baseColor.rgb;
-
         float cutoff = material.rmas.z;
-        float alpha  = baseColor.a;
+        float alpha  = material.baseColor.a;
 
         /* Write velocity for ALL depth-passing fragments, BEFORE alpha
          * discard. */
@@ -121,6 +70,4 @@ void main() {
         outViewNormalXY = normalize(inViewNormal).xy;
         outWorldNormal  = normalize(inWorldNormal);
     }
-
-    outAlbedo = vec4(clamp(albedo, 0.0, 1.0), 1.0);
 }

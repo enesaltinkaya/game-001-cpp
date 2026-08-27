@@ -8,10 +8,6 @@ local cycleHandlers = {
   toggleFog       = { prev = "toggleFog",         next = "toggleFog" },
   toggleTaa       = { prev = "toggleTaa",         next = "toggleTaa" },
   toggleFogMode   = { prev = "toggleFogMode",       next = "toggleFogMode" },
-  toggleGi        = { prev = "toggleGi",            next = "toggleGi" },
-  giResolution    = { prev = "giResolutionNext",    next = "giResolutionNext" },
-  giSdfDebug      = { prev = "giSdfDebugNext",      next = "giSdfDebugNext" },
-  giCacheDebug    = { prev = "giCacheDebugNext",    next = "giCacheDebugNext" },
 }
 
 function graphicsSettingsKeyDown(event)

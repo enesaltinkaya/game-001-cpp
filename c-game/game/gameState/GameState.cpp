@@ -237,7 +237,7 @@ void gameStateLoadingAzgaarUpdate(void) {
 
 /* ── Gameplay callbacks ──────────────────────────────────────────────────── */
 
-/* ── Debug: headless settings GUI (plans/brixelizer-gi.md Step 9) ───────────
+/* ── Debug: headless settings GUI ───────────────────────────────────────────
  * ENGINE_OPEN_SETTINGS_GUI opens the settings GUI a moment after gameplay
  * starts, so the GUI can be screenshot-verified without input: "graphics"
  * opens the graphics tab directly, any other value the main settings page. */
