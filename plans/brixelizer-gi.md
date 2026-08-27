@@ -19,7 +19,9 @@ FFX passes (`VulkanFsrPass`, CACAO in `VulkanAOPass`, `VulkanLpmPass`, `VulkanLe
       2026-08-27; the parked-player _visual_ SDF gate is pending a vantage
       point (the world's scene meshes sit 4.2 km behind the parked camera —
       see the Step 3 notes below)
-- [ ] Step 4 — Terrain SDF meshes (streaming tiles)
+- [x] Step 4 — Terrain SDF meshes (streaming tiles)
+      2026-08-27; streaming/eviction half of the gate (camera move) is
+      pending a user-approved temporary vantage — see Step 4 notes
 - [ ] Step 5 — Props (vegetation / buildings) SDF, budgeted
 - [ ] Step 6 — GI inputs: blue noise, environment cube, history buffers
 - [ ] Step 7 — GI context + dispatch + raw GI output verified
@@ -582,6 +584,67 @@ SDF follows and new tiles appear / evicted ones disappear without permanent
 "UNINIT holes" in the brick map (the fork's clamp patches should prevent
 wedge-locks); per-tile bake cost logged; total instances (25 tiles + scene
 meshes + later props) stay under the 65536 cap.
+
+**Done (2026-08-27, mechanism + visual verified).** All sub-steps landed in
+`VulkanBrixelizerPass` (engine side, no game changes):
+
+- 4.1 Per-tile SDF mesh: `terrainSyncTiles()` polls
+  `heightmapTerrainSnapshotTiles` each frame (the same lock-safe snapshot
+  AzgaarProps/heightmap pass use — no new signal). For each READY tile missing
+  from the SDF (keyed on tileX/tileZ/readyStamp), `terrainTileCreate()`
+  generates a decimated position-only grid from the CPU `heights[]` (row-major
+  `heights[z*TEX+x]`, nearest-texel decimation so borders stay watertight with
+  the rendered/physics lattice): N×N verts (12 B) + u16 indices, 2(N−1)² tris
+  (8192 at the default N=65 → 32 m spacing). `ENGINE_BRIXEL_TERRAIN_RES`
+  overrides N (clamped 2–255; 255 keeps N² in the u16 index range).
+- Upload: `vulkanCreateGpuBuffer` (STORAGE|TRANSFER_DST) + transient
+  `vulkanCopy` + fence wait (the FFX voxelizer reads the buffers as SSBs),
+  registered `PIXEL_COMPUTE_READ` (pitfall #13). One static instance per tile:
+  identity ROW-major 3×4 transform (positions are already world-space;
+  diagonal at [0]/[5]/[10] — pitfall #2), AABB = tile bounds × [minH,maxH],
+  `maxCascade = 7` (a 2048 m tile spans every cascade region that reaches it).
+- Eviction / regeneration / world switch: `ffxBrixelizerDeleteInstances` runs
+  immediately (host-side flag + brick-clear counter, safe mid-frame); the GPU
+  buffer teardown is deferred 3 frames (in-flight FFX dispatches hold the
+  wrapped handles; the bindless slot may be re-registered meanwhile — same
+  pattern as the heightmap pass's deferred descriptors). Registration is
+  budgeted 3 tiles/frame (the upload is a fence-waiting transient command).
+- `updateDesc.sdfCenter` = camera position was already in place (Step 1).
+
+**Gate 4 (visual half met; streaming half pending a vantage):**
+
+- All 25 window tiles register: `totals: 74 instances / 1,100,364 tris` (49
+  scene + 25 terrain, cap 65536 — plenty of headroom for Step 5's 40 k props
+  budget and Step 10's dynamic).
+- Distance view (parked player, `ENGINE_BRIX_SDF_TMAX=40`): clean terrain
+  horizon silhouette, smooth SDF distance field under the camera (hits at
+  t≈24–30 m, camera ~34 m above ground), red grazing-miss band along the
+  silhouette (the known Step-2 debug artifact). Grad view: coherent up-facing
+  normal field; the dotted line at the 2048 m tile seam is a normal
+  discontinuity between the two independent per-tile SDF meshes (heights
+  match on the shared border — a seam, not a gap; GI traces in Step 7 will
+  cross it, acceptable for v1). Brick view: per-brick mosaic over the
+  terrain, no UNINIT holes.
+- Per-tile bake cost: registration frame pass gpu=0.69 ms; first-bake window
+  heaviest update 3.2 ms (256-update cascade round, terrain + scenes).
+- Free-brick pool healthy (262144 → ~225k with bricks clearing as cascades
+  rotate); no failed-voxel / scratch-overflow; validation layer clean
+  (only the known Step-1 shutdown leak at `vkDestroyDevice`).
+
+**Deviations / notes (recorded 2026-08-27):**
+
+- _The default `ENGINE_BRIX_SDF_TMAX` (10000) washes out near terrain_: the
+  distance view normalizes hit-t by tMax, so hits at ~25 m over flat ground
+  read as a near-constant color (looks like a smooth gradient, not relief).
+  Use `ENGINE_BRIX_SDF_TMAX=40…100` for terrain vantages. Not a defect —
+  Step 9's GUI exposes tMax properly.
+- _Streaming/eviction half of the gate_ (SDF follows a camera move, new tiles
+  appear, evicted ones clear without permanent UNINIT holes) needs a camera
+  move > 1 tile (2 km) — parked-player policy: ask the user for a temporary
+  vantage or an approved `ENGINE_`-driven camera path before running it. The
+  mechanism itself (delete-on-evict + deferred buffer destroy + re-register on
+  re-entry) is exercised by the world-unload path (log-clean) and is the same
+  code path a camera move would take.
 
 ## Step 5 — Props (vegetation / buildings) SDF, budgeted
 

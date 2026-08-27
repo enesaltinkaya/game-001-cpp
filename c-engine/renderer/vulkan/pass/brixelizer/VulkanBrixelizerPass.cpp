@@ -4,6 +4,7 @@
 #include "ecs/system/camera/CameraSystem.h"
 #include "ecs/system/scene/Scene.h"
 #include "ecs/system/scene/SceneSystem.h"
+#include "ecs/system/heightmap/HeightmapTerrain.h"
 #include "ecs/system/transform/TransformComponent.h"
 #include "ecs/system/window/WindowSystem.h"
 #include "events/Events.h"
@@ -59,6 +60,44 @@ namespace engine {
 
     static double elapsedCPU;
     static double elapsedGPU;
+
+    /* Step 4: terrain SDF tiles. The heightmap terrain has no mesh; when a
+     * HeightmapTile reaches READY (polled via heightmapTerrainSnapshotTiles,
+     * the same mechanism AzgaarProps uses) a decimated position-only grid is
+     * generated from its CPU height grid and registered as one static
+     * instance (identity transform — the positions are already world-space).
+     * Evicted / regenerated tiles delete their instance; the GPU buffers are
+     * destroyed a few frames later so in-flight FFX dispatches keep a valid
+     * handle (the bindless slot may be re-registered meanwhile). */
+    struct BrixelTerrainTile {
+        i32 tileX, tileZ;
+        u64 readyStamp;
+        char inUse;
+        VulkanBuffer vertBuf;
+        VulkanBuffer idxBuf;
+        u32 vertBufIdx;
+        u32 idxBufIdx;
+        FfxBrixelizerInstanceID instanceID;
+        char instanceCreated;
+    };
+    struct BrixelTerrainDeferred {
+        VulkanBuffer vertBuf;
+        VulkanBuffer idxBuf;
+        u32 vertBufIdx;
+        u32 idxBufIdx;
+        char unreg;
+        u32 framesLeft;
+    };
+    static std::vector<BrixelTerrainTile> terrainTiles;
+    static std::vector<BrixelTerrainDeferred> terrainDeferred;
+    static HeightmapTerrain* terrainHt;
+    static u32 terrainRes;
+    static char terrainResSet;
+    static char terrainStatsLogged;
+    static void terrainSyncTiles(void);
+    static void terrainTileEvict(BrixelTerrainTile* e);
+    static char terrainTileCreate(const HeightmapTileView* v);
+    static void terrainClearAll(void);
 
     /* FFX backend shared by the brixelizer + GI contexts (scratch sized for
      * 2; the FSR/CACAO/LPM passes keep their own single-context interfaces). */
@@ -146,6 +185,31 @@ namespace engine {
              * tracked in the log until Step 9 moves tuning to the GUI. */
             vulkanResetProfile(vulkan.currentCmd, &profile, 1);
         }
+        /* Deferred terrain-tile buffer destruction (3 frames past the GPU
+         * queue depth, like the heightmap pass's deferred descriptors). */
+        for (i32 i = (i32)terrainDeferred.size() - 1; i >= 0; i--) {
+            BrixelTerrainDeferred* d = &terrainDeferred[i];
+            if (d->framesLeft > 1) {
+                d->framesLeft--;
+                continue;
+            }
+            if (d->unreg && contextReady) {
+                u32 dropIdx[2] = {d->vertBufIdx, d->idxBufIdx};
+                FfxErrorCode unregResult = ffxBrixelizerUnregisterBuffers(&brixelizerContext, dropIdx, 2);
+                if (unregResult != FFX_OK) {
+                    utils::error("vulkanBrixelizerPass: ffxBrixelizerUnregisterBuffers (terrain) failed: %d",
+                                 unregResult);
+                }
+            }
+            if (d->vertBuf.buf) {
+                vulkanDestroyBuffer(&d->vertBuf, NULL);
+            }
+            if (d->idxBuf.buf) {
+                vulkanDestroyBuffer(&d->idxBuf, NULL);
+            }
+            terrainDeferred[(u32)i] = terrainDeferred.back();
+            terrainDeferred.pop_back();
+        }
     }
 
     static void swapchainCreated(void* _) {
@@ -167,6 +231,40 @@ namespace engine {
         regBakeActive              = 0;
         regBakeGpuTotal            = 0;
         regBakeGpuMax              = 0.0;
+        /* The FFX context (buffer/instance tables) died with the swapchain —
+         * drop the terrain registrations and destroy the tile buffers. No
+         * unregistration needed: the tables were recreated with the context. */
+        terrainClearAll();
+    }
+
+    static void terrainClearAll(void) {
+        for (u32 i = 0; i < terrainTiles.size(); i++) {
+            BrixelTerrainTile* e = &terrainTiles[i];
+            if (!e->inUse) {
+                continue;
+            }
+            if (e->vertBuf.buf) {
+                vulkanDestroyBuffer(&e->vertBuf, NULL);
+                e->vertBuf = VulkanBuffer{};
+            }
+            if (e->idxBuf.buf) {
+                vulkanDestroyBuffer(&e->idxBuf, NULL);
+                e->idxBuf = VulkanBuffer{};
+            }
+            *e = BrixelTerrainTile{};
+        }
+        terrainTiles.clear();
+        for (u32 i = 0; i < terrainDeferred.size(); i++) {
+            BrixelTerrainDeferred* d = &terrainDeferred[i];
+            if (d->vertBuf.buf) {
+                vulkanDestroyBuffer(&d->vertBuf, NULL);
+            }
+            if (d->idxBuf.buf) {
+                vulkanDestroyBuffer(&d->idxBuf, NULL);
+            }
+        }
+        terrainDeferred.clear();
+        terrainHt = NULL;
     }
 
     static void destroyResources(void) {
@@ -563,6 +661,334 @@ namespace engine {
         }
     }
 
+    /* Step 4: terrain SDF tiles. The heightmap surface is not a mesh — the
+     * voxelizer gets one decimated position-only grid per streaming tile.
+     * Resolution N (ENGINE_BRIXEL_TERRAIN_RES, default 65 → 32 m spacing on a
+     * 2048 m tile): N×N vertices (positions only, 12 B), 2(N−1)² triangles,
+     * u16 indices. Clamped to 255: N² must fit the u16 index range. */
+    static void terrainResolveRes(void) {
+        if (terrainResSet) {
+            return;
+        }
+        terrainResSet = 1;
+        const char* env = getenv("ENGINE_BRIXEL_TERRAIN_RES");
+        terrainRes      = (env && *env) ? (u32)atoi(env) : 65;
+        if (terrainRes < 2) {
+            terrainRes = 2;
+        }
+        if (terrainRes > 255) {
+            terrainRes = 255;
+        }
+    }
+
+    static void terrainTileEvict(BrixelTerrainTile* e) {
+        i32 x = e->tileX;
+        i32 z = e->tileZ;
+        u64 stamp = e->readyStamp;
+        if (e->instanceCreated && contextReady) {
+            FfxErrorCode delResult =
+                ffxBrixelizerDeleteInstances(&brixelizerContext, &e->instanceID, 1);
+            if (delResult != FFX_OK) {
+                utils::error("vulkanBrixelizerPass: ffxBrixelizerDeleteInstances (terrain tile %d,%d) failed: %d",
+                             x,
+                             z,
+                             delResult);
+            }
+            totalRegisteredInstances--;
+            totalRegisteredTriangles -= 2u * (terrainRes - 1) * (terrainRes - 1);
+        }
+        /* Defer the GPU buffer teardown: in-flight FFX dispatches still hold
+         * the wrapped buffer handles, and the bindless slot may be re-registered
+         * for another tile before they drain. */
+        BrixelTerrainDeferred d = {};
+        d.vertBuf    = e->vertBuf;
+        d.idxBuf     = e->idxBuf;
+        d.vertBufIdx = e->vertBufIdx;
+        d.idxBufIdx  = e->idxBufIdx;
+        d.unreg      = contextReady;
+        d.framesLeft = 3;
+        terrainDeferred.push_back(d);
+        *e = BrixelTerrainTile{};
+        utils::info("vulkanBrixelizerPass: terrain tile (%d,%d) evicted from SDF (stamp %llu)",
+                    x,
+                    z,
+                    (unsigned long long)stamp);
+    }
+
+    static char terrainTileCreate(const HeightmapTileView* v) {
+        u32 n   = terrainRes;
+        u32 tex = HEIGHTMAP_TEX;
+        /* The tile's CPU grid is row-major heights[z * TEX + x] (metres); the
+         * decimated sample (i, j) lifts the nearest grid texel at the same
+         * normalized position, so tile borders stay watertight with the
+         * rendered/physics lattice. */
+        std::vector<float> verts((size_t)n * n * 3);
+        std::vector<u16> idx((size_t)2 * (n - 1) * (n - 1) * 3);
+        float step = v->sizeMeters / (float)(n - 1);
+        float minH = 1e30f;
+        float maxH = -1e30f;
+        for (u32 j = 0; j < n; j++) {
+            u32 sz = (u32)roundf((float)j * (float)(tex - 1) / (float)(n - 1));
+            if (sz >= tex) {
+                sz = tex - 1;
+            }
+            for (u32 i = 0; i < n; i++) {
+                u32 sx = (u32)roundf((float)i * (float)(tex - 1) / (float)(n - 1));
+                float h = v->heights[(size_t)sz * tex + sx];
+                verts[(size_t)(j * n + i) * 3 + 0] = v->originX + (float)i * step;
+                verts[(size_t)(j * n + i) * 3 + 1] = h;
+                verts[(size_t)(j * n + i) * 3 + 2] = v->originZ + (float)j * step;
+                if (h < minH) {
+                    minH = h;
+                }
+                if (h > maxH) {
+                    maxH = h;
+                }
+            }
+        }
+        u32 k = 0;
+        for (u32 j = 0; j + 1 < n; j++) {
+            for (u32 i = 0; i + 1 < n; i++) {
+                u16 a = (u16)(j * n + i);
+                u16 b = (u16)(a + 1);
+                u16 c = (u16)(a + n);
+                u16 d = (u16)(c + 1);
+                idx[k++] = a;
+                idx[k++] = b;
+                idx[k++] = d;
+                idx[k++] = a;
+                idx[k++] = d;
+                idx[k++] = c;
+            }
+        }
+
+        VulkanBuffer vb =
+            vulkanCreateGpuBuffer(utils::strtmp("BrixelTerrainVerts %d_%d", v->tileX, v->tileZ),
+                                  (u64)verts.size() * sizeof(float),
+                                  VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+        VulkanBuffer ib =
+            vulkanCreateGpuBuffer(utils::strtmp("BrixelTerrainIdx %d_%d", v->tileX, v->tileZ),
+                                  (u64)idx.size() * sizeof(u16),
+                                  VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+        if (!vb.buf || !ib.buf) {
+            utils::error("vulkanBrixelizerPass: terrain tile (%d,%d) buffer creation failed", v->tileX, v->tileZ);
+            if (vb.buf) {
+                vulkanDestroyBuffer(&vb, NULL);
+            }
+            if (ib.buf) {
+                vulkanDestroyBuffer(&ib, NULL);
+            }
+            return 0;
+        }
+        VulkanCommand* tcmd = vulkanTransientBegin();
+        vulkanCopy(.cmd         = tcmd,
+                   .source.data = verts.data(),
+                   .target.buf  = &vb,
+                   .size        = (u32)(verts.size() * sizeof(float)));
+        vulkanCopy(.cmd         = tcmd,
+                   .source.data = idx.data(),
+                   .target.buf  = &ib,
+                   .size        = (u32)(idx.size() * sizeof(u16)));
+        /* Wait: the FFX voxelizer reads these as SSBs, the data must be
+         * complete before the bake dispatch. */
+        vulkanTransientEnd(tcmd, 1);
+
+        /* PIXEL_COMPUTE_READ like the scene registration — the FFX backend
+         * binds every SRV buffer as a shader storage buffer. */
+        FfxResource vRes =
+            vulkanFfxWrapBufferResource(&vb,
+                                        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                                        FFX_RESOURCE_STATE_PIXEL_COMPUTE_READ,
+                                        L"BrixelTerrainVerts");
+        FfxResource iRes =
+            vulkanFfxWrapBufferResource(&ib,
+                                        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                                        FFX_RESOURCE_STATE_PIXEL_COMPUTE_READ,
+                                        L"BrixelTerrainIdx");
+        FfxBrixelizerBufferDescription bufDescs[2] = {};
+        u32 vertBufIdx                              = 0;
+        u32 idxBufIdx                               = 0;
+        bufDescs[0].buffer   = vRes;
+        bufDescs[0].outIndex = &vertBufIdx;
+        bufDescs[1].buffer   = iRes;
+        bufDescs[1].outIndex = &idxBufIdx;
+        FfxErrorCode regResult = ffxBrixelizerRegisterBuffers(&brixelizerContext, bufDescs, 2);
+        if (regResult != FFX_OK) {
+            utils::error("vulkanBrixelizerPass: terrain tile (%d,%d) ffxBrixelizerRegisterBuffers failed: %d",
+                         v->tileX,
+                         v->tileZ,
+                         regResult);
+            vulkanDestroyBuffer(&vb, NULL);
+            vulkanDestroyBuffer(&ib, NULL);
+            return 0;
+        }
+
+        if (totalRegisteredInstances + 1 > FFX_BRIXELIZER_MAX_INSTANCES) {
+            utils::error("vulkanBrixelizerPass: terrain tile (%d,%d) would exceed the instance cap (%u >= %u); skipped",
+                         v->tileX,
+                         v->tileZ,
+                         totalRegisteredInstances,
+                         FFX_BRIXELIZER_MAX_INSTANCES);
+            u32 dropIdx[2] = {vertBufIdx, idxBufIdx};
+            ffxBrixelizerUnregisterBuffers(&brixelizerContext, dropIdx, 2);
+            vulkanDestroyBuffer(&vb, NULL);
+            vulkanDestroyBuffer(&ib, NULL);
+            return 0;
+        }
+
+        FfxBrixelizerInstanceDescription desc = {};
+        desc.indexFormat   = FFX_INDEX_TYPE_UINT16;
+        desc.indexBuffer   = idxBufIdx;
+        desc.triangleCount = 2u * (n - 1) * (n - 1);
+        desc.vertexBuffer  = vertBufIdx;
+        desc.vertexStride  = 12;
+        desc.vertexCount   = n * n;
+        desc.vertexFormat  = FFX_SURFACE_FORMAT_R32G32B32_FLOAT;
+        desc.flags         = FFX_BRIXELIZER_INSTANCE_FLAG_NONE;
+        desc.aabb.min[0]   = v->originX;
+        desc.aabb.min[1]   = minH;
+        desc.aabb.min[2]   = v->originZ;
+        desc.aabb.max[0]   = v->originX + v->sizeMeters;
+        desc.aabb.max[1]   = maxH;
+        desc.aabb.max[2]   = v->originZ + v->sizeMeters;
+        /* Identity, ROW-major (plan pitfall #2 — the GLSL loads 3 rows; the
+         * diagonal must sit at [0]/[5]/[10], the Step-2 bug was writing it
+         * column-major-style at [0]/[4]/[8]). The positions are already
+         * world-space. */
+        desc.transform[0]  = 1.0f;
+        desc.transform[5]  = 1.0f;
+        desc.transform[10] = 1.0f;
+        /* A 2048 m tile spans every cascade region that reaches it — the far
+         * cascade's 16.4 km block covers the streaming window, so submit all
+         * cascades (the voxelizer only stamps the bricks the AABB overlaps). */
+        desc.maxCascade = BRIX_NUM_CASCADES - 1;
+        FfxBrixelizerInstanceID instanceID;
+        desc.outInstanceID = &instanceID;
+        FfxErrorCode instResult = ffxBrixelizerCreateInstances(&brixelizerContext, &desc, 1);
+        if (instResult != FFX_OK) {
+            utils::error("vulkanBrixelizerPass: terrain tile (%d,%d) ffxBrixelizerCreateInstances failed: %d",
+                         v->tileX,
+                         v->tileZ,
+                         instResult);
+            u32 dropIdx[2] = {vertBufIdx, idxBufIdx};
+            ffxBrixelizerUnregisterBuffers(&brixelizerContext, dropIdx, 2);
+            vulkanDestroyBuffer(&vb, NULL);
+            vulkanDestroyBuffer(&ib, NULL);
+            return 0;
+        }
+
+        BrixelTerrainTile* e = NULL;
+        for (u32 i = 0; i < terrainTiles.size(); i++) {
+            if (!terrainTiles[i].inUse) {
+                e = &terrainTiles[i];
+                break;
+            }
+        }
+        if (!e) {
+            e = &terrainTiles.emplace_back(BrixelTerrainTile{});
+        }
+        e->tileX           = v->tileX;
+        e->tileZ           = v->tileZ;
+        e->readyStamp      = v->readyStamp;
+        e->inUse           = 1;
+        e->vertBuf         = vb;
+        e->idxBuf          = ib;
+        e->vertBufIdx      = vertBufIdx;
+        e->idxBufIdx       = idxBufIdx;
+        e->instanceID      = instanceID;
+        e->instanceCreated = 1;
+        totalRegisteredInstances++;
+        totalRegisteredTriangles += desc.triangleCount;
+        utils::info("vulkanBrixelizerPass: terrain tile (%d,%d) registered in SDF: stamp=%llu res=%u tris=%u h=[%.0f,%.0f]m "
+                    "(totals: %u instances / %u tris, cap %u)",
+                    v->tileX,
+                    v->tileZ,
+                    (unsigned long long)v->readyStamp,
+                    n,
+                    desc.triangleCount,
+                    minH,
+                    maxH,
+                    totalRegisteredInstances,
+                    totalRegisteredTriangles,
+                    FFX_BRIXELIZER_MAX_INSTANCES);
+        return 1;
+    }
+
+    static void terrainSyncTiles(void) {
+        terrainResolveRes();
+        HeightmapTerrain* ht = heightmapTerrainGetActive();
+        if (!ht || !ht->initialized) {
+            return;
+        }
+        if (ht != terrainHt) {
+            /* World switch: the old tiles are gone; drop every registration
+             * (instances die with them, buffers deferred as usual). */
+            for (u32 i = 0; i < terrainTiles.size(); i++) {
+                if (terrainTiles[i].inUse) {
+                    terrainTileEvict(&terrainTiles[i]);
+                }
+            }
+            terrainHt = ht;
+            utils::info("vulkanBrixelizerPass: terrain world switched, SDF tile registrations reset");
+        }
+        u32 cap = ht->windowSize * ht->windowSize;
+        if (terrainTiles.size() < cap) {
+            terrainTiles.resize(cap);
+        }
+
+        std::vector<HeightmapTileView> views(cap);
+        u32 viewCount = heightmapTerrainSnapshotTiles(ht, views.data(), cap);
+
+        /* Evict tiles that left the window or were regenerated (stamp bump). */
+        for (u32 i = 0; i < terrainTiles.size(); i++) {
+            BrixelTerrainTile* e = &terrainTiles[i];
+            if (!e->inUse) {
+                continue;
+            }
+            char match = 0;
+            for (u32 j = 0; j < viewCount; j++) {
+                if (views[j].tileX == e->tileX && views[j].tileZ == e->tileZ &&
+                    views[j].readyStamp == e->readyStamp) {
+                    match = 1;
+                    break;
+                }
+            }
+            if (!match) {
+                terrainTileEvict(e);
+            }
+        }
+
+        /* Register missing tiles, a few per frame (the GPU upload is a
+         * fence-waiting transient command; spreading it matches the
+         * heightmap pass's upload budget and keeps the per-frame hitch small).
+         * The bake of the new instances lands across the next cascade round —
+         * the pass GPU cost on a registration frame is the per-tile bake proxy
+         * (Gate 4's "per-tile bake cost"). */
+        u32 budget = 3;
+        for (u32 j = 0; j < viewCount && budget > 0; j++) {
+            char have = 0;
+            for (u32 i = 0; i < terrainTiles.size(); i++) {
+                if (terrainTiles[i].inUse && terrainTiles[i].tileX == views[j].tileX &&
+                    terrainTiles[i].tileZ == views[j].tileZ &&
+                    terrainTiles[i].readyStamp == views[j].readyStamp) {
+                    have = 1;
+                    break;
+                }
+            }
+            if (have) {
+                continue;
+            }
+            if (terrainTileCreate(&views[j])) {
+                budget--;
+                if (!terrainStatsLogged) {
+                    terrainStatsLogged = 1;
+                    utils::info("vulkanBrixelizerPass: terrain SDF registration frame: pass gpu=%.3f ms (includes the first tile bakes)",
+                                profile.elapsed / MILLION);
+                }
+            }
+        }
+    }
+
     static char ensureContext(void) {
         if (!backendReady) {
             scratchBufferSize = ffxGetScratchMemorySizeVK(vulkan.physicalDevice, 2);
@@ -694,6 +1120,11 @@ namespace engine {
             elapsedCPU = utils::nanos() - elapsedCPU;
             return;
         }
+
+        /* Step 4: sync the streaming heightmap tiles with the SDF (register
+         * newly READY tiles, evict out-of-window ones) before this frame's
+         * bake dispatch so new tiles are baked with the rest. */
+        terrainSyncTiles();
 
         /* Step 2.2: read the debug-visualization mode once (ENGINE_BRIX_SDF_DEBUG;
          * "off" disables the extra dispatch). */
