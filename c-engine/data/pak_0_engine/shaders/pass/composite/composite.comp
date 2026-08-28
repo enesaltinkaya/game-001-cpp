@@ -19,10 +19,8 @@ layout(push_constant) uniform PushConstants {
     uint volumetricColorIndex;
     uint weatherMaskIndex;   // 0xFFFFFFFF = no weather pass / no mask
     uint aoIndex;            // 0xFFFFFFFF = AO disabled / no output
-    uint giIndex;            // 0xFFFFFFFF = diffusion GI disabled / no output
     uint width;
     uint height;
-    float giStrength;        // bounce term scale
 } pc;
 
 void main() {
@@ -111,32 +109,7 @@ void main() {
         // ── 7. Base composite (direct lighting + reflections) ────────────
         composite = sceneCol * (1.0 - reflBlend) + reflBlend * reflColor;
 
-        // ── 7a. Diffusion GI (screen-space light diffusion) ───────────
-        // giIndex holds the scene colour after N edge-aware diffusion
-        // iterations; (gi - scene) is the light that flowed across
-        // surface boundaries (colour bleed).  The blend is sign-preserving:
-        // bright surfaces next to dark ones get tinted/desaturated (grass
-        // green washing up a wall), dark surfaces next to bright ones get
-        // light leak.  strength is a blend factor (1 = fully diffused).
-        // Added before AO so occlusion attenuates the bleed too, and
-        // before fog so distance still erases it.
-        //
-        // The field lives at a fraction of render resolution and is
-        // bilinearly upsampling-screen-aligned: while the camera moves,
-        // the fixed sampling phase crawls across high-gradient bleed
-        // boundaries (grass), a coherent sub-texel shimmer TAA cannot
-        // average.  Sampling at the same jitter offset the scene was
-        // rendered with randomises the phase per frame, so the TAA
-        // accumulation converges the crawl to its average.
-        if (pc.giIndex != 0xFFFFFFFFu) {
-            vec3 giCol = texture(
-                sampler2D(textures[nonuniformEXT(pc.giIndex)], samplers[SAMPLER_CLAMP_LINEAR]),
-                uv + vec2(sceneBuffer.cameras[0].jitterX,
-                          sceneBuffer.cameras[0].jitterY)).rgb;
-            composite += (giCol - sceneCol) * pc.giStrength;
-        }
-
-        // ── 7b. Ambient occlusion (CACAO) ───────────────────────────────
+        // ── 7a. Ambient occlusion (CACAO) ───────────────────────────────
         // Applied before fog (step 8) so fogged geometry fades to the fog
         // colour instead of staying dark.  0 = fully occluded, 1 = open.
         if (pc.aoIndex != 0xFFFFFFFFu) {

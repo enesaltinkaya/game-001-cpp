@@ -1,6 +1,5 @@
 #include "VulkanCompositePass.h"
 #include "renderer/vulkan/pass/ao/VulkanAOPass.h"
-#include "renderer/vulkan/pass/diffuse_gi/VulkanDiffuseGIPass.h"
 #include "renderer/vulkan/pass/azgaar_weather/VulkanAzgaarWeatherPass.h"
 #include "renderer/vulkan/pass/volumetric/VulkanVolumetricPass.h"
 #include "ecs/system/System.h"
@@ -30,10 +29,8 @@ typedef struct CompositePushConstants {
     u32 volumetricColorIndex;
     u32 weatherMaskIndex;
     u32 aoIndex;
-    u32 giIndex;             /* 0xFFFFFFFF = diffusion GI disabled   */
     u32 width;
     u32 height;
-    float giStrength;        /* bounce term scale                    */
 } CompositePushConstants;
 
 void VulkanCompositePass::added() {
@@ -104,15 +101,8 @@ void VulkanCompositePass::update() {
                                    : (vulkanAOPassGetOutput()
                                          ? (u32)vulkanAOPassGetOutput()->sampledPoolIndex
                                          : 0xFFFFFFFFu),
-        /* Diffusion GI output (absent-sentinel, like the AO): while the
-         * pass is disabled the bounce term is skipped entirely so the
-         * frame stays pixel-identical to pre-GI. */
-        .giIndex              = (vulkanDiffuseGIPassGetOutput()
-                                     ? (u32)vulkanDiffuseGIPassGetOutput()->sampledPoolIndex
-                                     : 0xFFFFFFFFu),
         .width                = composite->extent.width,
         .height               = composite->extent.height,
-        .giStrength           = vulkanDiffuseGIPassGetStrength(),
     };
     vulkanPush(cmd, &pipeline, sizeof(pc), &pc);
 

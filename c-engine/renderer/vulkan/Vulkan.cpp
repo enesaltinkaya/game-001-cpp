@@ -30,7 +30,6 @@
 #include "renderer/vulkan/pass/ssr/VulkanSsrPass.h"
 #include "renderer/vulkan/pass/volumetric/VulkanVolumetricPass.h"
 #include "timer/Timer.h"
-#include "renderer/vulkan/pass/diffuse_gi/VulkanDiffuseGIPass.h"
 #include "renderer/vulkan/pass/composite/VulkanCompositePass.h"
 #include "renderer/vulkan/pass/light_culling/VulkanLightCullingPass.h"
 #include "renderer/vulkan/pass/skybox/VulkanSkyboxPass.h"
@@ -39,7 +38,6 @@
 #include "renderer/vulkan/pass/ao/VulkanAOPass.h"
 #include "renderer/vulkan/pass/azgaar_props/VulkanAzgaarPropsPass.h"
 #include "renderer/vulkan/pass/azgaar_weather/VulkanAzgaarWeatherPass.h"
-#include "renderer/vulkan/pass/diffuse_gi/VulkanDiffuseGIPass.h"
 #include "renderer/vulkan/pass/oit/VulkanOitAccumulatePass.h"
 #include "renderer/vulkan/pass/oit/VulkanOitCompositePass.h"
 #include "renderer/vulkan/pass/fsr/VulkanFsrPass.h"
@@ -208,8 +206,6 @@ static void vulkanDebugDumpFrameImages(const char* shotPath) {
             img = vulkanTaaPassGetOutput();
         } else if (!strcmp(tok, "ao")) {
             img = vulkanAOPassGetOutput();
-        } else if (!strcmp(tok, "gi")) {
-            img = vulkanDiffuseGIPassGetOutput();
         } else if (!strcmp(tok, "scene")) {
             img = vulkanFrameResourcesGetSceneColor();
         } else if (!strcmp(tok, "oitReveal")) {
@@ -246,8 +242,6 @@ static void vulkanDebugDumpFrameImages(const char* shotPath) {
                 rawImg = vulkanTaaPassGetOutput();
             } else if (!strcmp(sub, "ao")) {
                 rawImg = vulkanAOPassGetOutput();
-            } else if (!strcmp(sub, "gi")) {
-                rawImg = vulkanDiffuseGIPassGetOutput();
             } else if (!strcmp(sub, "scene")) {
                 rawImg = vulkanFrameResourcesGetSceneColor();
             } else if (!strcmp(sub, "lensIn")) {
@@ -313,7 +307,6 @@ void vulkanInit(void) {
     addPass(&vulkanAOPass);
     addPass(&vulkanVolumetricPass);
     addPass(&vulkanDecalPass);
-    addPass(&vulkanDiffuseGIPass);
     addPass(&vulkanCompositePass);
     addPass(&vulkanTaaPass);
     addPass(&vulkanDofPass);

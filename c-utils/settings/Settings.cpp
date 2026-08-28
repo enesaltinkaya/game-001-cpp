@@ -50,9 +50,6 @@ void settingsInit(void) {
     templates.push_back((Template{"shadowQuality", "int", 2.}));
     templates.push_back((Template{"ssrDisabled", "boolean", 0.}));
     templates.push_back((Template{"aoDisabled", "boolean", 0.}));
-    /* Diffusion GI (screen-space light diffusion): cheap bounce-light /
-     * colour-bleed approximation, see docs/screen-space-gi.md. */
-    templates.push_back((Template{"giDisabled", "boolean", 0.}));
     templates.push_back((Template{"bloomDisabled", "boolean", 0.}));
     templates.push_back((Template{"contactShadowDisabled", "boolean", 0.}));
     templates.push_back((Template{"fogMode", "double", 1.}));
