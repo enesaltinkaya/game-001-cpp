@@ -132,8 +132,8 @@ void main() {
     // Energy-consistent with the PBR passes: the Lambert diffuse integrates
     // to 1/PI, so the direct sun term carries the same /PI that scene.frag
     // and heightmap_terrain.frag apply.
-    vec3 ambient = sceneBuffer.directionalLight.ambient.rgb;
-    vec3 color   = albedo * (sunColor / PI) * NdotL * shadow + ambient * albedo;
+    vec3  ambient  = sceneBuffer.directionalLight.ambient.rgb;
+    vec3  color    = albedo * (sunColor / PI) * NdotL * shadow + ambient * albedo;
 
     // Forward+ point/spot lights: Lambert-only accumulation (vegetation is
     // matte, so the specular GGX term is skipped).  Same light-grid source

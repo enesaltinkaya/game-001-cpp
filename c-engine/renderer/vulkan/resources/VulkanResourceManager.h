@@ -66,7 +66,6 @@ void vulkanResourceUploadCamera(Camera* camera);
 void vulkanResourceUploadDirectionalLight(DirectionalLightUbo* directionalLight);
 void vulkanResourceUploadShadow(ShadowUbo* shadow);
 void vulkanResourceSetContactShadowImageIndex(u32 index);
-void vulkanResourceSetSsgiImageIndex(u32 index);
 void vulkanResourceUploadLight(GpuLight* light, u32 index);
 void vulkanResourceUploadLights(const GpuLight* lights, u32 count);
 void vulkanResourceUploadLightUbo(const LightUbo* lightUbo);
@@ -182,6 +181,33 @@ struct VulkanWeatherData {
 };
 void vulkanResourceSetWeather(const VulkanWeatherData* data);
 VulkanWeatherData vulkanResourceGetWeatherData(void);
+
+/* Must match IblData in globalset.shader (std430 layout).  Written by the IBL
+ * module (VulkanIbl), pushed into the scene buffer, read by the scene and
+ * heightmap_terrain fragment shaders.  All image indices are bindless pool
+ * indices into the global set. */
+struct VulkanIblData {
+    u32 environmentMapIndex;
+    u32 irradianceMapIndex;
+    u32 prefilterMapIndex;
+    u32 brdfLutIndex;
+    float environmentMapMaxLod;
+    float prefilterMapMaxLod;
+    u32 enabled;
+    float intensity;
+    float specularIntensity;
+    float pad_ibl1;
+    u32 hasSH;
+    u32 pad_ibl2;
+    vec4 shL0_M0;
+    vec4 shL1_Mn1;
+    vec4 shL1_M0;
+    vec4 shL1_Mp1;
+    mat4 envRotation;
+};
+
+void vulkanResourceSetIblData(const VulkanIblData* data);
+void vulkanResourceGetIblData(VulkanIblData* out);
 
 #define VULKAN_MAX_CAMERA_OCCLUDERS 16
 void vulkanResourceSetCameraOccluders(const u32* entities, const float* alphas, u32 count);

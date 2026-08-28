@@ -51,6 +51,7 @@ void lightMarkDirty(Scene* scene, u32 entity) {
 
 void LightSystem::added() {
     utils::signalSubscribe("rendererInitialized", applySun);
+    utils::signalSubscribe("iblChanged", applySun);
 }
 
 static void applySun(void* _) {
@@ -73,8 +74,6 @@ static void applySun(void* _) {
     }
     vec4 colorVec = {normalizedColor[0], normalizedColor[1], normalizedColor[2], 0.0f};
     glm_vec4_copy(colorVec, sunUbo.color);
-    /* Zero ambient: shadowed areas are pure black; only direct light
-     * contributes.  IBL was removed; this is a constant, not a per-frame value. */
     vec4 ambientVec = {0.0f, 0.0f, 0.0f, 0.0f};
     glm_vec4_copy(ambientVec, sunUbo.ambient);
     rendererUploadSun(&sunUbo);

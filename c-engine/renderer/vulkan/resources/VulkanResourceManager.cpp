@@ -113,6 +113,7 @@ struct VulkanSceneBuffer {
     int pad[2];
     ivec4 lightCounts;  // x=directional, y=point, z=spot, w=total
     GpuLight lights[MAX_GPU_LIGHTS];
+    VulkanIblData ibl;
     VulkanPostProcessData post;
     VulkanTerrainData terrain;
     VulkanFogData     fog;
@@ -171,6 +172,11 @@ struct UploadQueue {
 };
 
 static UploadQueue uploadQueue[FRAMES_IN_FLIGHT];
+
+/* IBL state — owned by the IBL module (VulkanIbl) via
+ * vulkanResourceSetIblData(); flushed into each frame's scene buffer by
+ * vulkanResourceUpdate().  Zeroed (IBL off) until the environment loads. */
+static VulkanIblData iblData = {};
 
 static VulkanFogData fogData = {
     .fogColor            = {0.7f, 0.75f, 0.8f, 0.0f},
@@ -403,6 +409,10 @@ void vulkanResourceUpdate(void) {
     // Upload weather params every frame
     scene->weather = weatherData;
 
+    // Upload IBL state every frame (the IBL module also patches the mapped
+    // buffers directly on change — this keeps the two in sync).
+    scene->ibl = iblData;
+
     UploadQueue* queue = &uploadQueue[flightIndex];
     if (queue->hasCamera) {
         memcpy(&scene->cameras[0], &queue->camera, sizeof(CameraUbo));
@@ -469,20 +479,28 @@ void vulkanResourceUploadShadow(ShadowUbo* shadow) {
 }
 
 
+void vulkanResourceSetIblData(const VulkanIblData* data) {
+    if (data)
+        iblData = *data;
+    else
+        iblData = {};
+    for (int i = 0; i < FRAMES_IN_FLIGHT; i++) {
+        if (!sceneBuffer[i].vmaInfo.pMappedData) continue;
+        VulkanSceneBuffer* buf =
+            static_cast<VulkanSceneBuffer*>(sceneBuffer[i].vmaInfo.pMappedData);
+        buf->ibl = iblData;
+    }
+}
+
+void vulkanResourceGetIblData(VulkanIblData* out) {
+    if (out) *out = iblData;
+}
+
 void vulkanResourceSetContactShadowImageIndex(u32 index) {
     for (int i = 0; i < FRAMES_IN_FLIGHT; i++) {
         VulkanSceneBuffer* buf  = static_cast<VulkanSceneBuffer*>(sceneBuffer[i].vmaInfo.pMappedData);
         if (buf) {
             buf->shadow.contactShadowImageIndex = index;
-        }
-    }
-}
-
-void vulkanResourceSetSsgiImageIndex(u32 index) {
-    for (int i = 0; i < FRAMES_IN_FLIGHT; i++) {
-        VulkanSceneBuffer* buf  = static_cast<VulkanSceneBuffer*>(sceneBuffer[i].vmaInfo.pMappedData);
-        if (buf) {
-            buf->shadow.ssgiImageIndex = index;
         }
     }
 }

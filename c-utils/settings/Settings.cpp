@@ -52,7 +52,6 @@ void settingsInit(void) {
     templates.push_back((Template{"aoDisabled", "boolean", 0.}));
     templates.push_back((Template{"bloomDisabled", "boolean", 0.}));
     templates.push_back((Template{"contactShadowDisabled", "boolean", 0.}));
-    templates.push_back((Template{"ssgiDisabled", "boolean", 0.}));
     templates.push_back((Template{"fogMode", "double", 1.}));
     templates.push_back((Template{"taaEnabled", "boolean", 1.}));
     templates.push_back((Template{"taaWeight", "double", 0.9}));

@@ -19,6 +19,11 @@
 
 #define SHADOW_DEBUG 0
 
+/* How much ambient/IBL light is removed inside cascade shadows
+ * (0 = shadowed areas keep full ambient, 1 = pitch black in shadow).
+ * Used by the scene and heightmap_terrain fragment shaders. */
+#define SHADOW_DARKNESS 0.6
+
 /* Cascade blend region: fraction of each cascade's range used for blending.
  * Must match SHADOW_CASCADE_BLEND_FRACTION in VulkanShadowPass.c so the
  * cascade frustums overlap enough to supply valid shadow data. */
@@ -260,19 +265,4 @@ float sampleContactShadow(void) {
 /* Legacy wrapper — returns full shadow (cascade × contact) as vec3. */
 vec3 sampleShadow(vec3 worldPos, vec3 normal) {
     return sampleShadowFull(worldPos, normal).rgb;
-}
-
-/* Sample the SSGI bounce-irradiance term for the current fragment.
- * Returns (0,0,0,0) when no SSGI texture is bound, which the scene
- * shader uses to fall back to the UBO ambient.  .rgb = bounce
- * irradiance (Lambertian integral over the jittered hemisphere),
- * .a = confidence. */
-vec4 sampleSSGI(void) {
-    if (sceneBuffer.shadow.ssgiImageIndex == 0u)
-        return vec4(0.0);
-    vec2 screenUV = gl_FragCoord.xy / sceneBuffer.cameras[0].viewport;
-    return texture(
-        sampler2D(textures[nonuniformEXT(sceneBuffer.shadow.ssgiImageIndex)],
-                  samplers[SAMPLER_CLAMP_LINEAR]),
-        screenUV);
 }

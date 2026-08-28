@@ -25,6 +25,8 @@ layout(push_constant) uniform PushConstants {
 #include "../../includes/globalset.shader"
 #include "../../includes/shadow.shader"
 #include "../../includes/forwardplus.shader"
+#include "../../includes/ibl_common.shader"
+#include "../../includes/ibl_scene.shader"
 
 vec4 sampleMaterialTexture(uint texIndex, uint samplerIndex, vec2 uv) {
     return texture(
@@ -129,19 +131,59 @@ void main() {
     float contactShadow = sampleContactShadow();
     vec3 shadow         = shadowFull.rgb * contactShadow;
 
+    // Shadow darkening: reduce ambient/IBL in shadowed areas.
+    // 0.0 = no effect, 1.0 = pitch black in shadow.
+    // Use only cascade shadows (shadowFull) here — contact shadows are
+    // screen-space self-occlusion and should not suppress IBL.
+    // At grazing angles (NdotL → 0), self-shadowing in the shadow map is
+    // an artifact (orthogonal faces shadowing each other). Preserve ambient
+    // fill for these faces so they don't go pitch black.
+    vec3 shadowCascade    = shadowFull.rgb;
+    vec3 shadowDarkFactor = mix(vec3(1.0), vec3(1.0 - SHADOW_DARKNESS), vec3(1.0 - shadowCascade));
+    shadowDarkFactor      = mix(shadowDarkFactor, vec3(1.0), smoothstep(0.3, 0.0, NdotL));
+
     vec3 kS = F;
     vec3 kD = (1.0 - kS) * (1.0 - metallic);
     vec3 Lo = (kD * baseColor.rgb / PI + specular) * lightColor * NdotL * shadow;
 
-    // Ambient (from the sun UBO): zeroed, so shadowed areas are pure black.
-    // Kept in the lighting equation for easy tuning.  Scaled by kD for
-    // energy conservation with specular.  SSGI replaces the UBO ambient
-    // where its confidence is non-zero: the bounce irradiance already has
-    // the hit-point albedo folded in, so the origin albedo is applied by
-    // the same kD * baseColor term (Lambertian energy conservation).
-    vec4  ssgiTerm  = sampleSSGI();
-    vec3  ambient   = mix(dirLight.ambient.rgb, ssgiTerm.rgb, ssgiTerm.a);
-    vec3  color     = Lo + ambient * kD * baseColor.rgb;
+    // Ambient / IBL
+    vec3 ambientDiffuse  = vec3(0.03) * baseColor.rgb;
+    vec3 ambientSpecular = vec3(0.0);
+    if (sceneBuffer.ibl.enabled != 0u) {
+        vec3 R                 = reflect(-V, N);
+        float iblIntensity     = sceneBuffer.ibl.intensity;
+        float iblSpecIntensity = sceneBuffer.ibl.specularIntensity;
+        float maxLod           = sceneBuffer.ibl.prefilterMapMaxLod;
+        float specLod          = sqrt(roughness) * maxLod;
+
+        if (sceneBuffer.ibl.prefilterMapIndex != 0u && sceneBuffer.ibl.brdfLutIndex != 0u) {
+            vec3 prefilteredColor = iblSamplePrefilter(R, specLod);
+            vec2 brdf = texture(sampler2D(textures[nonuniformEXT(sceneBuffer.ibl.brdfLutIndex)],
+                                          samplers[SAMPLER_CLAMP_LINEAR]),
+                                vec2(NdotV, roughness))
+                            .rg;
+            vec3 specFactor = F0 * brdf.x + brdf.y;
+            vec3 kD_ibl     = (1.0 - specFactor) * (1.0 - metallic);
+
+            ambientSpecular = prefilteredColor * specFactor * iblIntensity * iblSpecIntensity;
+
+            vec3 irradiance;
+            if (sceneBuffer.ibl.irradianceMapIndex != 0u)
+                irradiance = iblSampleIrradiance(N);
+            else if (sceneBuffer.ibl.hasSH != 0u)
+                irradiance = iblEvaluateSHIrradiance(N);
+            else
+                irradiance = iblSampleEnvironment(N, sceneBuffer.ibl.environmentMapMaxLod);
+            ambientDiffuse = kD_ibl * irradiance * baseColor.rgb / PI * iblIntensity;
+        }
+    }
+
+    // Constant ambient fill in shadow prevents dark-textured objects from
+    // going too dark — baseColor is already baked into ambientDiffuse, so
+    // dark texels would otherwise receive almost no fill.
+    vec3 shadowFill = vec3(1.0 - SHADOW_DARKNESS) * (1.0 - shadowCascade) * 0.03;
+
+    vec3 color = (ambientDiffuse + ambientSpecular) * shadowDarkFactor + shadowFill + Lo;
 
     // Forward+ point/spot lights
     vec3 T_aniso = vec3(0.0);

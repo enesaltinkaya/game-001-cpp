@@ -15,6 +15,7 @@
 #include "renderer/vulkan/utils/VulkanError.h"
 #include "renderer/vulkan/resources/VulkanFrameResources.h"
 #include "renderer/vulkan/resources/VulkanResourceManager.h"
+#include "renderer/vulkan/resources/Ibl.h"
 #include "renderer/vulkan/utils/VulkanUtils.h"
 #include "renderer/vulkan/swapchain/VulkanSwapchain.h"
 #include "renderer/vulkan/pass/shadow/VulkanShadowPass.h"
@@ -26,7 +27,6 @@
 #include "renderer/vulkan/pass/scene/VulkanScenePass.h"
 #include "renderer/vulkan/pass/decal/VulkanDecalPass.h"
 #include "renderer/vulkan/pass/contact_shadow/VulkanContactShadowPass.h"
-#include "renderer/vulkan/pass/ssgi/VulkanSsgiPass.h"
 #include "renderer/vulkan/pass/ssr/VulkanSsrPass.h"
 #include "renderer/vulkan/pass/volumetric/VulkanVolumetricPass.h"
 #include "timer/Timer.h"
@@ -201,10 +201,6 @@ static void vulkanDebugDumpFrameImages(const char* shotPath) {
             img = vulkanTaaPassGetOutput();
         } else if (!strcmp(tok, "ao")) {
             img = vulkanAOPassGetOutput();
-        } else if (!strcmp(tok, "ssgi")) {
-            img = vulkanSsgiPassGetOutput();
-        } else if (!strcmp(tok, "ssgiRaw")) {
-            img = vulkanSsgiPassGetRawOutput();
         } else if (!strcmp(tok, "scene")) {
             img = vulkanFrameResourcesGetSceneColor();
         } else if (!strcmp(tok, "oitReveal")) {
@@ -224,8 +220,9 @@ static void vulkanDebugDumpFrameImages(const char* shotPath) {
              * through the regular token table by stripping the suffix). */
             char sub[128];
             snprintf(sub, sizeof(sub), "%s", tok);
-            char* rawSuffix = strstr(sub, "Raw");
-            *rawSuffix = 0;
+            /* strip the trailing "Raw" suffix (branch guarantees it ends
+             * with one) so names like "aoRawRaw" keep their inner part */
+            sub[strlen(sub) - 3] = 0;
             VulkanImage* rawImg = nullptr;
             if (!strcmp(sub, "velocity")) {
                 rawImg = vulkanFrameResourcesGetVelocity();
@@ -280,6 +277,11 @@ void vulkanInit(void) {
     vulkanResourceInit();
     vulkanSwapchainInit();
     vulkanFrameResourcesInit();
+    vulkanIblInit();
+    {
+        const char* env = getenv("ENGINE_IBL_DISABLED");
+        if (env && atoi(env)) vulkanIblSetDisabled(1);
+    }
     vulkanSpdRunSelfTest();
     overallProfile = vulkanCreateProfile("vulkan");
 
@@ -289,7 +291,6 @@ void vulkanInit(void) {
     addPass(&vulkanHiZPass);
     addPass(&vulkanShadowPass);
     addPass(&vulkanContactShadowPass);
-    addPass(&vulkanSsgiPass);
     addPass(&vulkanLightCullingPass);
     addPass(&vulkanHeightmapTerrainPass);
     addPass(&vulkanAzgaarPropsPass);
@@ -345,6 +346,7 @@ static void vulkanDestroyDelayed(void* _) {
 
     vulkanSpdDestroy();
     vulkanFrameResourcesDestroy();
+    vulkanIblDestroy();
     vulkanResourceDestroy();
     vulkanBlurCleanup();
 

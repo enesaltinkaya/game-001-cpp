@@ -8,6 +8,7 @@
 #include "renderer/vulkan/Vulkan.h"
 #include "renderer/vulkan/command/VulkanCommand.h"
 #include "renderer/vulkan/resources/VulkanResourceManager.h"
+#include "renderer/vulkan/resources/Ibl.h"
 #include "renderer/vulkan/scene/VulkanScene.h"
 #include "renderer/vulkan/scene/VulkanVisibleScenes.h"
 #include "renderer/vulkan/swapchain/VulkanSwapchain.h"
@@ -16,7 +17,6 @@
 #include "renderer/vulkan/pass/contact_shadow/VulkanContactShadowPass.h"
 #include "renderer/vulkan/pass/fsr/VulkanFsrUtils.h"
 #include "renderer/vulkan/pass/shadow/VulkanShadowPass.h"
-#include "renderer/vulkan/pass/ssgi/VulkanSsgiPass.h"
 #include "renderer/vulkan/pass/ssr/VulkanSsrPass.h"
 #include "renderer/vulkan/pass/volumetric/VulkanVolumetricPass.h"
 #include "settings/Settings.h"
@@ -85,7 +85,6 @@ void RenderSystem::added() {
     if (utils::settingsGetBool("aoDisabled")) vulkanAOPassSetDisabled(1);
     if (utils::settingsGetBool("bloomDisabled")) vulkanBloomPassSetDisabled(1);
     if (utils::settingsGetBool("contactShadowDisabled")) vulkanContactShadowPassSetDisabled(1);
-    if (utils::settingsGetBool("ssgiDisabled")) vulkanSsgiPassSetDisabled(1);
 
     /* Apply fog mode from settings */
     {
@@ -251,9 +250,15 @@ void rendererSceneDestroy(Scene* scene) {
 }
 
 RendererSunLight rendererGetSun(void) {
-    /* Fixed sun — the scene is lit by direct sun + local lights only (IBL
-     * was removed). Direction points TOWARD the sun; color is radiance.
-     * LightSystem clamps its norm to 5.0 for the sun UBO intensity. */
+    /* IBL sun — the dominant hotspot extracted from the environment map.
+     * Its direction and HDR radiance drive the directional light, the
+     * shadow cascades and the sky. LightSystem clamps its norm to 5.0 for
+     * the sun UBO intensity. Falls back to a fixed sun when IBL is not
+     * loaded (no environment map available). */
+    if (vulkanIblIsReady()) {
+        return vulkanIblGetExtractedSun();
+    }
+    /* Fixed sun — direction points TOWARD the sun; color is radiance. */
     static const RendererSunLight sun = {
         .direction     = {0.3f, 0.8f, -0.5f},
         .color         = {2.6f, 2.4f, 2.08f},

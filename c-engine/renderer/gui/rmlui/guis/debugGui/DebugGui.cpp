@@ -12,6 +12,7 @@
 #include "renderer/vulkan/pass/volumetric/VulkanVolumetricPass.h"
 // #include "renderer/vulkan/pass/grid/VulkanGridPass.h"
 #include "renderer/vulkan/resources/VulkanResourceManager.h"
+#include "renderer/vulkan/resources/Ibl.h"
 #include "rmlui/wrapper/src/crmlui.h"
 #include <stdio.h>
 
@@ -34,6 +35,15 @@ static char contactShadowEnabled;
 static char volumetricFogEnabled;
 
 static char* tonemapLabel;
+
+/* IBL debug controls.  syncFromPasses() pulls the state out of the IBL
+ * module every frame; the handlers push changes back. */
+static char iblEnabled;
+static char* iblFileLabel;
+static char iblFileLabelText[128];
+static char* iblSunLabel;
+static char iblSunLabelText[96];
+static float iblIntensityValue;
 
 /* LPM tone/gamut-mapping tuning (TONEMAP section of the debug GUI).
  * Bound two-way to the document model: slider input updates the float,
@@ -79,6 +89,15 @@ static void syncFromPasses(void) {
     /* Tone/gamut mapping is done by the FFX LPM pass — no more custom
      * tonemapping curves to cycle through. */
     tonemapLabel      = (char*)"LPM";
+
+    iblEnabled        = !vulkanIblIsDisabled();
+    snprintf(iblFileLabelText, sizeof(iblFileLabelText), "%s", vulkanIblGetCurrentName());
+    iblFileLabel = iblFileLabelText;
+    RendererSunLight iblSun = vulkanIblGetExtractedSun();
+    snprintf(iblSunLabelText, sizeof(iblSunLabelText),
+             "%.1f, %.1f, %.1f", iblSun.direction[0], iblSun.direction[1], iblSun.direction[2]);
+    iblSunLabel       = iblSunLabelText;
+    iblIntensityValue = vulkanIblGetIntensity();
 
     RendererAASettings aa = rendererGetAASettings();
 
@@ -136,6 +155,75 @@ static int toggleVolumetricFog(void* _) {
     return 0;
 }
 
+static int toggleIBL(void* _) {
+    vulkanIblSetDisabled(iblEnabled);
+    syncFromPasses();
+    rmlUpdateDirtyAll(model);
+    return 0;
+}
+
+static int iblFilePrev(void* _) {
+    vulkanIblCyclePrev();
+    syncFromPasses();
+    rmlUpdateDirtyAll(model);
+    return 0;
+}
+
+static int iblFileNext(void* _) {
+    vulkanIblCycleNext();
+    syncFromPasses();
+    rmlUpdateDirtyAll(model);
+    return 0;
+}
+
+static int iblSunLeft(void* _) {
+    (void)_; /* */
+    vulkanIblRotateSun(-15.0f, 0.0f);
+    syncFromPasses();
+    rmlUpdateDirtyAll(model);
+    return 0;
+}
+
+static int iblSunRight(void* _) {
+    (void)_; /* */
+    vulkanIblRotateSun(15.0f, 0.0f);
+    syncFromPasses();
+    rmlUpdateDirtyAll(model);
+    return 0;
+}
+
+static int iblSunUp(void* _) {
+    (void)_; /* */
+    vulkanIblRotateSun(0.0f, 15.0f);
+    syncFromPasses();
+    rmlUpdateDirtyAll(model);
+    return 0;
+}
+
+static int iblSunDown(void* _) {
+    (void)_; /* */
+    vulkanIblRotateSun(0.0f, -15.0f);
+    syncFromPasses();
+    rmlUpdateDirtyAll(model);
+    return 0;
+}
+
+static int iblIntensityDown(void* _) {
+    (void)_; /* */
+    vulkanIblSetIntensity(vulkanIblGetIntensity() - 0.25f);
+    syncFromPasses();
+    rmlUpdateDirtyAll(model);
+    return 0;
+}
+
+static int iblIntensityUp(void* _) {
+    (void)_; /* */
+    vulkanIblSetIntensity(vulkanIblGetIntensity() + 0.25f);
+    syncFromPasses();
+    rmlUpdateDirtyAll(model);
+    return 0;
+}
+
 static int togglePOM(void* _) {
     (void)_;
     vulkanResourceSetTerrainPomEnabled(pomEnabled ? 0 : 1);
@@ -181,6 +269,15 @@ void DebugGui::added() {
     luaRegisterFunction("debugToggleGrid", toggleGrid);
     luaRegisterFunction("debugTogglePOM", togglePOM);
     luaRegisterFunction("debugToggleContactShadow", toggleContactShadow);
+    luaRegisterFunction("debugToggleIBL", toggleIBL);
+    luaRegisterFunction("debugIblFilePrev", iblFilePrev);
+    luaRegisterFunction("debugIblFileNext", iblFileNext);
+    luaRegisterFunction("debugIblSunLeft", iblSunLeft);
+    luaRegisterFunction("debugIblSunRight", iblSunRight);
+    luaRegisterFunction("debugIblSunUp", iblSunUp);
+    luaRegisterFunction("debugIblSunDown", iblSunDown);
+    luaRegisterFunction("debugIblIntensityDown", iblIntensityDown);
+    luaRegisterFunction("debugIblIntensityUp", iblIntensityUp);
     luaRegisterFunction("debugToggleVolumetricFog", toggleVolumetricFog);
     luaRegisterFunction("debugAaCasPrev", aaCasPrev);
     luaRegisterFunction("debugAaCasNext", aaCasNext);
@@ -197,6 +294,10 @@ void DebugGui::added() {
     rmlBind(model, "contactShadowEnabled", &contactShadowEnabled);
     rmlBind(model, "volumetricFogEnabled", &volumetricFogEnabled);
     rmlBind(model, "tonemapLabel", &tonemapLabel);
+    rmlBind(model, "iblEnabled", &iblEnabled);
+    rmlBind(model, "iblFileLabel", &iblFileLabel);
+    rmlBind(model, "iblSunLabel", &iblSunLabel);
+    rmlBind(model, "iblIntensityValue", &iblIntensityValue);
     rmlBind(model, "lpmContrast", &lpmContrast);
     rmlBind(model, "lpmHdrMax", &lpmHdrMax);
     rmlBind(model, "lpmShoulderContrast", &lpmShoulderContrast);
