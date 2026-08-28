@@ -7,23 +7,28 @@
 #include "../../includes/utils.shader"
 #include "../../includes/globalset.shader"
 
-/* One iteration of edge-aware colour diffusion (screen-space GI, Petersen
+/* One 1D step of edge-aware colour diffusion (screen-space GI, Petersen
  * "Simplified Diffusion for Real-Time GI").
  *
- * Blurs the directly-lit scene colour so light "flows" from bright regions
- * into dark ones and neighbouring surface colours bleed into each other
- * (grass green onto a wall base).  Each tap's weight is the product of:
- *   - a gaussian distance falloff (spatial spread),
- *   - a relative inverse-depth term (blocks light crossing occluders),
- *   - a normal-dot term (blocks light flowing across surface orientation
- *     changes, e.g. ground -> vertical wall).
- * Sky pixels are never diffused (copied verbatim) so the skybox stays crisp
- * and the horizon does not smear.  Sky taps contribute nothing.
+ * Separable wide gaussian (17 taps, +-8) of the directly-lit scene colour,
+ * one pass along X (dir=0) and one along Y (dir=1) per iteration, so the
+ * directly-lit image bleeds across the screen until an edge stops it:
+ *   - gaussian distance falloff,
+ *   - relative inverse-depth edge (light does not cross occluders),
+ *   - normal-dot edge (optional; OFF by default — the grass-colour-
+ *     climbing-the-wall look IS the point of this pass).
+ * The gaussian sigma is wide (tens of screen px) so colour travels a real
+ * distance: grass green washes up the base of a wall, the wall's colour
+ * washes onto the ground in front of it.
  *
- * The pass runs several iterations, ping-ponging between two buffers; the
- * composite pass then adds (diffused - direct) clamped non-negative per
- * channel, scaled by a strength — pure bounce light on top of untouched
- * direct lighting. */
+ * Sky pixels are never diffused (copied verbatim) so the skybox stays crisp
+ * and the horizon does not smear; sky taps contribute nothing.
+ *
+ * The pass runs at a fraction of render resolution (low-frequency data, the
+ * composite upsamples linearly).  The composite then blends
+ * (diffused - direct) * strength into the scene — sign-preserving, so the
+ * bleed can darken/tint bright surfaces (green grass onto a white wall) as
+ * well as brighten dark ones (light leak into shadows). */
 
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
@@ -32,13 +37,16 @@ layout(push_constant) uniform PushConstants {
     uint depthIndex;     /* depth buffer (sampled, sky = 0)      */
     uint normalsIndex;  /* oct-encoded normals (sampled)        */
     uint outIndex;       /* diffused output (storage)            */
-    uint width;
-    uint height;
-    float radius;         /* gaussian falloff, GI-buffer px          */
-    float depthEdge;      /* relative inv-depth diff -> weight 0     */
-    float normalEdgeMin;  /* nDot where the weight starts            */
-    float normalEdgeMax;  /* nDot where the weight is full            */
+    uint width;          /* output (GI buffer) width             */
+    uint height;         /* output (GI buffer) height            */
+    uint dir;            /* 0 = horizontal, 1 = vertical         */
+    float sigma;         /* gaussian sigma, GI-buffer px         */
+    float depthEdge;     /* relative inv-depth diff -> weight 0  */
+    float normalEdgeMin; /* nDot window start; <= -1 disables    */
+    float normalEdgeMax; /* nDot window end                      */
 } pc;
+
+const int TAP = 8;  /* +-8 taps, 17 total */
 
 /* Inverse view-space depth S (affine in the raw buffer value); relative
  * differences in S equal relative differences in true view distance.
@@ -80,39 +88,41 @@ void main() {
         centerUv).rg);
     float s0 = depthToInv(centerDepth);
 
+    ivec2 axis = pc.dir == 0 ? ivec2(1, 0) : ivec2(0, 1);
+
     vec3 acc  = centerColor;
     float wSum = 1.0;
-    float inv2R2 = 1.0 / (2.0 * pc.radius * pc.radius);
+    float inv2S2 = 1.0 / (2.0 * pc.sigma * pc.sigma);
 
-    for (int y = -1; y <= 1; y++) {
-        for (int x = -1; x <= 1; x++) {
-            if (x == 0 && y == 0) continue;
+    for (int i = -TAP; i <= TAP; i++) {
+        if (i == 0) continue;
 
-            vec2 tapUv = centerUv + vec2(float(x), float(y)) / outRes;
+        vec2 tapUv = centerUv + vec2(axis) * float(i) / outRes;
 
-            float tapDepth = texture(
-                sampler2D(textures[nonuniformEXT(pc.depthIndex)], samplers[SAMPLER_NEAREST]),
-                tapUv).r;
-            if (tapDepth <= 0.0) continue;  /* sky tap: no bleed */
+        float tapDepth = texture(
+            sampler2D(textures[nonuniformEXT(pc.depthIndex)], samplers[SAMPLER_NEAREST]),
+            tapUv).r;
+        if (tapDepth <= 0.0) continue;  /* sky tap: no bleed */
 
+        float dRel = abs(s0 - depthToInv(tapDepth)) / max(s0, 1e-6);
+        float depthW = 1.0 - smoothstep(0.0, pc.depthEdge, dRel);
+        if (depthW <= 0.0) continue;    /* occluded: no fetch left */
+
+        float w = exp(float(i * i) * inv2S2) * depthW;
+
+        if (pc.normalEdgeMin > -0.99) {
             vec3 tapN = OctDecode(texture(
                 sampler2D(textures[nonuniformEXT(pc.normalsIndex)], samplers[SAMPLER_NEAREST]),
                 tapUv).rg);
-
-            /* Occlusion: relative inverse-depth difference. */
-            float dRel = abs(s0 - depthToInv(tapDepth)) / max(s0, 1e-6);
-            float depthW = 1.0 - smoothstep(0.0, pc.depthEdge, dRel);
-            /* Surface orientation change. */
-            float normalW = smoothstep(pc.normalEdgeMin, pc.normalEdgeMax, dot(centerN, tapN));
-
-            float w = exp(-float(x * x + y * y) * inv2R2) * depthW * normalW;
-            if (w <= 0.0) continue;
-
-            acc  += w * texture(
-                sampler2D(textures[nonuniformEXT(pc.srcIndex)], samplers[SAMPLER_CLAMP_NEAREST]),
-                tapUv).rgb;
-            wSum += w;
+            w *= smoothstep(pc.normalEdgeMin, pc.normalEdgeMax, dot(centerN, tapN));
         }
+
+        if (w <= 0.0) continue;
+
+        acc  += w * texture(
+            sampler2D(textures[nonuniformEXT(pc.srcIndex)], samplers[SAMPLER_CLAMP_NEAREST]),
+            tapUv).rgb;
+        wSum += w;
     }
 
     imageStore(storageImages[nonuniformEXT(pc.outIndex)], coord, vec4(acc / wSum, 1.0));

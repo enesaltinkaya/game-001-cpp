@@ -113,16 +113,18 @@ void main() {
 
         // ── 7a. Diffusion GI (screen-space light diffusion) ───────────
         // giIndex holds the scene colour after N edge-aware diffusion
-        // iterations; (gi - scene) is the light that flowed in across
-        // surface boundaries (colour bleed).  Clamped non-negative per
-        // channel so it only adds bounce light — direct lighting keeps
-        // its full sharpness.  Added before AO so occlusion attenuates
-        // the bounce too, and before fog so distance still erases it.
+        // iterations; (gi - scene) is the light that flowed across
+        // surface boundaries (colour bleed).  The blend is sign-preserving:
+        // bright surfaces next to dark ones get tinted/desaturated (grass
+        // green washing up a wall), dark surfaces next to bright ones get
+        // light leak.  strength is a blend factor (1 = fully diffused).
+        // Added before AO so occlusion attenuates the bleed too, and
+        // before fog so distance still erases it.
         if (pc.giIndex != 0xFFFFFFFFu) {
             vec3 giCol = texture(
                 sampler2D(textures[nonuniformEXT(pc.giIndex)], samplers[SAMPLER_CLAMP_LINEAR]),
                 uv).rgb;
-            composite += max(giCol - sceneCol, vec3(0.0)) * pc.giStrength;
+            composite += (giCol - sceneCol) * pc.giStrength;
         }
 
         // ── 7b. Ambient occlusion (CACAO) ───────────────────────────────

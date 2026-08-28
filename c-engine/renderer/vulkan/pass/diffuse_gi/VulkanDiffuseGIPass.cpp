@@ -17,7 +17,8 @@ typedef struct DiffuseGiPushConstants {
     u32 outIndex;
     u32 width;
     u32 height;
-    float radius;
+    u32 dir;
+    float sigma;
     float depthEdge;
     float normalEdgeMin;
     float normalEdgeMax;
@@ -26,16 +27,16 @@ typedef struct DiffuseGiPushConstants {
 static VulkanPipe pipeline;
 static char       pipelineReady;
 static char       giDisabled;
-static int        giIterations = 3;
-static float      giStrength   = 1.0f;
-static float      giRadius     = 1.4f;
+static int        giIterations = 2;   /* H+V separable steps per iteration */
+static float      giStrength   = 0.4f;/* blend toward diffused (0..1) */
+static float      giRadius     = 20.f;/* gaussian sigma, render-res px  */
 static float      giDepthEdge  = 0.05f;
-static float      giNdMin      = 0.4f;
+static float      giNdMin      = -1.f;/* <= -1: normal edge gate off   */
 static float      giNdMax      = 0.9f;
 /* The diffusion is low-frequency data: the ping-pong buffers run at a
  * fraction of the render resolution and the composite upsamples linearly.
- * 0.5 = the usual case (4x fewer pixels than full-res). */
-static float      giResScale   = 0.5f;
+ * 0.25 = the usual case (16x fewer pixels than full-res). */
+static float      giResScale   = 0.25f;
 
 static VulkanImage giA;
 static VulkanImage giB;
@@ -59,17 +60,21 @@ static float giEnvFloat(const char* name, float def) {
 void VulkanDiffuseGIPass::added() {
     const char* env = getenv("ENGINE_GI_DISABLED");
     if (env && *env && atoi(env)) giDisabled = 1;
-    int iterEnv = 3;
+    int iterEnv = 2;
     env = getenv("ENGINE_GI_ITER");
     if (env && *env) iterEnv = atoi(env);
     giIterations = (iterEnv < 1) ? 1 : ((iterEnv > 8) ? 8 : iterEnv);
-    giStrength   = giEnvFloat("ENGINE_GI_STRENGTH", 1.0f);
-    giRadius     = giEnvFloat("ENGINE_GI_RADIUS", 1.4f);
+    giStrength   = giEnvFloat("ENGINE_GI_STRENGTH", 0.4f);
+    if (giStrength < 0.0f) giStrength = 0.0f;
+    if (giStrength > 1.0f) giStrength = 1.0f;
+    giRadius     = giEnvFloat("ENGINE_GI_RADIUS", 20.f);
+    if (giRadius < 2.f) giRadius = 2.f;
+    if (giRadius > 48.f) giRadius = 48.f;
     giDepthEdge  = giEnvFloat("ENGINE_GI_DEPTH_EDGE", 0.05f);
-    giNdMin      = giEnvFloat("ENGINE_GI_NDOT_MIN", 0.4f);
+    giNdMin      = giEnvFloat("ENGINE_GI_NDOT_MIN", -1.f);
     giNdMax      = giEnvFloat("ENGINE_GI_NDOT_MAX", 0.9f);
     if (giNdMax <= giNdMin) giNdMax = giNdMin + 0.2f;
-    giResScale   = giEnvFloat("ENGINE_GI_RES", 0.5f);
+    giResScale   = giEnvFloat("ENGINE_GI_RES", 0.25f);
     if (giResScale < 0.25f) giResScale = 0.25f;
     if (giResScale > 1.0f) giResScale = 1.0f;
 
@@ -178,33 +183,40 @@ void VulkanDiffuseGIPass::update() {
     vulkanBeginProfile(cmd, &pipeline.profile, 0);
     vulkanBindPipe(cmd, &pipeline);
 
+    u32 groupsX = (giW + 7) / 8;
+    u32 groupsY = (giH + 7) / 8;
+    /* sigma in GI-buffer px (the kernel is +-8, so clamp to +-8 px) */
+    float sigma = giRadius / giResScale;
+    if (sigma < 1.0f) sigma = 1.0f;
+    if (sigma > 8.0f) sigma = 8.0f;
+
     VulkanImage* src = sceneColor;
     for (int i = 0; i < giIterations; i++) {
-        VulkanImage* out = (i % 2) ? &giB : &giA;
+        for (int d = 0; d < 2; d++) {
+            /* d = 0: horizontal step, d = 1: vertical step; ping-pong */
+            VulkanImage* out = d ? &giB : &giA;
 
-        vulkanTransition(cmd, src, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
-        vulkanTransition(cmd, out, VK_IMAGE_LAYOUT_GENERAL, 0, 1);
+            vulkanTransition(cmd, src, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
+            vulkanTransition(cmd, out, VK_IMAGE_LAYOUT_GENERAL, 0, 1);
 
-        DiffuseGiPushConstants pc = {
-            .srcIndex        = (u32)src->sampledPoolIndex,
-            .depthIndex      = (u32)depth->sampledPoolIndex,
-            .normalsIndex    = (u32)normals->sampledPoolIndex,
-            .outIndex        = (u32)out->storagePoolIndex,
-            .width           = giW,
-            .height          = giH,
-            /* radius in full-res px, converted to GI-buffer px */
-            .radius          = giRadius / giResScale,
-            .depthEdge        = giDepthEdge,
-            .normalEdgeMin   = giNdMin,
-            .normalEdgeMax   = giNdMax,
-        };
-        vulkanPush(cmd, &pipeline, sizeof(pc), &pc);
+            DiffuseGiPushConstants pc = {
+                .srcIndex        = (u32)src->sampledPoolIndex,
+                .depthIndex      = (u32)depth->sampledPoolIndex,
+                .normalsIndex    = (u32)normals->sampledPoolIndex,
+                .outIndex        = (u32)out->storagePoolIndex,
+                .width           = giW,
+                .height          = giH,
+                .dir             = (u32)d,
+                .sigma           = sigma,
+                .depthEdge        = giDepthEdge,
+                .normalEdgeMin   = giNdMin,
+                .normalEdgeMax   = giNdMax,
+            };
+            vulkanPush(cmd, &pipeline, sizeof(pc), &pc);
+            vulkanDispatch(cmd, &pipeline, groupsX, groupsY, 1);
 
-        u32 groupsX = (giW + 7) / 8;
-        u32 groupsY = (giH + 7) / 8;
-        vulkanDispatch(cmd, &pipeline, groupsX, groupsY, 1);
-
-        src = out;
+            src = out;
+        }
     }
 
     vulkanEndProfile(cmd, &pipeline.profile, 0);

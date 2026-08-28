@@ -224,6 +224,8 @@ static void syncAAUi(void) {
     ssrLabel = ssrLabelText;
     snprintf(aoLabelText, sizeof(aoLabelText), "%s", engine::vulkanAOPassIsDisabled() ? "Off" : "On");
     aoLabel = aoLabelText;
+    snprintf(giLabelText, sizeof(giLabelText), "%s", engine::vulkanDiffuseGIPassIsDisabled() ? "Off" : "On");
+    giLabel = giLabelText;
     snprintf(bloomLabelText, sizeof(bloomLabelText), "%s", engine::vulkanBloomPassIsDisabled() ? "Off" : "On");
     bloomLabel = bloomLabelText;
     snprintf(contactShadowLabelText, sizeof(contactShadowLabelText), "%s", engine::vulkanContactShadowPassIsDisabled() ? "Off" : "On");

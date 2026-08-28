@@ -14,12 +14,14 @@ struct VulkanImage;
  * term on top of untouched direct lighting.
  *
  * Debug knobs (env vars): ENGINE_GI_DISABLED=1, ENGINE_GI_ITER=<n>
- * (1..8 diffusion iterations, default 3), ENGINE_GI_STRENGTH=<f> (bounce
- * contribution scale, default 1.0), ENGINE_GI_RES=<f> (GI buffer scale vs
- * render resolution, default 0.5 — the diffusion is low-frequency and the
- * composite upsamples linearly), ENGINE_GI_RADIUS=<f> (gaussian radius in
- * render-resolution px), ENGINE_GI_DEPTH_EDGE=<f> (relative inv-depth edge),
- * ENGINE_GI_NDOT_MIN / ENGINE_GI_NDOT_MAX (normal-dot edge window). */
+ * (1..8 H+V separable iterations, default 2), ENGINE_GI_STRENGTH=<f> (blend
+ * toward the diffused image, 0..1, default 0.4), ENGINE_GI_RES=<f> (GI
+ * buffer scale vs render resolution, default 0.25 — the diffusion is
+ * low-frequency and the composite upsamples linearly), ENGINE_GI_RADIUS=<f>
+ * (gaussian sigma in render-resolution px, default 20), ENGINE_GI_DEPTH_EDGE
+ * =<f> (relative inv-depth edge), ENGINE_GI_NDOT_MIN / ENGINE_GI_NDOT_MAX
+ * (normal-dot edge window; NDOT_MIN <= -1 disables the gate, which is the
+ * default — the grass-colour climbing a wall is the intended look). */
 class VulkanDiffuseGIPass : public System {
 public:
     VulkanDiffuseGIPass();
