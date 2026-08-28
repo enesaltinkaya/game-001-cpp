@@ -32,11 +32,57 @@ layout(push_constant) uniform PushConstants {
 
 #include "../../includes/utils.shader"
 #include "../../includes/globalset.shader"
+#include "../../includes/ibl_common.shader"
 
 vec4 sampleMaterialTexture(uint texIndex, uint samplerIndex, vec2 uv) {
     return texture(sampler2D(textures[nonuniformEXT(texIndex)],
                              samplers[nonuniformEXT(samplerIndex)]),
                    uv);
+}
+
+// ------------------------------------------------------------------
+// IBL sampling (envRotation rotates sample directions so the IBL stays in
+// sync with the rotated extracted sun). Keep matched with triangle.frag.
+// ------------------------------------------------------------------
+vec3 sampleEnvironment(vec3 dir, float lod) {
+    dir = mat3(sceneBuffer.ibl.envRotation) * dir;
+    return textureLod(sampler2D(textures[nonuniformEXT(sceneBuffer.ibl.environmentMapIndex)],
+                                samplers[SAMPLER_LINEAR]),
+                      directionToEquirectUv(dir),
+                      clamp(lod, 0.0, sceneBuffer.ibl.environmentMapMaxLod))
+        .rgb;
+}
+
+vec3 sampleIrradiance(vec3 dir) {
+    dir = mat3(sceneBuffer.ibl.envRotation) * dir;
+    return min(texture(samplerCube(cubeTextures[nonuniformEXT(sceneBuffer.ibl.irradianceMapIndex)],
+                                   samplers[SAMPLER_LINEAR]),
+                       normalize(dir))
+                   .rgb,
+               vec3(32.0));
+}
+
+vec3 evaluateSHIrradiance(vec3 N) {
+    vec3 rN         = mat3(sceneBuffer.ibl.envRotation) * N;
+    const float A0  = PI;
+    const float A1  = 2.0 * PI / 3.0;
+    const float Y00 = 0.282095;
+    const float Y1x = 0.488603;
+    vec3 irr        = vec3(0.0);
+    irr += sceneBuffer.ibl.shL0_M0.rgb * A0 * Y00;
+    irr += sceneBuffer.ibl.shL1_Mp1.rgb * A1 * Y1x * rN.x;
+    irr += sceneBuffer.ibl.shL1_Mn1.rgb * A1 * Y1x * rN.y;
+    irr += sceneBuffer.ibl.shL1_M0.rgb * A1 * Y1x * rN.z;
+    return max(irr, vec3(0.0));
+}
+
+vec3 samplePrefilter(vec3 dir, float lod) {
+    dir = mat3(sceneBuffer.ibl.envRotation) * dir;
+    return textureLod(samplerCube(cubeTextures[nonuniformEXT(sceneBuffer.ibl.prefilterMapIndex)],
+                                  samplers[SAMPLER_LINEAR]),
+                      normalize(dir),
+                      clamp(lod, 0.0, sceneBuffer.ibl.prefilterMapMaxLod))
+        .rgb;
 }
 
 void main() {
@@ -105,9 +151,40 @@ void main() {
     vec3 kD = (1.0 - F) * (1.0 - metallic);
     vec3 Lo = (kD * baseColor.rgb / PI + specular) * lightColor * NdotL;
 
-    // No ambient / IBL: the mirrored render is lit by the direct (unshadowed)
-    // sun only, so shadowed reflections stay dark.
-    vec3 color = Lo;
+    // Ambient / IBL — keep matched with triangle.frag's ambient/IBL block.
+    // The reflection pass renders unshadowed, so no shadow darkening.
+    vec3 ambientDiffuse  = vec3(0.03) * baseColor.rgb;
+    vec3 ambientSpecular = vec3(0.0);
+    if (sceneBuffer.ibl.enabled != 0u) {
+        vec3 R                  = reflect(-V, N);
+        float iblIntensity      = sceneBuffer.ibl.intensity;
+        float iblSpecIntensity  = sceneBuffer.ibl.specularIntensity;
+        float maxLod            = sceneBuffer.ibl.prefilterMapMaxLod;
+        float specLod           = sqrt(roughness) * maxLod;
+
+        if (sceneBuffer.ibl.prefilterMapIndex != 0u && sceneBuffer.ibl.brdfLutIndex != 0u) {
+            vec3 prefilteredColor = samplePrefilter(R, specLod);
+            vec2 brdf = texture(sampler2D(textures[nonuniformEXT(sceneBuffer.ibl.brdfLutIndex)],
+                                          samplers[SAMPLER_CLAMP_LINEAR]),
+                                vec2(NdotV, roughness))
+                            .rg;
+            vec3 specFactor = F0 * brdf.x + brdf.y;
+            vec3 kD_ibl     = (1.0 - specFactor) * (1.0 - metallic);
+
+            ambientSpecular = prefilteredColor * specFactor * iblIntensity * iblSpecIntensity;
+
+            vec3 irradiance;
+            if (sceneBuffer.ibl.irradianceMapIndex != 0u)
+                irradiance = sampleIrradiance(N);
+            else if (sceneBuffer.ibl.hasSH != 0u)
+                irradiance = evaluateSHIrradiance(N);
+            else
+                irradiance = sampleEnvironment(N, sceneBuffer.ibl.environmentMapMaxLod);
+            ambientDiffuse = kD_ibl * irradiance * baseColor.rgb / PI * iblIntensity;
+        }
+    }
+
+    vec3 color = ambientDiffuse + ambientSpecular + Lo;
 
     vec3 emissive = vec3(0.0);
     if ((material.featureMask & (1u << MAT_HAS_EMISSIVE_FACTOR)) != 0u) {

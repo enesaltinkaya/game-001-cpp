@@ -28,8 +28,45 @@ layout(location = 2) out vec4 outMaterial; // roughness, metallic, alphaMask, ao
 
 #include "../../includes/utils.shader"
 #include "../../includes/globalset.shader"
+#include "../../includes/ibl_common.shader"
 #include "../../includes/shadow.shader"
 #include "../../includes/forwardplus.shader"
+
+// ---------------------------------------------------------------------------
+// IBL sampling (envRotation rotates sample directions so the IBL stays in
+// sync with the rotated extracted sun). Diffuse-only — props are matte.
+// ---------------------------------------------------------------------------
+vec3 sampleEnvironment(vec3 dir, float lod) {
+    dir = mat3(sceneBuffer.ibl.envRotation) * dir;
+    return textureLod(sampler2D(textures[nonuniformEXT(sceneBuffer.ibl.environmentMapIndex)],
+                                samplers[SAMPLER_LINEAR]),
+                      directionToEquirectUv(dir),
+                      clamp(lod, 0.0, sceneBuffer.ibl.environmentMapMaxLod))
+        .rgb;
+}
+
+vec3 sampleIrradiance(vec3 dir) {
+    dir = mat3(sceneBuffer.ibl.envRotation) * dir;
+    return min(texture(samplerCube(cubeTextures[nonuniformEXT(sceneBuffer.ibl.irradianceMapIndex)],
+                                   samplers[SAMPLER_LINEAR]),
+                       normalize(dir))
+                   .rgb,
+               vec3(32.0));
+}
+
+vec3 evaluateSHIrradiance(vec3 N) {
+    vec3 rN         = mat3(sceneBuffer.ibl.envRotation) * N;
+    const float A0  = PI;
+    const float A1  = 2.0 * PI / 3.0;
+    const float Y00 = 0.282095;
+    const float Y1x = 0.488603;
+    vec3 irr        = vec3(0.0);
+    irr += sceneBuffer.ibl.shL0_M0.rgb * A0 * Y00;
+    irr += sceneBuffer.ibl.shL1_Mp1.rgb * A1 * Y1x * rN.x;
+    irr += sceneBuffer.ibl.shL1_Mn1.rgb * A1 * Y1x * rN.y;
+    irr += sceneBuffer.ibl.shL1_M0.rgb * A1 * Y1x * rN.z;
+    return max(irr, vec3(0.0));
+}
 
 void main() {
     /* Jitter compensation for alpha-cutout: undo the UV shift caused by
@@ -126,14 +163,40 @@ void main() {
         albedo = mix(inVertColor, inColor, tintable);
     }
 
-    // Ambient (from the sun UBO): zeroed, so shadowed vegetation is
-    // pure black.
-    //
+    // Ambient / IBL — keep this matched with scene.frag so a house does
+    // not go pitch black on the side the sun does not reach.  Irradiance
+    // (or SH / equirect fallback) sampled with the visible-surface normal,
+    // diffuse-only: props are matte.
+    vec3 ambientDiffuse = vec3(0.03) * albedo;
+    if (sceneBuffer.ibl.enabled != 0u) {
+        vec3 irradiance;
+        if (sceneBuffer.ibl.irradianceMapIndex != 0u)
+            irradiance = sampleIrradiance(N);
+        else if (sceneBuffer.ibl.hasSH != 0u)
+            irradiance = evaluateSHIrradiance(N);
+        else
+            irradiance = sampleEnvironment(N, sceneBuffer.ibl.environmentMapMaxLod);
+        ambientDiffuse = irradiance * albedo / PI * sceneBuffer.ibl.intensity;
+    }
+
+    // Shadow darkening: reduce IBL in cascade-shadowed areas.  Use only the
+    // cascade shadow (not contact shadows, which are screen-space and would
+    // suppress IBL everywhere on the ground).  At grazing angles (NdotL → 0)
+    // self-shadowing in the shadow map is an artifact (orthogonal faces
+    // shadowing each other) — preserve the ambient fill for those faces so
+    // they do not go pitch black.  Same behaviour as scene.frag.
+    vec3 shadowDarkFactor = mix(vec3(1.0), vec3(1.0 - SHADOW_DARKNESS), vec3(1.0 - shadowFull.rgb));
+    shadowDarkFactor      = mix(shadowDarkFactor, vec3(1.0), smoothstep(0.3, 0.0, NdotL));
+
+    // Constant ambient fill in shadow prevents dark-coloured props from
+    // going too dark.
+    vec3 shadowFill = vec3(1.0 - SHADOW_DARKNESS) * (1.0 - shadowFull.rgb) * 0.03;
+
     // Energy-consistent with the PBR passes: the Lambert diffuse integrates
     // to 1/PI, so the direct sun term carries the same /PI that scene.frag
     // and heightmap_terrain.frag apply.
-    vec3  ambient  = sceneBuffer.directionalLight.ambient.rgb;
-    vec3  color    = albedo * (sunColor / PI) * NdotL * shadow + ambient * albedo;
+    vec3  color = ambientDiffuse * shadowDarkFactor + shadowFill
+                + albedo * (sunColor / PI) * NdotL * shadow;
 
     // Forward+ point/spot lights: Lambert-only accumulation (vegetation is
     // matte, so the specular GGX term is skipped).  Same light-grid source
