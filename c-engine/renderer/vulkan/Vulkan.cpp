@@ -30,6 +30,7 @@
 #include "renderer/vulkan/pass/ssr/VulkanSsrPass.h"
 #include "renderer/vulkan/pass/volumetric/VulkanVolumetricPass.h"
 #include "timer/Timer.h"
+#include "renderer/vulkan/pass/diffuse_gi/VulkanDiffuseGIPass.h"
 #include "renderer/vulkan/pass/composite/VulkanCompositePass.h"
 #include "renderer/vulkan/pass/light_culling/VulkanLightCullingPass.h"
 #include "renderer/vulkan/pass/skybox/VulkanSkyboxPass.h"
@@ -302,6 +303,7 @@ void vulkanInit(void) {
     addPass(&vulkanAOPass);
     addPass(&vulkanVolumetricPass);
     addPass(&vulkanDecalPass);
+    addPass(&vulkanDiffuseGIPass);
     addPass(&vulkanCompositePass);
     addPass(&vulkanTaaPass);
     addPass(&vulkanDofPass);

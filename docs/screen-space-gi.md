@@ -21,6 +21,41 @@ Karl Petersen, "Simplified Diffusion for Real-Time GI" (2017).
 - Best when: lowest-effort win; hides well behind a slider; only needs the
   direct-lighting buffer + normals/depth. Roughly ~100 lines of shader per pass.
 
+### Implemented (this engine)
+
+`c-engine/renderer/vulkan/pass/diffuse_gi/` — `VulkanDiffuseGIPass` +
+`shaders/pass/diffuse_gi/diffuse_gi.comp`. Registered between `decal` and
+`composite` in `Vulkan.cpp`:
+
+- **Input:** the directly-lit `sceneColor` (post-OIT) + depth + oct-encoded
+  normals.
+- **Diffusion:** N iterations (default 3) of a 3×3 edge-aware blur,
+  ping-ponged between two **half-resolution** buffers (linear upsampling in
+  the composite). Per-tap weight = gaussian falloff × relative inverse-depth
+  edge (occlusion) × normal-dot edge (surface orientation). Sky pixels are
+  copied verbatim and sky taps contribute nothing (no horizon smear).
+- **Output:** the composite pass adds `(diffused - direct)` clamped
+  non-negative per channel × strength — pure bounce light (colour bleed,
+  light leak into shadows) on top of untouched direct lighting. Added before
+  AO so occlusion attenuates the bounce, before fog so distance still erases
+  it.
+- **Toggles:** settings → graphics → "Diffusion GI" (persisted as
+  `giDisabled`), debug GUI (Ctrl+B) → "Diffusion GI" button.
+- **Env vars** (see the pass header for details):
+  `ENGINE_GI_DISABLED`, `ENGINE_GI_ITER` (default 3, 1..8),
+  `ENGINE_GI_STRENGTH` (default 1.0), `ENGINE_GI_RES` (buffer scale, default
+  0.5), `ENGINE_GI_RADIUS` (gaussian radius in render-res px, default 1.4),
+  `ENGINE_GI_DEPTH_EDGE` (default 0.05), `ENGINE_GI_NDOT_MIN` / `_MAX`
+  (0.4 / 0.9).
+- **Cost (debug build, 2880×1627 native):** ~0.65 ms at half-res 3×3;
+  ~2.4 ms at full-res 5×5 (unoptimized debug shaders — release will be
+  cheaper).
+- **Tuning notes:** shadow interiors stay dark (diffusion only leaks a few
+  pixels past edges) — expected for this method, not a bug. If the bleed
+  looks too strong, lower `ENGINE_GI_STRENGTH` before touching the edge
+  thresholds; the normal-dot window is what stops grass colour climbing a
+  vertical wall.
+
 ## 2. SSGI / screen-space ray-march
 
 Geometer et al. (2016); used by Unreal Engine 5.1.
@@ -57,10 +92,9 @@ NVIDIA (2021).
 
 ## Recommendation for this engine
 
-- Lowest-effort first step: **diffusion GI** (#1) — only needs the existing
-  direct-lighting buffer plus normals/depth, no new dependencies.
-- If we want something demonstrable: **SVOGI** (#4) — best quality-per-ms in
-  a software path.
+Implemented: **diffusion GI** (#1, see above). If we want something
+demonstrable beyond it, **SVOGI** (#4) is the best quality-per-ms in a
+software path.
 
 ## References
 

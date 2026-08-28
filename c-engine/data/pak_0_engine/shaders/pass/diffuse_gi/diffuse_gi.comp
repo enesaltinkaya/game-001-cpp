@@ -1,0 +1,119 @@
+#version 460
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_nonuniform_qualifier : require
+#extension GL_ARB_shading_language_include : enable
+
+#include "../../includes/utils.shader"
+#include "../../includes/globalset.shader"
+
+/* One iteration of edge-aware colour diffusion (screen-space GI, Petersen
+ * "Simplified Diffusion for Real-Time GI").
+ *
+ * Blurs the directly-lit scene colour so light "flows" from bright regions
+ * into dark ones and neighbouring surface colours bleed into each other
+ * (grass green onto a wall base).  Each tap's weight is the product of:
+ *   - a gaussian distance falloff (spatial spread),
+ *   - a relative inverse-depth term (blocks light crossing occluders),
+ *   - a normal-dot term (blocks light flowing across surface orientation
+ *     changes, e.g. ground -> vertical wall).
+ * Sky pixels are never diffused (copied verbatim) so the skybox stays crisp
+ * and the horizon does not smear.  Sky taps contribute nothing.
+ *
+ * The pass runs several iterations, ping-ponging between two buffers; the
+ * composite pass then adds (diffused - direct) clamped non-negative per
+ * channel, scaled by a strength — pure bounce light on top of untouched
+ * direct lighting. */
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(push_constant) uniform PushConstants {
+    uint srcIndex;       /* directly-lit colour input (sampled)  */
+    uint depthIndex;     /* depth buffer (sampled, sky = 0)      */
+    uint normalsIndex;  /* oct-encoded normals (sampled)        */
+    uint outIndex;       /* diffused output (storage)            */
+    uint width;
+    uint height;
+    float radius;         /* gaussian falloff, GI-buffer px          */
+    float depthEdge;      /* relative inv-depth diff -> weight 0     */
+    float normalEdgeMin;  /* nDot where the weight starts            */
+    float normalEdgeMax;  /* nDot where the weight is full            */
+} pc;
+
+/* Inverse view-space depth S (affine in the raw buffer value); relative
+ * differences in S equal relative differences in true view distance.
+ * Same convention as ao_temporal.comp. */
+float depthToInv(float rawDepth) {
+    if (rawDepth <= 0.0) return 0.0;
+    float N = sceneBuffer.cameras[0].zNear;
+    float F = sceneBuffer.cameras[0].zFar;
+    return (N + (F - N) * rawDepth) / (N * F);
+}
+
+void main() {
+    ivec2 coord = ivec2(gl_GlobalInvocationID.xy);
+    if (coord.x >= int(pc.width) || coord.y >= int(pc.height)) return;
+
+    vec2 outRes = vec2(pc.width, pc.height);
+    /* Both the GI buffer and the full-res source buffers cover the same
+     * screen, so a +-1 output-pixel offset is the same UV offset in both:
+     * the linear sampler averages the source pixels under each GI pixel. */
+    vec2 centerUv = (vec2(coord) + 0.5) / outRes;
+
+    float centerDepth = texture(
+        sampler2D(textures[nonuniformEXT(pc.depthIndex)], samplers[SAMPLER_NEAREST]),
+        centerUv).r;
+
+    if (centerDepth <= 0.0) {
+        /* Sky: copy verbatim (no diffusion, no horizon smear). */
+        imageStore(storageImages[nonuniformEXT(pc.outIndex)], coord, texture(
+            sampler2D(textures[nonuniformEXT(pc.srcIndex)], samplers[SAMPLER_CLAMP_LINEAR]),
+            centerUv));
+        return;
+    }
+
+    vec3 centerColor = texture(
+        sampler2D(textures[nonuniformEXT(pc.srcIndex)], samplers[SAMPLER_CLAMP_NEAREST]),
+        centerUv).rgb;
+    vec3 centerN = OctDecode(texture(
+        sampler2D(textures[nonuniformEXT(pc.normalsIndex)], samplers[SAMPLER_NEAREST]),
+        centerUv).rg);
+    float s0 = depthToInv(centerDepth);
+
+    vec3 acc  = centerColor;
+    float wSum = 1.0;
+    float inv2R2 = 1.0 / (2.0 * pc.radius * pc.radius);
+
+    for (int y = -1; y <= 1; y++) {
+        for (int x = -1; x <= 1; x++) {
+            if (x == 0 && y == 0) continue;
+
+            vec2 tapUv = centerUv + vec2(float(x), float(y)) / outRes;
+
+            float tapDepth = texture(
+                sampler2D(textures[nonuniformEXT(pc.depthIndex)], samplers[SAMPLER_NEAREST]),
+                tapUv).r;
+            if (tapDepth <= 0.0) continue;  /* sky tap: no bleed */
+
+            vec3 tapN = OctDecode(texture(
+                sampler2D(textures[nonuniformEXT(pc.normalsIndex)], samplers[SAMPLER_NEAREST]),
+                tapUv).rg);
+
+            /* Occlusion: relative inverse-depth difference. */
+            float dRel = abs(s0 - depthToInv(tapDepth)) / max(s0, 1e-6);
+            float depthW = 1.0 - smoothstep(0.0, pc.depthEdge, dRel);
+            /* Surface orientation change. */
+            float normalW = smoothstep(pc.normalEdgeMin, pc.normalEdgeMax, dot(centerN, tapN));
+
+            float w = exp(-float(x * x + y * y) * inv2R2) * depthW * normalW;
+            if (w <= 0.0) continue;
+
+            acc  += w * texture(
+                sampler2D(textures[nonuniformEXT(pc.srcIndex)], samplers[SAMPLER_CLAMP_NEAREST]),
+                tapUv).rgb;
+            wSum += w;
+        }
+    }
+
+    imageStore(storageImages[nonuniformEXT(pc.outIndex)], coord, vec4(acc / wSum, 1.0));
+}

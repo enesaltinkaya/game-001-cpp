@@ -19,8 +19,10 @@ layout(push_constant) uniform PushConstants {
     uint volumetricColorIndex;
     uint weatherMaskIndex;   // 0xFFFFFFFF = no weather pass / no mask
     uint aoIndex;            // 0xFFFFFFFF = AO disabled / no output
+    uint giIndex;            // 0xFFFFFFFF = diffusion GI disabled / no output
     uint width;
     uint height;
+    float giStrength;        // bounce term scale
 } pc;
 
 void main() {
@@ -108,6 +110,20 @@ void main() {
 
         // ── 7. Base composite (direct lighting + reflections) ────────────
         composite = sceneCol * (1.0 - reflBlend) + reflBlend * reflColor;
+
+        // ── 7a. Diffusion GI (screen-space light diffusion) ───────────
+        // giIndex holds the scene colour after N edge-aware diffusion
+        // iterations; (gi - scene) is the light that flowed in across
+        // surface boundaries (colour bleed).  Clamped non-negative per
+        // channel so it only adds bounce light — direct lighting keeps
+        // its full sharpness.  Added before AO so occlusion attenuates
+        // the bounce too, and before fog so distance still erases it.
+        if (pc.giIndex != 0xFFFFFFFFu) {
+            vec3 giCol = texture(
+                sampler2D(textures[nonuniformEXT(pc.giIndex)], samplers[SAMPLER_CLAMP_LINEAR]),
+                uv).rgb;
+            composite += max(giCol - sceneCol, vec3(0.0)) * pc.giStrength;
+        }
 
         // ── 7b. Ambient occlusion (CACAO) ───────────────────────────────
         // Applied before fog (step 8) so fogged geometry fades to the fog
