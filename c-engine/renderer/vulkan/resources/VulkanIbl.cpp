@@ -531,7 +531,7 @@ namespace engine {
         tempViews.push_back(view);
         VulkanImage target = makeAttachmentProxy(&ibl.brdfLut, view, 0);
         vulkanBeginRender(.cmd = cmd, .pipe = &brdfPipe, .color1 = &target);
-        vulkanViewport(cmd, 0, 0, target.extent.width, target.extent.height);
+        vulkanViewport(cmd, 0, target.extent.height, target.extent.width, -((i32)target.extent.height));
         vulkanScissor(cmd, 0, 0, target.extent.width, target.extent.height);
         vulkanBindPipe(cmd, &brdfPipe);
         vulkanDraw(cmd, 3, 1);
@@ -546,7 +546,7 @@ namespace engine {
             tempViews.push_back(view);
             VulkanImage target = makeAttachmentProxy(&ibl.irradiance, view, 0);
             vulkanBeginRender(.cmd = cmd, .pipe = &irradiancePipe, .color1 = &target);
-            vulkanViewport(cmd, 0, 0, target.extent.width, target.extent.height);
+            vulkanViewport(cmd, 0, target.extent.height, target.extent.width, -((i32)target.extent.height));
             vulkanScissor(cmd, 0, 0, target.extent.width, target.extent.height);
             vulkanBindPipe(cmd, &irradiancePipe);
             IblFacePushConstants pc = {.environmentMapIndex = environmentMapIndex,
@@ -569,7 +569,7 @@ namespace engine {
                 tempViews.push_back(view);
                 VulkanImage target = makeAttachmentProxy(&ibl.prefilter, view, mip);
                 vulkanBeginRender(.cmd = cmd, .pipe = &prefilterPipe, .color1 = &target);
-                vulkanViewport(cmd, 0, 0, target.extent.width, target.extent.height);
+                vulkanViewport(cmd, 0, target.extent.height, target.extent.width, -((i32)target.extent.height));
                 vulkanScissor(cmd, 0, 0, target.extent.width, target.extent.height);
                 vulkanBindPipe(cmd, &prefilterPipe);
                 IblFacePushConstants pc = {.environmentMapIndex = environmentMapIndex,
