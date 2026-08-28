@@ -23,6 +23,8 @@
  */
 
 namespace engine {
+struct VulkanImage;
+
 class VulkanHeightmapTerrainPass : public System {
 public:
     VulkanHeightmapTerrainPass();

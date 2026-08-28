@@ -39,12 +39,6 @@
 #define HEIGHTMAP_TEX           512
 #define HEIGHTMAP_PHYSICS_PSN   256
 
-// Phase 4 (baked GI): per-tile sky-visibility irradiance, 128^2 RGBA u8
-// (16 m per texel over the 2048 m tile; the alpha channel is always 255 —
-// R8G8B8 packed is not supported as a linear-filterable sampled image by
-// some drivers). Texel-centred, bilinear — see plans/terrain-baked-gi.md.
-#define HEIGHTMAP_GI_DIM 128
-
 namespace engine {
 enum HeightmapTileState {
     HEIGHTMAP_TILE_EMPTY = 0,  // allocated, no data (phase-0 terminal state)
@@ -74,12 +68,6 @@ struct HeightmapTile {
 
     // Phase 3: Jolt heightfield body.
     void* physicsData;
-
-    // Phase 4: baked GI — sky-visibility irradiance as the terrain sees it
-    // ([HEIGHTMAP_GI_DIM]^2 RGBA u8, alpha = 255). Baked on the builder
-    // thread shortly after the grids go READY; freed with the tile.
-    std::vector<u8> gi = {};
-    bool giReady;
 
     u64 lruStamp;
 };
@@ -166,9 +154,6 @@ struct HeightmapTileView {
     float originX, originZ;
     float sizeMeters;
     const float* heights; // [HEIGHTMAP_TEX]^2, metres
-    const u8* gi;         // [giDim]^2 RGBA (alpha = 255), valid when giReady
-    u32 giDim;
-    bool giReady;
 };
 
 // Copy the READY tiles into outViews (up to cap entries). Safe from any

@@ -34,7 +34,6 @@ layout(push_constant, std430) uniform HeightmapPC {
     vec4 tile;   // x = originX, y = originZ, z = sizeMeters, w = gridSegments
     vec4 flags;  // x = heightScale, y = texDim (TEX), z = wireFrame,
                  // w = debugHeightRamp
-    vec4 gi;     // x = giValid (0/1), y = GI texture id (bindless pool index)
 } pc;
 
 #include "../../includes/utils.shader"
@@ -47,14 +46,6 @@ layout(push_constant, std430) uniform HeightmapPC {
 // TERRAIN_DETAIL_REFERENCE_METERS ratio and the experimental azgaar pass, so
 // the grass reads at the same density on both backends.
 #define AZGAAR_GRASS_TILE (2048.0 / 7000.0)
-
-// Baked GI lightmap (plans/terrain-baked-gi.md): 128^2 RGB u8 per 2048 m
-// tile (16 m texels), baked irradiance = hemispheric sky integral. Stored in
-// the global bindless array; the per-tile pool index is pushed in pc.gi.y.
-// GI_SCALE corrects the magnitude against the SH L0 path (same order, start
-// at 1.0 — tune by eye against the parked scene).
-#define HEIGHTMAP_GI_DIM 128.0
-#define HEIGHTMAP_GI_SCALE 1.0
 
 #define AZGAAR_CLIFF_DETAIL_TILE 32.0
 #define CLIFF_TRIPLANAR_SCALE (AZGAAR_CLIFF_DETAIL_TILE / 4096.0)
@@ -500,24 +491,6 @@ void main() {
                 irradiance = max(irradiance, vec3(0.0));
             } else {
                 irradiance = vec3(0.5);
-            }
-
-            // Baked GI: replace the uniform SH/IBL diffuse irradiance with
-            // the value the terrain actually sees at this point (valleys
-            // darker, ridges brighter). The per-tile GI texture lives in the
-            // GLOBAL bindless array (its pool index rides in pc.gi.y, like
-            // every other scene texture here). Texel-centred addressing: the
-            // GI grid is DIM texels over the FULL tile edge, so texel (gx, gz)
-            // is centred at (gx + 0.5) * size / DIM. Bilinear filtering over
-            // the 16 m texels is the point. The sun-shadow ambient fade
-            // below still applies to baked GI (keeps shadowed terrain from
-            // staying sky-lit); the specular IBL cubemap is untouched
-            // (occlusion of reflections is out of scope for v1).
-            if (pc.gi.x > 0.5) {
-                vec2 giUv = (inWorldPos.xz - pc.tile.xy) / pc.tile.z + 0.5 / HEIGHTMAP_GI_DIM;
-                irradiance = texture(
-                    sampler2D(textures[nonuniformEXT(uint(pc.gi.y))], samplers[SAMPLER_LINEAR]),
-                    giUv).rgb * HEIGHTMAP_GI_SCALE;
             }
 
             vec3 prefilteredColor =

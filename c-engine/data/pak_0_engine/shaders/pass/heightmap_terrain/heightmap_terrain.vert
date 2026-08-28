@@ -37,7 +37,6 @@ layout(push_constant, std430) uniform HeightmapPC {
     vec4 tile;   // x = originX, y = originZ, z = sizeMeters, w = gridSegments
     vec4 flags;  // x = heightScale, y = texDim (TEX, e.g. 512),
                  // z = wireFrame, w = debugHeightRamp
-    vec4 gi;     // x = giValid (0/1), y = GI texture id (bindless pool index), zw unused
 } pc;
 
 layout(set = 1, binding = 0) uniform sampler2D heightTex;

@@ -5,6 +5,7 @@
 #include "ecs/system/lua/LuaSystem.h"
 #include "events/Events.h"
 #include "futuretask/FutureTask.h"
+#include "renderer/gui/rmlui/guis/debugGui/DebugGui.h"
 #include "rmlui/wrapper/src/crmlui.h"
 #include "settings/Settings.h"
 #include "renderer/vulkan/pass/rmlui/VulkanRmluiPass.h"
@@ -86,6 +87,12 @@ void GuiManagerRmlUi::added() {
 
     if (utils::settingsGetBool("showFps")) {
         guiManagerAddGuiNextFrame(&rmluiShowFpsGui);
+    }
+
+    // Headless testing: ENGINE_DEBUG_GUI=1 shows the debug GUI without the
+    // interactive Ctrl+B toggle (e.g. screenshot runs).
+    if (getenv("ENGINE_DEBUG_GUI") != nullptr) {
+        guiManagerAddGuiNextFrame(&debugGui);
     }
 
     // statsGuiToggle();

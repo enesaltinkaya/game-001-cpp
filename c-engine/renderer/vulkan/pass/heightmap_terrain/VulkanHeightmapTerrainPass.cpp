@@ -23,7 +23,7 @@ VulkanHeightmapTerrainPass vulkanHeightmapTerrainPass;
 VulkanHeightmapTerrainPass::VulkanHeightmapTerrainPass() : System("heightmap_terrain") {}
 
 // ── Push constants ────────────────────────────────────────────────────────
-// Layout must match the GLSL `HeightmapPC` (tile vec4, flags vec4, gi vec4).
+// Layout must match the GLSL `HeightmapPC` (tile vec4, flags vec4).
 // The depth prepass pipe declares a smaller (2-vec4) block in its own
 // pipeline — that is fine: each pipeline validates push constants against
 // its own stage declarations only.
@@ -36,8 +36,6 @@ typedef struct HeightmapTerrainPushConstants {
     float texDim;      // HEIGHTMAP_TEX (512)
     float wireFrame;   // 0/1 (scene pipe only)
     float debugHeightRamp; // 0/1 (scene pipe only)
-    float giValid;     // 0/1: baked GI ready (scene pipe only)
-    float giIndex;     // GI texture id: bindless pool index (scene pipe only)
 } HeightmapTerrainPushConstants;
 
 // ── State ─────────────────────────────────────────────────────────────────
@@ -47,11 +45,9 @@ static VulkanPipe sceneWireFramePipe;
 static VulkanPipe prepassPipe;
 
 // Descriptor-set layout used by the pipeline layouts (set1 = height).
-// The height texture is the only per-tile descriptor; the baked GI texture
-// lives in the GLOBAL bindless array (textures[MAX_IMAGES]) like every other
-// scene texture — its pool index rides in the push constants (pc.gi.y) and
-// is only sampled when pc.gi.x (giValid) is set. Per-tile descriptor sets
-// are created separately with an identical structure and bound at draw time.
+// The height texture is the only per-tile descriptor; per-tile descriptor
+// sets are created separately with an identical structure and bound at draw
+// time.
 static VulkanDesc layoutHeightDesc;
 
 static bool wireFrameEnabled       = false;
@@ -59,7 +55,6 @@ static bool debugHeightRampEnabled = false;
 static bool terrainDefaultsSet     = false;
 
 #define HEIGHTMAP_PASS_UPLOADS_PER_FRAME 3 // GPU uploads budgeted per frame
-#define HEIGHTMAP_PASS_GI_UPLOADS_PER_FRAME 2 // late GI uploads (own budget, separate)
 
 // Heights stay f32 end to end (CPU grid -> R32F texture): R32F linear
 // filtering is guaranteed by core Vulkan, so there is no driver format
@@ -67,17 +62,14 @@ static bool terrainDefaultsSet     = false;
 // accepted (the 5x5 window's VRAM budget covers it).
 static const VkFormat heightFormat = VK_FORMAT_R32_SFLOAT;
 
-// Per-tile GPU data (height texture + GI texture + descriptor set).
-// Managed on the main renderer thread; the CPU side (grids + GI) lives in
+// Per-tile GPU data (height texture + descriptor set).
+// Managed on the main renderer thread; the CPU side (grids) lives in
 // HeightmapTerrain.
 typedef struct HeightmapGpuTile {
     bool        inUse;
     i32         tileX, tileZ;
     u64         readyStamp;
     VulkanImage heightTex;
-    VulkanImage giTex;
-    bool        giValid;
-    u32         giIndex; // bindless pool index of giTex (pc.gi.y)
     VulkanDesc  heightDesc;
 } HeightmapGpuTile;
 
@@ -208,7 +200,6 @@ static void swapchainCreated(void*) {
 
 static void heightmapGpuTileDestroy(HeightmapGpuTile* e) {
     if (e->heightTex.img) vulkanDestroyImage(&e->heightTex, VK_NULL_HANDLE);
-    if (e->giTex.img) vulkanDestroyImage(&e->giTex, VK_NULL_HANDLE);
     if (e->heightDesc.set) {
         deferredDescs.push_back((DeferredDescDestroy{.desc = e->heightDesc, .framesLeft = 3}));
         e->heightDesc = VulkanDesc{};
@@ -226,12 +217,8 @@ static void heightmapPassReset(void) {
 // Upload one tile's CPU height grid to the GPU (R32F) and (re)bind the
 // entry's descriptor set. The CPU height grid is f32 and the texture is R32F,
 // so the grid pointer is copied straight to the image (no staging buffer of
-// our own, no conversion). When the tile's baked GI is ready it rides along
-// in the SAME transient command (64 KB R8G8B8A8, registered in the global
-// bindless array — pool index pushed as pc.gi.y); until then giValid stays
-// false and the fragment shader keeps the IBL/SH ambient. The transient
-// command's fence is waited on, so the textures are complete before the
-// scene pass samples them.
+// our own, no conversion). The transient command's fence is waited on, so
+// the texture is complete before the scene pass samples it.
 static bool heightmapPassUploadTile(HeightmapGpuTile* e, const HeightmapTileView* v) {
     static int hitchOn = -1;
     if (hitchOn < 0) hitchOn = getenv("ENGINE_HITCH_DEBUG") != NULL;
@@ -252,25 +239,6 @@ static bool heightmapPassUploadTile(HeightmapGpuTile* e, const HeightmapTileView
         return false;
     }
 
-    VulkanImage giImg;
-    if (v->giReady && v->gi) {
-        // noPool stays 0: the GI texture registers in the global bindless
-        // array (textures[MAX_IMAGES]) like every other scene texture, and
-        // its pool index is pushed per tile (pc.gi.y). The fragment shader
-        // only samples it when giValid is set, so no descriptor bookkeeping
-        // beyond the image's own lifecycle is needed.
-        giImg = vulkanCreateImage(
-            .name   = utils::strtmp("heightmap_gi_%d_%d", v->tileX, v->tileZ),
-            .format = VK_FORMAT_R8G8B8A8_UNORM,
-            .usage  = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
-            .width  = (int)v->giDim,
-            .height = (int)v->giDim);
-        if (!giImg.img) {
-            utils::warn("heightmapTerrain: GI image creation failed tile(%d,%d)", v->tileX, v->tileZ);
-            giImg = VulkanImage{};
-        }
-    }
-
     VulkanCommand* cmd = vulkanTransientBegin();
     vulkanTransition(cmd, &heightImg, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 0, 1);
     vulkanCopy(.cmd = cmd,
@@ -278,14 +246,6 @@ static bool heightmapPassUploadTile(HeightmapGpuTile* e, const HeightmapTileView
                .target.img  = &heightImg,
                .size        = (u32)(n * sizeof(float)));
     vulkanTransition(cmd, &heightImg, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
-    if (giImg.img) {
-        vulkanTransition(cmd, &giImg, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 0, 1);
-        vulkanCopy(.cmd = cmd,
-                   .source.data = (void*)v->gi,
-                   .target.img  = &giImg,
-                   .size        = (u32)((size_t)v->giDim * v->giDim * 4));
-        vulkanTransition(cmd, &giImg, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
-    }
     {
         double te0 = utils::nanos();
         vulkanTransientEnd(cmd, 1);
@@ -298,53 +258,11 @@ static bool heightmapPassUploadTile(HeightmapGpuTile* e, const HeightmapTileView
     }
     vulkanUpdateDesc(&e->heightDesc, VULKAN_BINDING_COMBINED_IMAGE_SAMPLER, &heightImg, 0, 0);
 
-    if (giImg.img) {
-        e->giTex   = giImg;
-        e->giIndex = (u32)giImg.sampledPoolIndex;
-        e->giValid = true;
-    } else {
-        e->giValid = false;
-    }
-
     e->heightTex    = heightImg;
     e->tileX        = v->tileX;
     e->tileZ        = v->tileZ;
     e->readyStamp   = v->readyStamp;
     e->inUse        = true;
-    return true;
-}
-
-// Late GI upload: the tile's height texture is already on the GPU but its
-// baked GI only just arrived on the builder thread. Upload the GI image into
-// the global bindless array and record its pool index — the height texture
-// and the main upload budget are untouched. Main renderer thread.
-static bool heightmapPassUploadGi(HeightmapGpuTile* e, const HeightmapTileView* v) {
-    if (!v->giReady || !v->gi) return false;
-
-    VulkanImage giImg = vulkanCreateImage(
-        .name   = utils::strtmp("heightmap_gi_%d_%d", v->tileX, v->tileZ),
-        .format = VK_FORMAT_R8G8B8A8_UNORM,
-        .usage  = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
-        .width  = (int)v->giDim,
-        .height = (int)v->giDim);
-    if (!giImg.img) {
-        utils::warn("heightmapTerrain: late GI image creation failed tile(%d,%d)", v->tileX, v->tileZ);
-        return false;
-    }
-
-    VulkanCommand* cmd = vulkanTransientBegin();
-    vulkanTransition(cmd, &giImg, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 0, 1);
-    vulkanCopy(.cmd = cmd,
-               .source.data = (void*)v->gi,
-               .target.img  = &giImg,
-               .size        = (u32)((size_t)v->giDim * v->giDim * 4));
-    vulkanTransition(cmd, &giImg, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
-    vulkanTransientEnd(cmd, 1);
-
-    if (e->giTex.img) vulkanDestroyImage(&e->giTex, VK_NULL_HANDLE); // normally absent (giValid == false)
-    e->giTex   = giImg;
-    e->giIndex = (u32)giImg.sampledPoolIndex;
-    e->giValid = true;
     return true;
 }
 
@@ -483,35 +401,7 @@ void VulkanHeightmapTerrainPass::preUpdate() {
             // Keep retrying next frame; do not consume budget.
         }
     }
-
-    // 3) Late GI: a tile's height texture goes up on READY, but its baked GI
-    // lands seconds later on the builder thread. Entries whose GI is now
-    // ready but not yet on the GPU get a GI-only upload here (own 2/frame
-    // budget, nearest first — views are already sorted): the height texture
-    // and the main upload budget are untouched. gpuTileHasView intentionally
-    // does NOT compare giReady, so step 2 never re-uploads the height
-    // texture for this — this path is the only re-acquisition.
-    u32 giBudget = HEIGHTMAP_PASS_GI_UPLOADS_PER_FRAME;
-    for (u32 j = 0; j < viewCount && giBudget > 0; j++) {
-        const HeightmapTileView* v = &views[j];
-        if (!v->giReady) continue;
-        for (u32 i = 0; i < gpuTiles.size(); i++) {
-            HeightmapGpuTile* e = &gpuTiles[i];
-            if (e->inUse && e->tileX == v->tileX && e->tileZ == v->tileZ && e->readyStamp == v->readyStamp &&
-                !e->giValid) {
-                if (heightmapPassUploadGi(e, v)) {
-                    giBudget--;
-                    utils::info("heightmapTerrain: late GI upload for tile(%d,%d) stamp=%llu",
-                                v->tileX,
-                                v->tileZ,
-                                (unsigned long long)v->readyStamp);
-                }
-                break; // at most one entry per tile
-            }
-        }
-    }
-
-    }
+}
 
 // ── Scene pass ────────────────────────────────────────────────────────────
 
@@ -572,8 +462,6 @@ static void heightmapPassDrawTiles(VulkanCommand* cmd,
             .texDim          = (float)HEIGHTMAP_TEX,
             .wireFrame       = (float)wireFrame,
             .debugHeightRamp = (float)debugRamp,
-            .giValid         = e->giValid ? 1.0f : 0.0f,
-            .giIndex         = (float)e->giIndex,
         };
 
         vulkanBindDesc(cmd, pipe, &e->heightDesc, 1);
@@ -703,8 +591,6 @@ void vulkanHeightmapTerrainDrawPrepass(void) {
             .texDim          = (float)HEIGHTMAP_TEX,
             .wireFrame       = 0.0f,
             .debugHeightRamp = 0.0f,
-            .giValid         = 0.0f,
-            .giIndex         = 0.0f,
         };
 
         vulkanBindDesc(cmd, &prepassPipe, &e->heightDesc, 1);
