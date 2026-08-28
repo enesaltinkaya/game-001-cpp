@@ -54,7 +54,7 @@ static FfxResource wrapImageResource(VulkanImage* image, FfxResourceUsage usage,
                                      FfxResourceStates state, const wchar_t* name);
 
 static const VulkanLpmParams lpmParamsDefault = {
-    .contrast         = 1.0f,  /* FFX sample default */
+    .contrast         = 0.6f,  /* FFX sample default */
     .hdrMax           = 3.0f,  /* scene HDR scale (sun radiance ~2.6) */
     .shoulderContrast = 1.5f,
     .saturation       = 0.0f,
