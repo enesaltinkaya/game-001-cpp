@@ -3,6 +3,7 @@
 #include "ecs/system/lua/LuaSystem.h"
 #include "renderer/Renderer.h"
 #include "renderer/gui/rmlui/GuiManagerRmlUi.h"
+#include "renderer/vulkan/pass/ao/VulkanAOPass.h"
 #include "renderer/vulkan/pass/bloom/VulkanBloomPass.h"
 // #include "renderer/vulkan/pass/ssr/VulkanSsrPass.h"
 #include "renderer/vulkan/pass/shadow/VulkanShadowPass.h"
@@ -32,6 +33,7 @@ static char skyboxEnabled;
 static char gridEnabled;
 static char pomEnabled;
 static char contactShadowEnabled;
+static char aoEnabled;
 static char volumetricFogEnabled;
 
 static char* tonemapLabel;
@@ -85,6 +87,7 @@ static void syncFromPasses(void) {
     // gridEnabled       = !vulkanGridPassIsDisabled();
     pomEnabled        = vulkanResourceGetTerrainPomEnabled() != 0;
     contactShadowEnabled = !vulkanContactShadowPassIsDisabled();
+    aoEnabled         = !vulkanAOPassIsDisabled();
     volumetricFogEnabled = !vulkanVolumetricPassIsDisabled();
     /* Tone/gamut mapping is done by the FFX LPM pass — no more custom
      * tonemapping curves to cycle through. */
@@ -246,6 +249,14 @@ static int toggleContactShadow(void* _) {
     return 0;
 }
 
+static int toggleAo(void* _) {
+    (void)_;
+    vulkanAOPassSetDisabled(aoEnabled);
+    syncFromPasses();
+    rmlUpdateDirtyAll(model);
+    return 0;
+}
+
 static int aaCasPrev(void* _) {
     RendererAASettings aa = rendererGetAASettings();
     aa.casStrength -= 0.05f;
@@ -284,6 +295,7 @@ void DebugGui::added() {
     luaRegisterFunction("debugToggleGrid", toggleGrid);
     luaRegisterFunction("debugTogglePOM", togglePOM);
     luaRegisterFunction("debugToggleContactShadow", toggleContactShadow);
+    luaRegisterFunction("debugToggleAo", toggleAo);
     luaRegisterFunction("debugToggleVolumetricFog", toggleVolumetricFog);
     luaRegisterFunction("debugAaCasPrev", aaCasPrev);
     luaRegisterFunction("debugAaCasNext", aaCasNext);
@@ -302,6 +314,7 @@ void DebugGui::added() {
     rmlBind(model, "gridEnabled", &gridEnabled);
     rmlBind(model, "pomEnabled", &pomEnabled);
     rmlBind(model, "contactShadowEnabled", &contactShadowEnabled);
+    rmlBind(model, "aoEnabled", &aoEnabled);
     rmlBind(model, "volumetricFogEnabled", &volumetricFogEnabled);
     rmlBind(model, "tonemapLabel", &tonemapLabel);
     rmlBind(model, "lpmContrast", &lpmContrast);
