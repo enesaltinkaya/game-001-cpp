@@ -53,13 +53,23 @@ void main() {
     vec2 res = vec2(pc.width, pc.height);
     vec2 uv  = (vec2(coord) + 0.5) / res;
 
+    /* Depth and velocity live at render resolution while the GI buffers
+     * run smaller (giResScale): sample them with the GI uv remapped into
+     * full-res uv space, and map reprojected coordinates back out of it
+     * for the history tap.  Sampling full-res textures with the raw GI uv
+     * would read the top-left giResScale corner (wrong motion vectors and
+     * depths, so the history reprojects to wrong places while the camera
+     * moves — visible as grass shimmer under TAA). */
+    vec2 fullRes = vec2(pc.fullWidth, pc.fullHeight);
+    vec2 fullUv  = uv * (fullRes / res);
+
     vec3 curr = texture(
         sampler2D(textures[nonuniformEXT(pc.spatialIndex)], samplers[SAMPLER_CLAMP_LINEAR]),
         uv).rgb;
 
     float s0 = depthToInv(texture(
         sampler2D(textures[nonuniformEXT(pc.depthIndex)], samplers[SAMPLER_NEAREST]),
-        uv).r);
+        fullUv).r);
 
     if (s0 <= 0.0) {
         /* Sky: carry the value, no history (alpha 0 = "no data"). */
@@ -69,8 +79,8 @@ void main() {
 
     vec2 mv = texture(
         sampler2D(textures[nonuniformEXT(pc.velocityIndex)], samplers[SAMPLER_NEAREST]),
-        uv).xy;
-    vec2 prevUv = uv - mv / vec2(pc.fullWidth, pc.fullHeight);
+        fullUv).xy;
+    vec2 prevUv = fullUv - mv / fullRes;
     bool prevValid = prevUv.x >= 0.0 && prevUv.x <= 1.0 &&
                      prevUv.y >= 0.0 && prevUv.y <= 1.0;
 
@@ -78,7 +88,7 @@ void main() {
     if (prevValid) {
         vec4 prev = texture(
             sampler2D(textures[nonuniformEXT(pc.historyIndex)], samplers[SAMPLER_CLAMP_LINEAR]),
-            prevUv);
+            prevUv * (res / fullRes));
         float prevS = max(prev.a, 0.0);
         if (prevS > 1e-5) {
             /* Temporal depth rejection: same S-space convention as

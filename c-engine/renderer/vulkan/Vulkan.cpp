@@ -185,8 +185,13 @@ static void vulkanDebugDumpFrameImages(const char* shotPath) {
     }
     char path[1100];
 
+    /* Tokenize a local copy: strtok_r is destructive, so re-tokenizing the
+     * static dumpNames every shot would leave only the first token left to
+     * parse after the first call (multi-shot dumps would silently shrink). */
+    char tokens[256];
+    snprintf(tokens, sizeof(tokens), "%s", dumpNames);
     char* saveptr = nullptr;
-    for (char* tok = strtok_r(dumpNames, ",", &saveptr); tok;
+    for (char* tok = strtok_r(tokens, ",", &saveptr); tok;
          tok = strtok_r(nullptr, ",", &saveptr)) {
         VulkanImage* img = nullptr;
         if (!strcmp(tok, "velocity")) {
