@@ -163,11 +163,11 @@ void main() {
         albedo = mix(inVertColor, inColor, tintable);
     }
 
-    // Ambient / IBL — keep this matched with scene.frag so a house does
-    // not go pitch black on the side the sun does not reach.  Irradiance
-    // (or SH / equirect fallback) sampled with the visible-surface normal,
-    // diffuse-only: props are matte.
-    vec3 ambientDiffuse = vec3(0.03) * albedo;
+    // Ambient / IBL — keep this matched with scene.frag.  Ambient comes
+    // exclusively from the IBL resource (irradiance / SH / equirect
+    // fallback) sampled with the visible-surface normal, diffuse-only:
+    // props are matte. With IBL disabled there is no fill at all.
+    vec3 ambientDiffuse = vec3(0.0);
     if (sceneBuffer.ibl.enabled != 0u) {
         vec3 irradiance;
         if (sceneBuffer.ibl.irradianceMapIndex != 0u)
@@ -188,15 +188,10 @@ void main() {
     vec3 shadowDarkFactor = mix(vec3(1.0), vec3(1.0 - SHADOW_DARKNESS), vec3(1.0 - shadowFull.rgb));
     shadowDarkFactor      = mix(shadowDarkFactor, vec3(1.0), smoothstep(0.3, 0.0, NdotL));
 
-    // Constant ambient fill in shadow prevents dark-coloured props from
-    // going too dark.
-    vec3 shadowFill = vec3(1.0 - SHADOW_DARKNESS) * (1.0 - shadowFull.rgb) * 0.03;
-
     // Energy-consistent with the PBR passes: the Lambert diffuse integrates
     // to 1/PI, so the direct sun term carries the same /PI that scene.frag
     // and heightmap_terrain.frag apply.
-    vec3  color = ambientDiffuse * shadowDarkFactor + shadowFill
-                + albedo * (sunColor / PI) * NdotL * shadow;
+    vec3 color = ambientDiffuse * shadowDarkFactor + albedo * (sunColor / PI) * NdotL * shadow;
 
     // Forward+ point/spot lights: Lambert-only accumulation (vegetation is
     // matte, so the specular GGX term is skipped).  Same light-grid source

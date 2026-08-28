@@ -467,8 +467,9 @@ void main() {
 
     vec3 Lo = (kD * baseColor / PI + specular) * lightColor * NdotL * shadow;
 
-    // Ambient / IBL
-    vec3 ambientDiffuse  = vec3(0.03) * baseColor;
+    // Ambient / IBL — ambient comes exclusively from the IBL resource;
+    // with IBL disabled there is no fill at all.
+    vec3 ambientDiffuse  = vec3(0.0);
     vec3 ambientSpecular = vec3(0.0);
     if (sceneBuffer.ibl.enabled != 0u) {
         vec3 R                 = reflect(-V, N);
@@ -525,13 +526,6 @@ void main() {
     // Attenuate ambient in shadow so shadowed terrain isn't lit only by sky.
     float shadowAmbientFade = mix(1.0 - SHADOW_DARKNESS, 1.0, mix(1.0, cascadeShadow, NdotL));
     vec3 color = (ambientDiffuse + ambientSpecular) * shadowAmbientFade + Lo;
-
-    // Cheap sky-fill bounce on faces turned away from the sun.
-    {
-        float bounceFactor = 1.0 - NdotL;
-        bounceFactor *= bounceFactor;
-        color += baseColor * lightColor * 0.15 * bounceFactor;
-    }
 
     // Forward+ point/spot lights (includes per-light specular BRDF).
 #if HEIGHTMAP_TERRAIN_ENABLE_SPECULAR

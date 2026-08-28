@@ -204,7 +204,8 @@ void main() {
 
     // Ambient / IBL — keep this matched with scene.frag so an object does
     // not change brightness when it moves from opaque rendering to OIT.
-    vec3 ambientDiffuse  = vec3(0.03) * baseColor.rgb;
+    // Ambient comes exclusively from the IBL resource; no default fill.
+    vec3 ambientDiffuse  = vec3(0.0);
     vec3 ambientSpecular = vec3(0.0);
     if (sceneBuffer.ibl.enabled != 0u) {
         vec3 R                 = reflect(-V, N);

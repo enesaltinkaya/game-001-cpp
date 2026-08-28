@@ -153,7 +153,7 @@ void main() {
 
     // Ambient / IBL — keep matched with triangle.frag's ambient/IBL block.
     // The reflection pass renders unshadowed, so no shadow darkening.
-    vec3 ambientDiffuse  = vec3(0.03) * baseColor.rgb;
+    vec3 ambientDiffuse  = vec3(0.0);
     vec3 ambientSpecular = vec3(0.0);
     if (sceneBuffer.ibl.enabled != 0u) {
         vec3 R                  = reflect(-V, N);

@@ -289,9 +289,9 @@ void main() {
                          .r;
     }
 
-    // Ambient / IBL — keep this matched with scene.frag so an object does
-    // not go pitch black on the side the sun does not reach.
-    vec3 ambientDiffuse  = vec3(0.03) * baseColor.rgb;
+    // Ambient / IBL — keep this matched with scene.frag. Ambient comes
+    // exclusively from the IBL resource; no default fill.
+    vec3 ambientDiffuse  = vec3(0.0);
     vec3 ambientSpecular = vec3(0.0);
     if (sceneBuffer.ibl.enabled != 0u) {
         vec3 R                  = reflect(-V, N);
@@ -333,16 +333,10 @@ void main() {
     vec3 shadowDarkFactor = mix(vec3(1.0), vec3(1.0 - SHADOW_DARKNESS), vec3(1.0 - shadowCascade));
     shadowDarkFactor      = mix(shadowDarkFactor, vec3(1.0), smoothstep(0.3, 0.0, NdotL));
 
-    // Constant ambient fill in shadow prevents dark-textured objects from
-    // going too dark — baseColor is already baked into ambientDiffuse, so
-    // dark texels would otherwise receive almost no fill.
-    vec3 shadowFill = vec3(1.0 - SHADOW_DARKNESS) * (1.0 - shadowCascade) * 0.03;
-
     // Material AO weights the direct light slightly so contact darkening
     // stays visible in strongly sun-lit scenes.
     float directAo = mix(1.0, materialAo, 0.55);
-    vec3 color     = (ambientDiffuse + ambientSpecular) * shadowDarkFactor
-                    + shadowFill + Lo * directAo;
+    vec3 color     = (ambientDiffuse + ambientSpecular) * shadowDarkFactor + Lo * directAo;
 
     // Clearcoat
     if ((material.featureMask & (1u << MAT_HAS_CLEARCOAT)) != 0u) {
