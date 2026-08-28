@@ -30,6 +30,12 @@ namespace engine {
     static const float IBL_INTENSITY      = 1.0f;
     static const float IBL_SPEC_INTENSITY = 0.5f;
 
+    /* The IBL file no longer dictates the sun: every environment map is
+     * rotated so its extracted hotspot lands on this fixed direction. All
+     * IBLs then share the same direct light / shadow direction / sky disc,
+     * with the env sampling (envRotation) rotated to stay consistent. */
+    static const vec3 FIXED_SUN_DIR = {0.3f, 0.8f, -0.5f};
+
     struct VulkanIblResources {
         VulkanImage environment;
         VulkanImage irradiance;
@@ -90,6 +96,7 @@ namespace engine {
     static void pushIblState(void);
     static void buildIblFileList(void);
     static void loadEnvironmentFromPath(const char* path);
+    static void alignSunToFixed(void);
 
     static void pushIblState(void) {
         VulkanIblData data;
@@ -188,6 +195,11 @@ namespace engine {
 
         extractSHAndSun(pixels, width, height, SUN_THRESHOLD);
 
+        /* Reset before aligning so a previous file's envRotation (e.g. from
+         * the debug GUI) can't leak into the alignment. */
+        glm_mat4_identity(ibl.envRotation);
+        alignSunToFixed();
+
         u32 mipLevels = calculateMipLevels(width, height);
         uploadEnvironment(pixels, width, height, mipLevels);
         if (hdrPixels) free(hdrPixels);
@@ -212,8 +224,6 @@ namespace engine {
             ibl.specularIntensity = IBL_SPEC_INTENSITY;
         }
 
-        glm_mat4_identity(ibl.envRotation);
-
         pushIblState();
         utils::info("vulkanIbl: loaded %s (%dx%d envLod=%.0f)",
                     path,
@@ -232,6 +242,9 @@ namespace engine {
             return;
         }
         loadEnvironmentFromPath(iblFiles[iblCurrentIndex].c_str());
+
+        /* Every IBL is rotated onto FIXED_SUN_DIR during
+         * loadEnvironmentFromPath, so the sun never depends on the file. */
     }
 
     void vulkanIblDestroy(void) {
@@ -292,6 +305,59 @@ namespace engine {
 
     float vulkanIblGetIntensity(void) {
         return ibl.intensity;
+    }
+
+    /* Rotate the extracted sun (and the environment sampling) so the direct
+     * light matches FIXED_SUN_DIR regardless of the IBL file. Called right
+     * after extraction, where envRotation is still the identity. */
+    static void alignSunToFixed(void) {
+        vec3 target;
+        target[0] = FIXED_SUN_DIR[0]; target[1] = FIXED_SUN_DIR[1]; target[2] = FIXED_SUN_DIR[2];
+        glm_vec3_normalize(target);
+
+        vec3 from;
+        glm_vec3_copy(ibl.extractedSun.direction, from);
+        glm_vec3_normalize(from);
+
+        mat4 align;
+        glm_mat4_identity(align);
+
+        float dot = glm_vec3_dot(from, target);
+        dot = glm_clamp(dot, -1.0f, 1.0f);
+
+        if (fabsf(dot - 1.0f) > 0.00001f) {
+            vec3 axis;
+            glm_vec3_cross(from, target, axis);
+            float axisLen = glm_vec3_norm(axis);
+            float angle;
+
+            if (axisLen > 0.00001f) {
+                glm_vec3_scale(axis, 1.0f / axisLen, axis);
+                angle = acosf(dot);
+            } else {
+                /* Anti-parallel: any perpendicular axis works for the 180deg
+                 * flip. */
+                if (fabsf(from[1]) < 0.99f) {
+                    axis[0] = 0.0f; axis[1] = 1.0f; axis[2] = 0.0f;
+                } else {
+                    axis[0] = 1.0f; axis[1] = 0.0f; axis[2] = 0.0f;
+                }
+                glm_vec3_normalize(axis);
+                angle = (float)GLM_PIf;
+            }
+
+            glm_rotate_make(align, angle, axis);
+            utils::info("vulkanIbl: aligned sun to fixed direction (rotated %.1fdeg)",
+                        180.0f * angle / 3.14159265f);
+        }
+
+        mat4 alignInv;
+        glm_mat4_transpose_to(align, alignInv);
+        mat4 combined;
+        glm_mat4_mul(alignInv, ibl.envRotation, combined);
+        glm_mat4_copy(combined, ibl.envRotation);
+
+        glm_vec3_copy(target, ibl.extractedSun.direction);
     }
 
     void vulkanIblRotateSun(float azimuthDeg, float elevationDeg) {

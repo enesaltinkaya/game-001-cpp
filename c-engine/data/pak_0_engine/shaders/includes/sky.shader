@@ -24,14 +24,14 @@ vec3 skyEvaluate(vec3 worldDir) {
     float groundFade = smoothstep(0.0, -0.15, elevation);
     skyColor = mix(skyColor, groundColor, groundFade);
 
-    // ── Simple sun disc ───────────────────────────────────────────
+    // ── Sun disc ────────────────────────────────────────────────────────────
     vec3 sunDir = normalize(-sceneBuffer.directionalLight.direction.xyz);
     float sunDot = max(dot(worldDir, sunDir), 0.0);
 
-    // Tight sun disc
-    float sunDisc = smoothstep(0.9985, 0.9995, sunDot);
-    // Wider warm glow around the sun
-    float sunGlow = pow(sunDot, 64.0) * 0.4;
+    // Small, crisp disc: solid core ~0.5deg, tight 0.5-1.0deg AA edge.
+    float sunDisc = smoothstep(0.99985, 0.99995, sunDot);
+    // Narrow halo hugging the disc (gone by ~8deg), not a wide soft halo.
+    float sunGlow = pow(sunDot, 256.0) * 0.2;
 
     vec3 sunColor = sceneBuffer.directionalLight.color.rgb
                   * sceneBuffer.directionalLight.direction.w;  // intensity

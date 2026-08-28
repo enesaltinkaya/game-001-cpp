@@ -48,8 +48,9 @@ vec3 sampleAnalyticSky(vec3 worldDir) {
 
     vec3 sunDir = normalize(-sceneBuffer.directionalLight.direction.xyz);
     float sunDot = max(dot(worldDir, sunDir), 0.0);
-    float sunDisc = smoothstep(0.9985, 0.9995, sunDot);
-    float sunGlow = pow(sunDot, 64.0) * 0.4;
+    // Same small, crisp disc as sky.shader (shared look).
+    float sunDisc = smoothstep(0.99985, 0.99995, sunDot);
+    float sunGlow = pow(sunDot, 256.0) * 0.2;
     vec3 sunColor = sceneBuffer.directionalLight.color.rgb
                   * sceneBuffer.directionalLight.direction.w;
     skyColor += sunDisc * sunColor * 8.0;
