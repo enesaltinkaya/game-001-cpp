@@ -140,9 +140,13 @@ void main() {
 
     float weight = 0.0;
     if (prevValid) {
+        /* reprojPx is in full-res pixel units (fullPx - mv); the history UV
+         * is reprojPx / fullRes in [0,1].  (The old (res/fullRes) factor
+         * scaled to GI-buffer pixel units [0,res), clamping to the corner
+         * texel — the temporal filter never read last frame's field.) */
         vec4 prev = texture(
             sampler2D(textures[nonuniformEXT(pc.historyIndex)], samplers[SAMPLER_CLAMP_LINEAR]),
-            reprojPx * (res / fullRes));
+            reprojPx / fullRes);
         float prevS = max(prev.a, 0.0);
         if (prevS > 1e-5) {
             /* Temporal depth rejection: relative S difference beyond the
