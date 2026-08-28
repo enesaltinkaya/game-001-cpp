@@ -1,0 +1,99 @@
+#version 460
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_nonuniform_qualifier : require
+#extension GL_ARB_shading_language_include : enable
+
+#include "../../includes/utils.shader"
+#include "../../includes/globalset.shader"
+
+/* Temporal filter for the diffusion GI field.
+ *
+ * The spatial diffusion is a fresh screen-aligned blur every frame: as the
+ * camera moves, the fixed low-res tap grid re-aligns against the scene and
+ * the blurred field wiggles frame-to-frame.  Feeding that into TAA makes
+ * the reprojected history disagree with the current frame, TAA's
+ * neighbourhood rejections fire unevenly on high-frequency surfaces (grass)
+ * and the result shimmers.
+ *
+ * Fix (the standard screen-space-GI temporal filter): reproject last
+ * frame's GI field with the same motion vectors TAA uses and blend it
+ * into this frame's spatial result, so the field handed to the composite
+ * is reprojection-consistent.  The history buffer carries this frame's
+ * inverse-view-depth S in its alpha (0 = no data: right after a clear, a
+ * resize, or a sky pixel — must be rejected, same convention as taa.comp). */
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(push_constant) uniform PushConstants {
+    uint spatialIndex;    /* this frame's diffused result (sampled)    */
+    uint historyIndex;    /* previous frame's history (sampled)       */
+    uint velocityIndex;   /* motion vectors (sampled, render-res px)  */
+    uint depthIndex;      /* depth buffer (sampled, sky = 0)          */
+    uint outIndex;        /* new history (storage)                    */
+    uint width;           /* GI buffer width */
+    uint height;          /* GI buffer height */
+    uint fullWidth;       /* velocity buffer dimensions */
+    uint fullHeight;
+    float temporalWeight; /* max history blend (0..1)                 */
+    float depthThreshold; /* relative S-space temporal depth rejection */
+} pc;
+
+float depthToInv(float rawDepth) {
+    if (rawDepth <= 0.0) return 0.0;
+    float N = sceneBuffer.cameras[0].zNear;
+    float F = sceneBuffer.cameras[0].zFar;
+    return (N + (F - N) * rawDepth) / (N * F);
+}
+
+void main() {
+    ivec2 coord = ivec2(gl_GlobalInvocationID.xy);
+    if (coord.x >= int(pc.width) || coord.y >= int(pc.height)) return;
+
+    vec2 res = vec2(pc.width, pc.height);
+    vec2 uv  = (vec2(coord) + 0.5) / res;
+
+    vec3 curr = texture(
+        sampler2D(textures[nonuniformEXT(pc.spatialIndex)], samplers[SAMPLER_CLAMP_LINEAR]),
+        uv).rgb;
+
+    float s0 = depthToInv(texture(
+        sampler2D(textures[nonuniformEXT(pc.depthIndex)], samplers[SAMPLER_NEAREST]),
+        uv).r);
+
+    if (s0 <= 0.0) {
+        /* Sky: carry the value, no history (alpha 0 = "no data"). */
+        imageStore(storageImages[nonuniformEXT(pc.outIndex)], coord, vec4(curr, 0.0));
+        return;
+    }
+
+    vec2 mv = texture(
+        sampler2D(textures[nonuniformEXT(pc.velocityIndex)], samplers[SAMPLER_NEAREST]),
+        uv).xy;
+    vec2 prevUv = uv - mv / vec2(pc.fullWidth, pc.fullHeight);
+    bool prevValid = prevUv.x >= 0.0 && prevUv.x <= 1.0 &&
+                     prevUv.y >= 0.0 && prevUv.y <= 1.0;
+
+    float weight = 0.0;
+    if (prevValid) {
+        vec4 prev = texture(
+            sampler2D(textures[nonuniformEXT(pc.historyIndex)], samplers[SAMPLER_CLAMP_LINEAR]),
+            prevUv);
+        float prevS = max(prev.a, 0.0);
+        if (prevS > 1e-5) {
+            /* Temporal depth rejection: same S-space convention as
+             * taa.comp.  The MV keeps the reprojected tap on the same
+             * world point (camera motion and surface sway are in the
+             * velocity buffer), so this stays ~0 under normal motion
+             * and fires only on true disocclusions / content change. */
+            float depthDiff  = abs(s0 - prevS) / max(s0, prevS);
+            float reject     = smoothstep(pc.depthThreshold * 0.25,
+                                          pc.depthThreshold, depthDiff);
+            float motionConf = 1.0 - smoothstep(0.5, 2.0, length(mv));
+            weight           = pc.temporalWeight * motionConf * (1.0 - reject);
+            curr = mix(curr, prev.rgb, weight);
+        }
+    }
+
+    imageStore(storageImages[nonuniformEXT(pc.outIndex)], coord, vec4(curr, s0));
+}
