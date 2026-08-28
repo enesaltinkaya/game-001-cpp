@@ -22,20 +22,41 @@ build + runtime (strict-warning build, `play` runs, A/B screenshots):
   format is not a linear-filterable sampled image on the RADV driver
   (`vkGetPhysicalDeviceImageFormatProperties2` → `FORMAT_NOT_SUPPORTED`).
   Alpha is always 255; the frag samples `.rgb`.
-- **The bake runs in row-chunks (16 rows ≈ 2 s) and yields to pending grids
-  jobs.** Measured bake is ~15 s per land tile on the worker thread (the
-  1–3 s estimate was off: 16 384 texels × 256 dirs × up to 15 march steps of
-  global `heightAt`). A monolithic bake on the single builder worker would
-  have starved tile streaming (the spawn queue of 25 GI bakes ≈ 6 min of
-  new-tile grid latency). The worker now (a) always selects the earliest
-  non-GI (grids) job before any GI job, and (b) after each chunk re-checks
-  the queue and requeues the GI job (with its partial buffer + row offset +
-  the claimed height snapshot, all in the job) while grids work is pending.
-  Rows are independent and the per-texel math is fixed-order, so a
+- **The bake runs in row-chunks (16 rows) and yields to pending grids
+  jobs.** The worker always selects the earliest non-GI (grids) job before
+  any GI job, and after each chunk re-checks the queue and requeues the GI
+  job (with its partial buffer + row offset + the claimed height snapshot +
+  the fast-reject region lattice, all in the job) while grids work is
+  pending. Rows are independent and the per-texel math is fixed-order, so a
   chunked/resumed bake stays bit-identical (determinism contract intact).
   `HeightmapJob.giOwned` tracks the `inFlight` slot across requeues;
   `destroyData` releases it for dropped queued jobs. Water tiles skip the
-  march and bake in <1 s.
+  march and bake in ~15 ms.
+- **The march is fast-rejected against coarse max lattices** (measured 2026-08-28):
+  the original bake measured ~15 s per land tile (16 384 texels × 256 dirs ×
+  ~14 steps of exact `heightAt` at ~230 ns/call ≈ 60 M calls). Since the
+  per-direction result is boolean (no soft shadow, no distance term), each
+  march step now first tests the MAX of the lattice samples around the step
+  point and only calls the exact `heightAt` when the coarse max is within a
+  margin below the ray:
+  - in-tile steps → the tile's own 4 m fine grid (exact, already in memory),
+    reject margin 0.5 m;
+  - out-of-tile steps → a 32 m regional max lattice (tile + 3 km halo, ~64 k
+    exact calls ≈ 15 ms, built once per bake job and riding in the job
+    across chunk yields), reject margin 3 m.
+  The coarse max can only under-estimate the true cell max by the in-cell
+  curvature excess (a slope never under-estimates — a monotone ramp peaks at
+  a lattice corner), and the Azgaar height field is C1-smooth (bicubic FMG
+  over ~40 m pixels, fBm wavelengths ≥ 64 m, settlement smoothstep bands),
+  so the margins bound the worst case to a missed shadow ~1 lattice cell
+  wide at the foot of a steep feature (subtle on an ambient term). The test
+  is also strictly more robust than the old single-point march (which could
+  tunnel through a ridge between march points). Determinism is intact (the
+  region lattice is a pure function of (source, tileX, tileZ), fixed loop
+  order). Measured: worst land tile 14.6 s → ~0.7 s (21×), partial/coast
+  tiles ~0.7 s → ~0.05 s; a full 25-tile window bakes in <10 s after spawn.
+  The chunk/yield machinery is unchanged (a 16-row chunk is now ~100 ms
+  instead of ~2 s).
 - **`pc.gi` is the 3rd vec4 of the scene pipe's PC block** (tile, flags, gi);
   the depth prepass pipe keeps its 2-vec4 block (separate pipeline, 256 B PC
   range). The C push-constant struct is 9 floats (48 B), pushed to all
@@ -265,16 +286,17 @@ prefiltered cubemap, Forward+) stays untouched. Notes:
   horizon wash. Safe today (no time-of-day), but a future sun-cycle system
   must either (a) scale the GI by a runtime sun-intensity ratio, or (b)
   re-bake per sun state — flag explicitly when that system lands.
-- **Bake CPU time on weak hardware** — 128²/256 dirs is a worst-case
-  choice; both are trivially tunable constants (64²/128 dirs = ~4× cheaper,
-  32 m texels still invisible at the distances terrain is read). A coarse
-  height pyramid (FMG downsampled, fast-reject march) is the intermediate
-  lever if the worker starves grid generation.
+- **Bake CPU time on weak hardware** — largely resolved by the fast-reject
+  march (Status): the dominant cost is now the coarse lattice lookups plus
+  the exact calls that survive the reject, not a fixed 70 M-call march.
+  128²/256 dirs is a worst-case choice; both remain trivially tunable
+  constants (64²/128 dirs = ~4× cheaper, 32 m texels still invisible at the
+  distances terrain is read) if a weak machine still shows bake latency.
 - **GI job starvation**: grid jobs and GI jobs share one queue. On a 25-tile
-  window fill, 25 GI jobs (~50 s of worker time) queue behind the next
-  grid generation. Mitigation if it matters: interleave (always give a
-  grid job priority over a GI job when both are pending) — cheap to add to
-  the worker pop logic.
+  window fill, 25 GI jobs queue behind the next grid generation. With the
+  fast-reject march a full window is <10 s of worker time (was ~50 s), and
+  the grid-priority pop already guarantees streaming never blocks on a GI
+  bake.
 - **Prepass PC layout**: verify the depth prepass's GLSL `HeightmapPC` is a
   *separate* declaration (it is a separate pipeline; only scene + wireframe
   share the extended block). If the build shows a PC-size mismatch, add the
