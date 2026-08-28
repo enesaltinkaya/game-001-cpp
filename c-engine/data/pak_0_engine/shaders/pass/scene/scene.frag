@@ -191,7 +191,7 @@ void main() {
     vec3 Lo = (kD * baseColor.rgb / PI + specular) * lightColor * NdotL * shadow;
 
     // Ambient / IBL
-    vec3 ambientDiffuse  = vec3(0.03) * baseColor.rgb;
+    vec3 ambientDiffuse  = vec3(0.0);
     vec3 ambientSpecular = vec3(0.0);
     if (sceneBuffer.ibl.enabled != 0u) {
         vec3 R                  = reflect(-V, N);
@@ -222,12 +222,8 @@ void main() {
         }
     }
 
-    // Constant ambient fill in shadow prevents dark-textured objects from
-    // going too dark — baseColor is already baked into ambientDiffuse, so
-    // dark texels would otherwise receive almost no fill.
-    vec3 shadowFill = vec3(1.0 - SHADOW_DARKNESS) * (1.0 - shadowCascade) * 0.03;
 
-    vec3 color = (ambientDiffuse + ambientSpecular) * shadowDarkFactor + shadowFill + Lo;
+    vec3 color = (ambientDiffuse + ambientSpecular) * shadowDarkFactor + Lo;
 
     // Forward+ point/spot lights
     vec3 T_aniso = vec3(0.0);

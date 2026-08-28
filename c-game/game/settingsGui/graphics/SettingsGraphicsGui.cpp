@@ -167,6 +167,7 @@ void SettingsGraphicsGui::added() {
     rmlBind(model, "dofLabel", &dofLabel);
     rmlBind(model, "contactShadowLabel", &contactShadowLabel);
     rmlBind(model, "fogLabel", &fogLabel);
+    rmlBind(model, "taaLabel", &taaLabel);
     rmlLoadDocument(document);
     rmlShowDocument(document);
 }
