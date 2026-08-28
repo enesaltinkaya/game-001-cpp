@@ -323,18 +323,24 @@ namespace engine {
                 minV[3],
                 maxV[3]);
 
-            // Remap each channel: [min, max] -> [0, 255]
-            u8* jpg = static_cast<u8*>(malloc(numPixels * channels));
+            // Remap each channel: [min, max] -> [0, 255].  JPEG cannot carry
+            // 1/2-channel data (stb writes it as single-channel gray, silently
+            // dropping the extra channels), so pad to 3 with 255.
+            int outCh = (channels < 3) ? 3 : channels;
+            u8* jpg = static_cast<u8*>(malloc(numPixels * outCh));
+            for (u64 i = 0; i < numPixels * outCh; i++) {
+                jpg[i] = 255;
+            }
             for (u64 i = 0; i < numPixels; i++) {
                 for (int c = 0; c < channels; c++) {
                     float v               = vals[i * channels + c];
                     float range           = maxV[c] - minV[c];
                     float norm            = range > 1e-6f ? (v - minV[c]) / range : 0.0f;
-                    jpg[i * channels + c] = (u8)(norm * 255.0f + 0.5f);
+                    jpg[i * outCh + c] = (u8)(norm * 255.0f + 0.5f);
                 }
             }
             free(vals);
-            ok = stbi_write_jpg(path, (int)w, (int)h, channels, jpg, 80);
+            ok = stbi_write_jpg(path, (int)w, (int)h, outCh, jpg, 80);
             free(jpg);
         } else {
             // BGRA swizzle for swapchain-like formats

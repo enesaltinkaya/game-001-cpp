@@ -83,12 +83,24 @@ void CameraSystem::postUpdate() {
     perspective(cameraEntity);
     rendererSetCamera(camera);
 
+    /* ENGINE_AUTO_RUN: the test moves the player (and with it the camera
+     * transform it derives); saving would clobber the parked camera row. */
+    static char autoRunTest  = 0;
+    static char autoRunInit  = 0;
+    if (!autoRunInit) {
+        autoRunInit           = 1;
+        const char* autoRunEnv = getenv("ENGINE_AUTO_RUN");
+        if (autoRunEnv && *autoRunEnv && atoi(autoRunEnv)) autoRunTest = 1;
+    }
+
     static double lastSave;
     double now = utils::millies();
     if (now > lastSave + 1000) {
-        lastSave             = now;
-        Transform* transform = getComponent(scene, Transform, cameraEntity);
-        transformDbSave("camera", transform);
+        lastSave = now;
+        if (!autoRunTest) {
+            Transform* transform = getComponent(scene, Transform, cameraEntity);
+            transformDbSave("camera", transform);
+        }
     }
     flyingCameraPostUpdate();
 }

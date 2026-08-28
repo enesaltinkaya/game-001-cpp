@@ -120,10 +120,19 @@ void main() {
         // light leak.  strength is a blend factor (1 = fully diffused).
         // Added before AO so occlusion attenuates the bleed too, and
         // before fog so distance still erases it.
+        //
+        // The field lives at a fraction of render resolution and is
+        // bilinearly upsampling-screen-aligned: while the camera moves,
+        // the fixed sampling phase crawls across high-gradient bleed
+        // boundaries (grass), a coherent sub-texel shimmer TAA cannot
+        // average.  Sampling at the same jitter offset the scene was
+        // rendered with randomises the phase per frame, so the TAA
+        // accumulation converges the crawl to its average.
         if (pc.giIndex != 0xFFFFFFFFu) {
             vec3 giCol = texture(
                 sampler2D(textures[nonuniformEXT(pc.giIndex)], samplers[SAMPLER_CLAMP_LINEAR]),
-                uv).rgb;
+                uv + vec2(sceneBuffer.cameras[0].jitterX,
+                          sceneBuffer.cameras[0].jitterY)).rgb;
             composite += (giCol - sceneCol) * pc.giStrength;
         }
 

@@ -43,6 +43,15 @@ Karl Petersen, "Simplified Diffusion for Real-Time GI" (2017).
   green onto a white wall) and light-leaks into dark ones. Strength is a
   blend factor (default 0.4; 1 = fully diffused). Added before AO so
   occlusion attenuates the bleed, before fog so distance still erases it.
+  The composite samples the low-res field at `uv + TAA jitter` (the same
+  offset the scene was rendered with): a fixed screen-aligned bilinear
+  phase would crawl across high-gradient bleed boundaries while the camera
+  moves — a coherent shimmer TAA cannot average; the jittered sample
+  randomises the sub-texel phase so the TAA accumulation converges it.
+  The GI field's own temporal filter (reprojection with the TAA motion
+  vectors) uses a wide motion-confidence falloff (64→512 px) — motion
+  magnitude alone does not gate history (while running, |mv| routinely
+  exceeds 30 px), the neighbourhood depth/colour rejections do.
 - **Toggles:** settings → graphics → "Diffusion GI" (persisted as
   `giDisabled`), debug GUI (Ctrl+B) → "Diffusion GI" button.
 - **Env vars** (see the pass header for details):

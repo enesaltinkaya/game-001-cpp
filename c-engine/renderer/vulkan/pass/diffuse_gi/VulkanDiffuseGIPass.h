@@ -26,10 +26,17 @@ struct VulkanImage;
  * default — the grass-colour climbing a wall is the intended look),
  * ENGINE_GI_TEMPORAL=<f> (temporal history blend, 0..1, default 0.75 —
  * 0 disables the temporal filter), ENGINE_GI_DEPTH_THRESH=<f> (relative
- * inverse-depth temporal rejection threshold, default 0.05). The temporal
+ * inverse-depth temporal rejection threshold, default 0.05),
+ * ENGINE_GI_GHOST=<f> (relative colour rejection threshold for history
+ * lying outside the neighbourhood colour range, default 0.15). The temporal
  * filter reprojects last frame's GI field with the same motion vectors
  * TAA uses; without it, camera motion makes the screen-aligned spatial
- * blur wiggle frame-to-frame and TAA shimmers on grass. */
+ * blur wiggle frame-to-frame and TAA shimmers on grass. Its rejections
+ * mirror taa.comp's cutout-edge-aware machinery (neighbourhood depth-span
+ * and colour-AABB comparison plus AABB clamp) and its motion-confidence
+ * falloff is a wide safety net (64->512 px) only for extreme camera whips —
+ * while running, full-res MVs routinely exceed 30 px, so a tight curve would
+ * zero the history exactly while the camera moves (the grass-shimmer case). */
 class VulkanDiffuseGIPass : public System {
 public:
     VulkanDiffuseGIPass();

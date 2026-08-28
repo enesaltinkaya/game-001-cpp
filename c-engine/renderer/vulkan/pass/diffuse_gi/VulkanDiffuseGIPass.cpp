@@ -1,6 +1,7 @@
 #include "VulkanDiffuseGIPass.h"
 #include "ecs/Ecs.h"
 #include "events/Events.h"
+#include "futuretask/FutureTask.h"
 #include "renderer/vulkan/Vulkan.h"
 #include "renderer/vulkan/command/VulkanCommand.h"
 #include "renderer/vulkan/pipeline/VulkanPipe.h"
@@ -37,6 +38,7 @@ typedef struct DiffuseGiTemporalPushConstants {
     u32 fullHeight;
     float temporalWeight;
     float depthThreshold;
+    float colorThreshold;
 } DiffuseGiTemporalPushConstants;
 
 static VulkanPipe pipeline;
@@ -67,10 +69,27 @@ static u32         giFrame;
 static VulkanImage* giOutput;
 static float       giTemporalWeight;
 static float       giDepthThreshold;
+static float       giGhostThreshold;
 static double      elapsedCPU;
 static double      elapsedGPU;
 
 VulkanDiffuseGIPass vulkanDiffuseGIPass;
+
+static double      giToggleMsAfterLoad = -1.0;
+
+static void giToggleOff(void) {
+    utils::info("Diffusion GI: ENGINE_GI_TOGGLE_AT_MS fired, disabling");
+    vulkanDiffuseGIPassSetDisabled(1);
+}
+
+static void giOnGameLoadedForToggle(void* _) {
+    (void)_;
+    if (giToggleMsAfterLoad < 0.0) {
+        return;
+    }
+    utils::futureTaskAddNoParam(giToggleMsAfterLoad, giToggleOff);
+    giToggleMsAfterLoad = -1.0;
+}
 
 VulkanDiffuseGIPass::VulkanDiffuseGIPass() : System("diffuse_gi") {}
 
@@ -105,12 +124,26 @@ void VulkanDiffuseGIPass::added() {
     if (giTemporalWeight < 0.0f) giTemporalWeight = 0.0f;
     if (giTemporalWeight > 1.0f) giTemporalWeight = 1.0f;
     giDepthThreshold = giEnvFloat("ENGINE_GI_DEPTH_THRESH", 0.05f);
+    giGhostThreshold = giEnvFloat("ENGINE_GI_GHOST", 0.15f);
+    if (giGhostThreshold < 0.01f) giGhostThreshold = 0.01f;
+    if (giGhostThreshold > 1.0f) giGhostThreshold = 1.0f;
+
+    /* ENGINE_GI_TOGGLE_AT_MS=<ms>: at startup, disable the pass again after
+     * <ms> relative to "gameLoaded" so one run captures aligned A/B phases
+     * (shimmer baseline with GI on vs. off along the same camera path). */
+    const char* toggleEnv = getenv("ENGINE_GI_TOGGLE_AT_MS");
+    if (toggleEnv && *toggleEnv) {
+        giToggleMsAfterLoad = atof(toggleEnv);
+    }
 
     /* Resolution changes (render scale / FSR mode) recreate the swapchain
      * after a wait-idle and emit "swapchainCreated" — destroying the
      * ping-pong buffers there is safe; creating them happens lazily in
      * update(). */
     utils::signalSubscribe("swapchainCreated", giOnSwapchainCreated);
+    if (giToggleMsAfterLoad >= 0.0) {
+        utils::signalSubscribe("gameLoaded", giOnGameLoadedForToggle);
+    }
 
     pipeline      = vulkanCreatePipe(.name = "diffuse_gi",
                                      .comp = "shaders/pass/diffuse_gi/spv/diffuse_gi.comp.spv");
@@ -198,14 +231,17 @@ static char giEnsureAccumulators(u32 width, u32 height) {
                            .height = (int)height);
     giHA = vulkanCreateImage(.name   = "DiffuseGiHistoryA",
                            .format = VK_FORMAT_R16G16B16A16_SFLOAT,
+                           /* TRANSFER_SRC: the debug frame-image dump
+                            * (ENGINE_DEBUG_DUMP_IMAGES=giRaw) blits the
+                            * history through a TRANSFER_SRC transition. */
                            .usage  = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT |
-                                      VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                                      VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
                            .width  = (int)width,
                            .height = (int)height);
     giHB = vulkanCreateImage(.name   = "DiffuseGiHistoryB",
                            .format = VK_FORMAT_R16G16B16A16_SFLOAT,
                            .usage  = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT |
-                                      VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                                      VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
                            .width  = (int)width,
                            .height = (int)height);
     if (!giA.img || !giB.img || !giHA.img || !giHB.img) {
@@ -329,6 +365,7 @@ void VulkanDiffuseGIPass::update() {
                 .fullHeight      = height,
                 .temporalWeight  = giTemporalWeight,
                 .depthThreshold  = giDepthThreshold,
+                .colorThreshold  = giGhostThreshold,
             };
             vulkanPush(cmd, &temporalPipeline, sizeof(pcT), &pcT);
             vulkanDispatch(cmd, &temporalPipeline, groupsX, groupsY, 1);

@@ -29,6 +29,24 @@
 #define MOVE_SPEED_SPRINT_MULT 40.0f  // alt-sprint multiplier
 #define MOVE_SPEED_BICYCLE_MULT 3.0f  // bicycle-kick speed multiplier
 
+// ── Temporal test helper ──────────────────────────────────────────────────────
+// ENGINE_AUTO_RUN=1: the player auto-runs from spawn (the third-person
+// camera follows, producing real running motion vectors) so TAA/GI
+// temporal behaviour can be observed without driving input. While set,
+// the periodic player/camera transform saves are suppressed so the parked
+// setup in db.db survives the test run (see PlayerSystem::postUpdate and
+// CameraSystem::postUpdate).
+static char engineAutoRun(void) {
+    static char v   = 0;
+    static char init = 0;
+    if (!init) {
+        init = 1;
+        const char* env = getenv("ENGINE_AUTO_RUN");
+        if (env && *env && atoi(env)) v = 1;
+    }
+    return v;
+}
+
 // ── Animation speeds ────────────────────────────────────────────────────────
 #define ANIM_SPEED_IDLE 1.0f
 #define ANIM_SPEED_RUN 1.750f
@@ -324,7 +342,11 @@ static void playerSceneLoaded(engine::Scene* scene, void*) {
             player->facingYaw   = player->moveYaw;
             player->isMoving    = false;
             player->isJumping   = false;
-            // player->autoRun     = true;
+            if (engineAutoRun()) {
+                player->autoRun = true;
+                utils::info("player: ENGINE_AUTO_RUN set, auto-running from spawn "
+                            "(periodic transform saves suppressed)");
+            }
 
             engine::Entity* playerEntity = engine::getEntity(scene, entityId);
             utils::info("player: tagged entity '%s' (id %u) as player",
@@ -1574,15 +1596,26 @@ void PlayerSystem::postUpdate() {
     if (engine::flyingCameraIsActive()) {
         playerFollowFlyingCamera();
         if (now > lastSave + 1000) {
-            lastSave             = now;
-            engine::Transform* transform = getComponent(playerScene, engine::Transform, playerEntityId);
-            if (transform) engine::transformDbSave("player", transform);
+            lastSave = now;
+            /* engineAutoRun(): the moved position must not overwrite the
+             * parked player transform in the db. */
+            if (!engineAutoRun()) {
+                engine::Transform* transform = getComponent(playerScene, engine::Transform, playerEntityId);
+                if (transform) engine::transformDbSave("player", transform);
+            }
         }
         return;
     }
 
     if (now > lastSave + 1000) {
         lastSave = now;
+
+        /* engineAutoRun(): the player runs around during the test; saving
+         * its transform (and the camera state derived from it) would clobber
+         * the parked setup. */
+        if (engineAutoRun()) {
+            return;
+        }
 
         engine::Transform* transform = getComponent(playerScene, engine::Transform, playerEntityId);
         engine::transformDbSave("player", transform);
