@@ -219,6 +219,31 @@ struct WeatherData {
     vec4 tint;    // rgb = particle tint (dust = biome colour), a unused
 };
 
+struct IblData {
+    uint environmentMapIndex;
+    uint irradianceMapIndex;
+    uint prefilterMapIndex;
+    uint brdfLutIndex;
+    uint blueNoiseIndex;
+    uint tonemapLutIndex;     // unused (FFX LPM does tone mapping); kept for layout
+    float environmentMapMaxLod;
+    float prefilterMapMaxLod;
+    uint enabled;
+    float intensity;
+    float specularIntensity;
+    float sunThreshold;
+    uint hasSH;
+    uint tonemapMode;         // unused (FFX LPM); kept for layout
+    uint tonemapLutPunchyIndex;  // unused (FFX LPM); kept for layout
+    uint pad_ibl2;
+    // L1 Spherical Harmonics for diffuse irradiance (4 coefficients, RGB in xyz, w unused)
+    vec4 shL0_M0;    // L0 band (DC term)
+    vec4 shL1_Mn1;   // L1 band, M=-1 (Y component)
+    vec4 shL1_M0;    // L1 band, M=0  (Z component)
+    vec4 shL1_Mp1;   // L1 band, M=+1 (X component)
+    mat4 envRotation; // inverse of sun rotation; applied to IBL sample dirs
+};
+
 layout(buffer_reference, std430) buffer SceneBuffer {
     Camera cameras[4];
     DirectionalLight directionalLight;
@@ -228,6 +253,7 @@ layout(buffer_reference, std430) buffer SceneBuffer {
     int pad[2];
     ivec4 lightCounts;    // x=directional, y=point, z=spot, w=total
     GpuLight lights[MAX_GPU_LIGHTS];
+    IblData ibl;
     PostProcessData post;
     TerrainData terrain;
     FogData     fog;

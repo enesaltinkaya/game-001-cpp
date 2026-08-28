@@ -113,6 +113,7 @@ struct VulkanSceneBuffer {
     int pad[2];
     ivec4 lightCounts;  // x=directional, y=point, z=spot, w=total
     GpuLight lights[MAX_GPU_LIGHTS];
+    VulkanIblData ibl;
     VulkanPostProcessData post;
     VulkanTerrainData terrain;
     VulkanFogData     fog;
@@ -163,11 +164,13 @@ struct UploadQueue {
     ivec4 lightCounts;
     GpuLight lights[MAX_GPU_LIGHTS];
     u32 lightCount;
+    VulkanIblData ibl;
     bool hasCamera;
     bool hasDirectionalLight;
     bool hasShadow;
     bool hasLightCounts;
     bool hasLights;
+    bool hasIbl;
 };
 
 static UploadQueue uploadQueue[FRAMES_IN_FLIGHT];
@@ -425,6 +428,10 @@ void vulkanResourceUpdate(void) {
         memcpy(scene->lights, queue->lights, sizeof(GpuLight) * queue->lightCount);
         queue->hasLights = 0;
     }
+    if (queue->hasIbl) {
+        scene->ibl       = queue->ibl;
+        queue->hasIbl    = 0;
+    }
     // Flush transforms for ALL scenes (keeps upload queues drained even
     // when a scene is frustum-culled, preventing unbounded memory growth).
     for (size_t si = 0; si < ecs.scenes.size(); si++) {
@@ -513,6 +520,13 @@ void vulkanResourceUploadLightCounts(ivec4 counts) {
     for (int i = 0; i < FRAMES_IN_FLIGHT; i++) {
         glm_ivec4_copy(counts, uploadQueue[i].lightCounts);
         uploadQueue[i].hasLightCounts = 1;
+    }
+}
+
+void vulkanResourceSetIbl(const VulkanIblData* ibl) {
+    for (int i = 0; i < FRAMES_IN_FLIGHT; i++) {
+        uploadQueue[i].ibl    = *ibl;
+        uploadQueue[i].hasIbl = true;
     }
 }
 
@@ -1085,6 +1099,19 @@ void vulkanRetireSampledPoolEntry(int poolIndex, VulkanImage* replacement) {
         vulkanUpdateDesc(desc, VULKAN_BINDING_SAMPLED_IMAGE, replacement, SLOT_IMAGE, poolIndex);
     }
     utils::threadUnlock(&sampledImageArrayData.lock);
+}
+
+/* Cube-pool counterpart of vulkanRetireSampledPoolEntry (irradiance / prefilter
+ * cubemaps).  Re-points the cube bindless entries of every in-flight frame to
+ * the replacement image before the cube view is destroyed. */
+void vulkanRetireCubePoolEntry(int poolIndex, VulkanImage* replacement) {
+    utils::threadLock(&sampledCubeImageArrayData.lock);
+    sampledCubeImageArrayData.emptySlots.push_back((u32)poolIndex);
+    for (i32 i = 0, si = FRAMES_IN_FLIGHT; i < si; i++) {
+        VulkanDesc* desc = &vulkanResources.globalSet0[i];
+        vulkanUpdateDesc(desc, VULKAN_BINDING_SAMPLED_IMAGE, replacement, SLOT_CUBE_IMAGE, poolIndex);
+    }
+    utils::threadUnlock(&sampledCubeImageArrayData.lock);
 }
 
 int vulkanAddImageViewToPool(VkImageView view) {

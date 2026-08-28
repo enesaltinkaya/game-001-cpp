@@ -80,6 +80,8 @@ void vulkanRemoveImageFromPool(VulkanImage* image);
  * in-flight and future command buffers must never see a destroyed view in a
  * bound descriptor. */
 void vulkanRetireSampledPoolEntry(int poolIndex, VulkanImage* replacement);
+/* Cube-pool counterpart (irradiance / prefilter cubemaps). */
+void vulkanRetireCubePoolEntry(int poolIndex, VulkanImage* replacement);
 
 int vulkanAddImageViewToPool(VkImageView view);
 void vulkanRemoveImageViewFromPool(int poolIndex);
@@ -101,6 +103,36 @@ void addCommandGarbage(VulkanCommand* command);
 void vulkanCleanupGarbage(void);
 void vulkanResourceSetLightBuffers(u64 gridAddress, u64 indexAddress);
 VkSampler vulkanGetLinearSampler(void);
+
+/* Must match IblData in globalset.shader (std430 layout).  Written by the
+ * IBL module (VulkanIbl) and read by the scene/terrain/OIT shaders. */
+struct VulkanIblData {
+    u32   environmentMapIndex;
+    u32   irradianceMapIndex;
+    u32   prefilterMapIndex;
+    u32   brdfLutIndex;
+    u32   blueNoiseIndex;
+    u32   tonemapLutIndex;     // unused (FFX LPM does tone mapping); layout compat
+    float environmentMapMaxLod;
+    float prefilterMapMaxLod;
+    u32   enabled;
+    float intensity;
+    float specularIntensity;
+    float sunThreshold;
+    u32   hasSH;
+    u32   tonemapMode;         // unused (FFX LPM); layout compat
+    u32   tonemapLutPunchyIndex;
+    u32   pad_ibl2;
+    vec4  shL0_M0;
+    vec4  shL1_Mn1;
+    vec4  shL1_M0;
+    vec4  shL1_Mp1;
+    mat4  envRotation;
+};
+
+/* Pushes the IBL block into the scene buffer of every in-flight frame.
+ * Called by the IBL module (VulkanIbl) on load / rotate / intensity change. */
+void vulkanResourceSetIbl(const VulkanIblData* ibl);
 
 void vulkanResourceSetTerrainDefaults(u32 grassAlbedo, u32 grassNormal,
                                        u32 cliffAlbedo, u32 cliffNormal);

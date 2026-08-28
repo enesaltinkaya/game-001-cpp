@@ -11,6 +11,7 @@
 // #include "renderer/vulkan/pass/skybox/VulkanSkyboxPass.h"
 #include "renderer/vulkan/pass/volumetric/VulkanVolumetricPass.h"
 // #include "renderer/vulkan/pass/grid/VulkanGridPass.h"
+#include "renderer/vulkan/resources/VulkanIbl.h"
 #include "renderer/vulkan/resources/VulkanResourceManager.h"
 #include "rmlui/wrapper/src/crmlui.h"
 #include <stdio.h>
@@ -34,6 +35,15 @@ static char contactShadowEnabled;
 static char volumetricFogEnabled;
 
 static char* tonemapLabel;
+
+static char iblEnabled;
+static char* iblFileLabel;
+static char iblFileLabelText[128];
+
+static char* iblSunLabel;
+static char iblSunLabelText[64];
+
+static float iblIntensityValue;
 
 /* LPM tone/gamut-mapping tuning (TONEMAP section of the debug GUI).
  * Bound two-way to the document model: slider input updates the float,
@@ -80,6 +90,19 @@ static void syncFromPasses(void) {
      * tonemapping curves to cycle through. */
     tonemapLabel      = (char*)"LPM";
 
+    iblEnabled = !vulkanIblIsDisabled();
+    snprintf(iblFileLabelText, sizeof(iblFileLabelText), "%s", vulkanIblGetCurrentName());
+    iblFileLabel = iblFileLabelText;
+
+    RendererSunLight iblSun = vulkanIblGetExtractedSun();
+    snprintf(iblSunLabelText,
+             sizeof(iblSunLabelText),
+             "%.1f, %.1f, %.1f",
+             iblSun.direction[0], iblSun.direction[1], iblSun.direction[2]);
+    iblSunLabel = iblSunLabelText;
+
+    iblIntensityValue = vulkanIblGetIntensity();
+
     RendererAASettings aa = rendererGetAASettings();
 
     snprintf(aaPolicyLabelText,
@@ -110,6 +133,77 @@ static int toggleReflection(void* _) {
 
 static int toggleBloom(void* _) {
     vulkanBloomPassSetDisabled(bloomEnabled);
+    syncFromPasses();
+    rmlUpdateDirtyAll(model);
+    return 0;
+}
+
+static int toggleIBL(void* _) {
+    vulkanIblSetDisabled(iblEnabled);
+    syncFromPasses();
+    rmlUpdateDirtyAll(model);
+    return 0;
+}
+
+static int iblFilePrev(void* _) {
+    (void)_; /* cycle to the previous environment map */
+    vulkanIblCyclePrev();
+    syncFromPasses();
+    rmlUpdateDirtyAll(model);
+    return 0;
+}
+
+static int iblFileNext(void* _) {
+    (void)_; /* cycle to the next environment map */
+    vulkanIblCycleNext();
+    syncFromPasses();
+    rmlUpdateDirtyAll(model);
+    return 0;
+}
+
+static int iblSunLeft(void* _) {
+    (void)_; /* rotate the extracted sun around the world up axis */
+    vulkanIblRotateSun(-15.0f, 0.0f);
+    syncFromPasses();
+    rmlUpdateDirtyAll(model);
+    return 0;
+}
+
+static int iblSunRight(void* _) {
+    (void)_; /* rotate the extracted sun around the world up axis */
+    vulkanIblRotateSun(15.0f, 0.0f);
+    syncFromPasses();
+    rmlUpdateDirtyAll(model);
+    return 0;
+}
+
+static int iblSunUp(void* _) {
+    (void)_; /* tilt the extracted sun toward the zenith */
+    vulkanIblRotateSun(0.0f, 15.0f);
+    syncFromPasses();
+    rmlUpdateDirtyAll(model);
+    return 0;
+}
+
+static int iblSunDown(void* _) {
+    (void)_; /* tilt the extracted sun toward the horizon */
+    vulkanIblRotateSun(0.0f, -15.0f);
+    syncFromPasses();
+    rmlUpdateDirtyAll(model);
+    return 0;
+}
+
+static int iblIntensityDown(void* _) {
+    (void)_; /* scale the IBL diffuse + specular contribution */
+    vulkanIblSetIntensity(vulkanIblGetIntensity() - 0.25f);
+    syncFromPasses();
+    rmlUpdateDirtyAll(model);
+    return 0;
+}
+
+static int iblIntensityUp(void* _) {
+    (void)_; /* scale the IBL diffuse + specular contribution */
+    vulkanIblSetIntensity(vulkanIblGetIntensity() + 0.25f);
     syncFromPasses();
     rmlUpdateDirtyAll(model);
     return 0;
@@ -177,6 +271,15 @@ void DebugGui::added() {
     luaRegisterFunction("debugToggleShadows", toggleShadows);
     luaRegisterFunction("debugToggleReflection", toggleReflection);
     luaRegisterFunction("debugToggleBloom", toggleBloom);
+    luaRegisterFunction("debugToggleIBL", toggleIBL);
+    luaRegisterFunction("debugIblFilePrev", iblFilePrev);
+    luaRegisterFunction("debugIblFileNext", iblFileNext);
+    luaRegisterFunction("debugIblSunLeft", iblSunLeft);
+    luaRegisterFunction("debugIblSunRight", iblSunRight);
+    luaRegisterFunction("debugIblSunUp", iblSunUp);
+    luaRegisterFunction("debugIblSunDown", iblSunDown);
+    luaRegisterFunction("debugIblIntensityDown", iblIntensityDown);
+    luaRegisterFunction("debugIblIntensityUp", iblIntensityUp);
     luaRegisterFunction("debugToggleSkybox", toggleSkybox);
     luaRegisterFunction("debugToggleGrid", toggleGrid);
     luaRegisterFunction("debugTogglePOM", togglePOM);
@@ -191,6 +294,10 @@ void DebugGui::added() {
     rmlBind(model, "shadowsEnabled", &shadowsEnabled);
     rmlBind(model, "reflectionEnabled", &reflectionEnabled);
     rmlBind(model, "bloomEnabled", &bloomEnabled);
+    rmlBind(model, "iblEnabled", &iblEnabled);
+    rmlBind(model, "iblFileLabel", &iblFileLabel);
+    rmlBind(model, "iblSunLabel", &iblSunLabel);
+    rmlBind(model, "iblIntensityValue", &iblIntensityValue);
     rmlBind(model, "skyboxEnabled", &skyboxEnabled);
     rmlBind(model, "gridEnabled", &gridEnabled);
     rmlBind(model, "pomEnabled", &pomEnabled);

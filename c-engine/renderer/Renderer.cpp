@@ -8,6 +8,7 @@
 #include "renderer/vulkan/Vulkan.h"
 #include "renderer/vulkan/command/VulkanCommand.h"
 #include "renderer/vulkan/resources/VulkanResourceManager.h"
+#include "renderer/vulkan/resources/VulkanIbl.h"
 #include "renderer/vulkan/scene/VulkanScene.h"
 #include "renderer/vulkan/scene/VulkanVisibleScenes.h"
 #include "renderer/vulkan/swapchain/VulkanSwapchain.h"
@@ -249,14 +250,19 @@ void rendererSceneDestroy(Scene* scene) {
 }
 
 RendererSunLight rendererGetSun(void) {
-    /* Static directional sun — direction points TOWARD the sun; color is
-     * radiance. LightSystem clamps its norm to 5.0 for the sun UBO intensity. */
-    static const RendererSunLight sun = {
+    /* IBL-extracted sun when an environment map is loaded — direction points
+     * TOWARD the sun; color is radiance. LightSystem clamps its norm to 5.0
+     * for the sun UBO intensity. Falls back to a static sun before the IBL
+     * module has loaded (or if no environment maps are present). */
+    static const RendererSunLight fallbackSun = {
         .direction     = {0.3f, 0.8f, -0.5f},
         .color         = {2.6f, 2.4f, 2.08f},
         .angularRadius = 0.0087f,  // ~0.5° solar disc
     };
-    return sun;
+    if (vulkanIblGetEnvironmentImage()) {
+        return vulkanIblGetExtractedSun();
+    }
+    return fallbackSun;
 }
 
 #define TAA_JITTER_PHASES 16

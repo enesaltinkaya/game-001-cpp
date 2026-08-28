@@ -14,6 +14,7 @@
 #include "renderer/vulkan/utils/VulkanBlur.h"
 #include "renderer/vulkan/utils/VulkanError.h"
 #include "renderer/vulkan/resources/VulkanFrameResources.h"
+#include "renderer/vulkan/resources/VulkanIbl.h"
 #include "renderer/vulkan/resources/VulkanResourceManager.h"
 #include "renderer/vulkan/utils/VulkanUtils.h"
 #include "renderer/vulkan/swapchain/VulkanSwapchain.h"
@@ -274,6 +275,7 @@ void vulkanInit(void) {
     // Register device lost handler
     vulkanSetDeviceLostHandler(onDeviceLost);
     vulkanResourceInit();
+    vulkanIblInit();
     vulkanSwapchainInit();
     vulkanFrameResourcesInit();
     vulkanSpdRunSelfTest();
@@ -340,6 +342,7 @@ static void vulkanDestroyDelayed(void* _) {
 
     vulkanSpdDestroy();
     vulkanFrameResourcesDestroy();
+    vulkanIblDestroy();
     vulkanResourceDestroy();
     vulkanBlurCleanup();
 

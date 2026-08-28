@@ -467,9 +467,60 @@ void main() {
 
     vec3 Lo = (kD * baseColor / PI + specular) * lightColor * NdotL * shadow;
 
-    // Constant ambient fill (no IBL).
+    // Ambient / IBL
     vec3 ambientDiffuse  = vec3(0.03) * baseColor;
     vec3 ambientSpecular = vec3(0.0);
+    if (sceneBuffer.ibl.enabled != 0u) {
+        vec3 R                 = reflect(-V, N);
+        float iblIntensity     = sceneBuffer.ibl.intensity;
+        float iblSpecIntensity = sceneBuffer.ibl.specularIntensity;
+        float maxLod           = sceneBuffer.ibl.prefilterMapMaxLod;
+        float specLod          = sqrt(roughness) * maxLod;
+
+        if (sceneBuffer.ibl.prefilterMapIndex != 0u && sceneBuffer.ibl.brdfLutIndex != 0u) {
+            vec3 irradiance;
+            if (sceneBuffer.ibl.hasSH != 0u) {
+                vec3 rN         = mat3(sceneBuffer.ibl.envRotation) * N;
+                const float A0  = PI, A1 = 2.0 * PI / 3.0;
+                const float Y00 = 0.282095, Y1x = 0.488603;
+                irradiance = sceneBuffer.ibl.shL0_M0.rgb * A0 * Y00;
+                irradiance += sceneBuffer.ibl.shL1_Mp1.rgb * A1 * Y1x * rN.x;
+                irradiance += sceneBuffer.ibl.shL1_Mn1.rgb * A1 * Y1x * rN.y;
+                irradiance += sceneBuffer.ibl.shL1_M0.rgb * A1 * Y1x * rN.z;
+                irradiance = max(irradiance, vec3(0.0));
+            } else {
+                irradiance = vec3(0.5);
+            }
+
+            vec3 prefilteredColor =
+                textureLod(
+                    samplerCube(cubeTextures[nonuniformEXT(sceneBuffer.ibl.prefilterMapIndex)],
+                                samplers[SAMPLER_LINEAR]),
+                    normalize(mat3(sceneBuffer.ibl.envRotation) * R),
+                    clamp(specLod, 0.0, maxLod))
+                    .rgb;
+
+            const float BLEND_START = 0.7;
+            const float BLEND_END   = 0.9;
+            float specBlend =
+                clamp((roughness - BLEND_START) / (BLEND_END - BLEND_START), 0.0, 1.0);
+            specBlend *= specBlend;
+            vec3 specColor = mix(prefilteredColor, irradiance / PI, specBlend);
+
+            vec2 brdf = texture(sampler2D(textures[nonuniformEXT(sceneBuffer.ibl.brdfLutIndex)],
+                                          samplers[SAMPLER_CLAMP_LINEAR]),
+                                vec2(NdotV, roughness))
+                            .rg;
+            vec3 specFactor = F0 * brdf.x + brdf.y;
+#if HEIGHTMAP_TERRAIN_ENABLE_SPECULAR
+            ambientDiffuse  = (vec3(1.0) - specFactor) * irradiance * baseColor / PI * iblIntensity;
+            ambientSpecular = specColor * specFactor * iblIntensity * iblSpecIntensity;
+#else
+            ambientDiffuse  = irradiance * baseColor / PI * iblIntensity;
+            ambientSpecular = vec3(0.0);
+#endif
+        }
+    }
 
     // Attenuate ambient in shadow so shadowed terrain isn't lit only by sky.
     float shadowAmbientFade = mix(1.0 - SHADOW_DARKNESS, 1.0, mix(1.0, cascadeShadow, NdotL));
