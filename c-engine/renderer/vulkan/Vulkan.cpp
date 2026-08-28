@@ -15,7 +15,6 @@
 #include "renderer/vulkan/utils/VulkanError.h"
 #include "renderer/vulkan/resources/VulkanFrameResources.h"
 #include "renderer/vulkan/resources/VulkanResourceManager.h"
-#include "renderer/vulkan/resources/Ibl.h"
 #include "renderer/vulkan/utils/VulkanUtils.h"
 #include "renderer/vulkan/swapchain/VulkanSwapchain.h"
 #include "renderer/vulkan/pass/shadow/VulkanShadowPass.h"
@@ -277,11 +276,6 @@ void vulkanInit(void) {
     vulkanResourceInit();
     vulkanSwapchainInit();
     vulkanFrameResourcesInit();
-    vulkanIblInit();
-    {
-        const char* env = getenv("ENGINE_IBL_DISABLED");
-        if (env && atoi(env)) vulkanIblSetDisabled(1);
-    }
     vulkanSpdRunSelfTest();
     overallProfile = vulkanCreateProfile("vulkan");
 
@@ -346,7 +340,6 @@ static void vulkanDestroyDelayed(void* _) {
 
     vulkanSpdDestroy();
     vulkanFrameResourcesDestroy();
-    vulkanIblDestroy();
     vulkanResourceDestroy();
     vulkanBlurCleanup();
 

@@ -51,7 +51,6 @@ void lightMarkDirty(Scene* scene, u32 entity) {
 
 void LightSystem::added() {
     utils::signalSubscribe("rendererInitialized", applySun);
-    utils::signalSubscribe("iblChanged", applySun);
 }
 
 static void applySun(void* _) {

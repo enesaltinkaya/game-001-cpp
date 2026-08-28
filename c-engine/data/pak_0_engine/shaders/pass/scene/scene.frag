@@ -25,8 +25,6 @@ layout(push_constant) uniform PushConstants {
 #include "../../includes/globalset.shader"
 #include "../../includes/shadow.shader"
 #include "../../includes/forwardplus.shader"
-#include "../../includes/ibl_common.shader"
-#include "../../includes/ibl_scene.shader"
 
 vec4 sampleMaterialTexture(uint texIndex, uint samplerIndex, vec2 uv) {
     return texture(
@@ -146,37 +144,9 @@ void main() {
     vec3 kD = (1.0 - kS) * (1.0 - metallic);
     vec3 Lo = (kD * baseColor.rgb / PI + specular) * lightColor * NdotL * shadow;
 
-    // Ambient / IBL
+    // Constant ambient fill (no IBL).
     vec3 ambientDiffuse  = vec3(0.03) * baseColor.rgb;
     vec3 ambientSpecular = vec3(0.0);
-    if (sceneBuffer.ibl.enabled != 0u) {
-        vec3 R                 = reflect(-V, N);
-        float iblIntensity     = sceneBuffer.ibl.intensity;
-        float iblSpecIntensity = sceneBuffer.ibl.specularIntensity;
-        float maxLod           = sceneBuffer.ibl.prefilterMapMaxLod;
-        float specLod          = sqrt(roughness) * maxLod;
-
-        if (sceneBuffer.ibl.prefilterMapIndex != 0u && sceneBuffer.ibl.brdfLutIndex != 0u) {
-            vec3 prefilteredColor = iblSamplePrefilter(R, specLod);
-            vec2 brdf = texture(sampler2D(textures[nonuniformEXT(sceneBuffer.ibl.brdfLutIndex)],
-                                          samplers[SAMPLER_CLAMP_LINEAR]),
-                                vec2(NdotV, roughness))
-                            .rg;
-            vec3 specFactor = F0 * brdf.x + brdf.y;
-            vec3 kD_ibl     = (1.0 - specFactor) * (1.0 - metallic);
-
-            ambientSpecular = prefilteredColor * specFactor * iblIntensity * iblSpecIntensity;
-
-            vec3 irradiance;
-            if (sceneBuffer.ibl.irradianceMapIndex != 0u)
-                irradiance = iblSampleIrradiance(N);
-            else if (sceneBuffer.ibl.hasSH != 0u)
-                irradiance = iblEvaluateSHIrradiance(N);
-            else
-                irradiance = iblSampleEnvironment(N, sceneBuffer.ibl.environmentMapMaxLod);
-            ambientDiffuse = kD_ibl * irradiance * baseColor.rgb / PI * iblIntensity;
-        }
-    }
 
     // Constant ambient fill in shadow prevents dark-textured objects from
     // going too dark — baseColor is already baked into ambientDiffuse, so

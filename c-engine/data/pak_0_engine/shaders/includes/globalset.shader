@@ -63,27 +63,6 @@ struct DirectionalLight {
     vec4 padding;     // for std430 alignment
 };
 
-struct IblData {
-    uint environmentMapIndex;   // equirect HDR environment map (2D, mipmapped)
-    uint irradianceMapIndex;    // precomputed diffuse irradiance cubemap
-    uint prefilterMapIndex;     // prefiltered radiance cubemap (mips = roughness)
-    uint brdfLutIndex;          // BRDF LUT (2D: x = NdotV, y = roughness)
-    float environmentMapMaxLod;
-    float prefilterMapMaxLod;
-    uint enabled;               // 0 = IBL off (ambient falls back to sun UBO value)
-    float intensity;            // IBL diffuse + specular intensity
-    float specularIntensity;   // IBL specular-only intensity
-    float pad_ibl1;
-    uint hasSH;                  // 1 = L1 SH coefficients valid (diffuse fallback)
-    uint pad_ibl2;
-    // L1 Spherical Harmonics for diffuse irradiance (4 coefficients, RGB in xyz, w unused)
-    vec4 shL0_M0;    // L0 band (DC term)
-    vec4 shL1_Mn1;   // L1 band, M=-1 (Y component)
-    vec4 shL1_M0;    // L1 band, M=0  (Z component)
-    vec4 shL1_Mp1;   // L1 band, M=+1 (X component)
-    mat4 envRotation;  // inverse of sun rotation; applied to IBL sample directions
-};
-
 #define MAX_GPU_LIGHTS 1024
 
 /* 64 bytes, fully vec4-aligned */
@@ -249,7 +228,6 @@ layout(buffer_reference, std430) buffer SceneBuffer {
     int pad[2];
     ivec4 lightCounts;    // x=directional, y=point, z=spot, w=total
     GpuLight lights[MAX_GPU_LIGHTS];
-    IblData ibl;
     PostProcessData post;
     TerrainData terrain;
     FogData     fog;
