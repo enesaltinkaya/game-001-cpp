@@ -60,12 +60,12 @@ void main() {
         float sunDisk = pow(sunDot, 256.0) * 15.0;
 
         /* Sun glow (halo around the sun). */
-        float sunGlow = pow(sunDot, 8.0) * 0.5;
+        float sunGlow = pow(sunDot, 12.0) * 0.3;
 
         /* Keep the source localized around the sun.  Treating the whole sky
            (or bright scene surfaces) as a source makes the radial blur project
            scene silhouettes onto foreground geometry when fog is enabled. */
-        float sunHalo = pow(sunDot, 24.0) * 0.35;
+        float sunHalo = pow(sunDot, 24.0) * 0.2;
         lightColor = sunColor * sunIntensity * (sunDisk + sunGlow + sunHalo);
     }
 

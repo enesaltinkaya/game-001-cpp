@@ -188,7 +188,7 @@ float calculateFogFactor(float fogStartDistance, int fogType, float fogDensity /
         fogFactor = 1.0 - clamp(exp2(d * d * LOG2), 0.0, 1.0);
     }
     
-    const float fogFadeDistance = 300.0;
+    const float fogFadeDistance = 600.0;
     float blendFactor = smoothstep(fogStartDistance,
                                   fogStartDistance + fogFadeDistance,
                                   dist);

@@ -262,7 +262,7 @@ static char ensureContext(u32 renderWidth, u32 renderHeight, u32 displayWidth, u
 
     FfxFsr3UpscalerContextDescription desc = {};
     desc.flags = FFX_FSR3UPSCALER_ENABLE_HIGH_DYNAMIC_RANGE |
-                 FFX_FSR3UPSCALER_ENABLE_DEPTH_INVERTED | FFX_FSR3UPSCALER_ENABLE_AUTO_EXPOSURE;
+                 FFX_FSR3UPSCALER_ENABLE_DEPTH_INVERTED;  // TEMP: auto-exposure test
     desc.maxRenderSize.width   = renderWidth;
     desc.maxRenderSize.height  = renderHeight;
     desc.maxUpscaleSize.width  = displayWidth;

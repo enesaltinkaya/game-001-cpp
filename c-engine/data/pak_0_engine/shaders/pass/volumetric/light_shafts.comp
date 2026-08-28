@@ -90,7 +90,7 @@ void main() {
 
     /* Henyey-Greenstein phase (brighter toward sun). */
     float NdotV = dot(rayDir, toSun);
-    float g     = 0.8;
+    float g     = 0.6;
     float phase = (1.0 - g * g) / (4.0 * PI * pow(1.0 + g * g - 2.0 * g * NdotV, 1.5));
 
     vec3  accumulated   = vec3(0.0);
@@ -155,11 +155,15 @@ void main() {
         if (transmittance < 0.005) break;
     }
 
-    /* Phase modulation — shafts brighter when looking toward sun. */
-    accumulated *= phase * sunIntensity;
+    /* Phase modulation — shafts brighter when looking toward sun.  When the
+       sun sits high the shafts point at the camera from overhead and wash
+       the whole frame white even though it is not looking at the sun, so
+       fade them out as the sun rises.  Low-sun shafts keep full strength. */
+    float sunElevFade = 1.0 - smoothstep(0.3, 0.9, toSun.y);
+    accumulated *= phase * sunIntensity * sunElevFade;
 
     /* Safety clamp. */
-    accumulated = min(accumulated, sunColor * sunIntensity * 0.5);
+    accumulated = min(accumulated, sunColor * sunIntensity * 0.25);
 
     imageStore(storageImages[nonuniformEXT(pc.outputIndex)],
                coord, vec4(accumulated, 1.0));

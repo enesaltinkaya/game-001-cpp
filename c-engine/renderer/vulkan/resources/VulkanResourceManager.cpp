@@ -176,7 +176,7 @@ struct UploadQueue {
 static UploadQueue uploadQueue[FRAMES_IN_FLIGHT];
 
 static VulkanFogData fogData = {
-    .fogColor            = {0.7f, 0.75f, 0.8f, 0.0f},
+    .fogColor            = {0.45f, 0.53f, 0.65f, 0.0f},
     .fogDensity          = 0.04f,
     .fogStartDistance     = 5.0f,
     .fogMaxDistance       = 300.0f,
