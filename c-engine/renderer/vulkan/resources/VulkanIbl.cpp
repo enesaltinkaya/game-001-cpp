@@ -243,6 +243,14 @@ namespace engine {
         }
         loadEnvironmentFromPath(iblFiles[iblCurrentIndex].c_str());
 
+        /* Test hook: IBL ambient off (env image stays valid so GI passes
+         * can still sample the environment map). */
+        const char* env = getenv("ENGINE_IBL_DISABLED");
+        if (env && *env && atoi(env)) {
+            vulkanIblSetDisabled(true);
+            utils::info("vulkanIbl: disabled via ENGINE_IBL_DISABLED");
+        }
+
         /* Every IBL is rotated onto FIXED_SUN_DIR during
          * loadEnvironmentFromPath, so the sun never depends on the file. */
     }
@@ -280,6 +288,10 @@ namespace engine {
 
     VulkanImage* vulkanIblGetEnvironmentImage(void) {
         return ibl.environment.img ? &ibl.environment : nullptr;
+    }
+
+    VulkanImage* vulkanIblGetEnvironmentPrefilter(void) {
+        return ibl.prefilter.img ? &ibl.prefilter : nullptr;
     }
 
     RendererSunLight vulkanIblGetExtractedSun(void) {

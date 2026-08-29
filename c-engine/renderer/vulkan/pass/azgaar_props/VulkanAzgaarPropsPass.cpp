@@ -145,6 +145,60 @@ static std::vector<PendingGlobalUpload> pendingLandmarks = {};
 
 static bool enabled = true; // master switch (vulkanAzgaarPropsSetEnabled)
 
+// Voxelizer change hooks (brixelizer GI) — see the header for the contract.
+// The pointers are read under uploadLock so the setter and the Set* call
+// sites (game / props-pool threads) don't race.
+static VulkanAzgaarPropsMeshCallback meshCallback = NULL;
+static void* meshCallbackUser = NULL;
+static VulkanAzgaarPropsTileCallback tileCallback = NULL;
+static void* tileCallbackUser = NULL;
+
+void vulkanAzgaarPropsSetMeshCallback(VulkanAzgaarPropsMeshCallback cb, void* user) {
+    utils::threadLock(&uploadLock);
+    meshCallback     = cb;
+    meshCallbackUser = user;
+    utils::threadUnlock(&uploadLock);
+}
+
+void vulkanAzgaarPropsSetTileCallback(VulkanAzgaarPropsTileCallback cb, void* user) {
+    utils::threadLock(&uploadLock);
+    tileCallback     = cb;
+    tileCallbackUser = user;
+    utils::threadUnlock(&uploadLock);
+}
+
+static void fireMeshCallback(u32 vertCount, u32 idxCount) {
+    std::vector<PropVariantRange> variantsCopy = {};
+    VulkanAzgaarPropsMeshCallback cb = NULL;
+    void*                          user = NULL;
+    utils::threadLock(&uploadLock);
+    cb                         = meshCallback;
+    user                       = meshCallbackUser;
+    variantsCopy               = variants; // caller's copy: the callback may outlive the lock
+    utils::threadUnlock(&uploadLock);
+    if (!cb) return;
+    PropsMeshInfo info = {.vertCount    = vertCount,
+                          .idxCount     = idxCount,
+                          .variants     = variantsCopy.data(),
+                          .variantCount = static_cast<u32>(variantsCopy.size())};
+    cb(&info, user);
+}
+
+char vulkanAzgaarPropsGetMeshes(VulkanBuffer* outVbo, VulkanBuffer* outIbo,
+                                u32* outVertCount, u32* outIdxCount) {
+    utils::threadLock(&uploadLock);
+    if (!meshVbo.buf) {
+        utils::threadUnlock(&uploadLock);
+        return 0;
+    }
+    *outVbo       = meshVbo;
+    *outIbo       = meshIbo;
+    *outVertCount = meshVertCount;
+    *outIdxCount  = meshIdxCount;
+    utils::threadUnlock(&uploadLock);
+    return 1;
+}
+
 // ── Pipeline management ───────────────────────────────────────────────────
 
 // Mesh vertices (PropsVertex layout, 60 B) carry position (loc 0), normal
@@ -297,16 +351,19 @@ void vulkanAzgaarPropsSetMeshes(const void* verts, u32 vertCount,
     meshVertCount = vertCount;
     meshIdxCount  = idxCount;
     if (vertCount > 0 && idxCount > 0) {
+        // STORAGE usage: the brixelizer SDF voxelizer registers the merged
+        // mesh buffers as FFX resources (the FFX VK backend binds every
+        // buffer SRV as a shader storage buffer).
         meshVbo = vulkanCreateGpuBuffer(
             utils::strtmp("azgaar_props_mesh_vbo"),
             vertCount * sizeof(PropsVertex),
-            VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
-                VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+            VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+                VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
         meshIbo = vulkanCreateGpuBuffer(
             utils::strtmp("azgaar_props_mesh_ibos"),
             idxCount * sizeof(u32),
-            VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
-                VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+            VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+                VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
         VulkanCommand* cmd = vulkanTransientBegin();
         vulkanCopy(.cmd = cmd, .source.data = (void*)verts, .target.buf = &meshVbo,
                    .size = static_cast<u32>(vertCount * sizeof(PropsVertex)));
@@ -343,6 +400,7 @@ void vulkanAzgaarPropsSetMeshes(const void* verts, u32 vertCount,
         meshIbo = VulkanBuffer{};
     }
     utils::threadUnlock(&uploadLock);
+    fireMeshCallback(meshVertCount, meshIdxCount);
 }
 
 void vulkanAzgaarPropsSetVariants(const PropVariantRange* table, u32 count) {
@@ -352,6 +410,7 @@ void vulkanAzgaarPropsSetVariants(const PropVariantRange* table, u32 count) {
         variants.assign(table, table + count);
     }
     utils::threadUnlock(&uploadLock);
+    fireMeshCallback(meshVertCount, meshIdxCount);
 }
 
 // ── Per-tile instance buffers (built on the caller thread, adopted on the
@@ -396,6 +455,16 @@ void vulkanAzgaarPropsSetTile(i32 tileX, i32 tileZ, u64 readyStamp,
     utils::threadLock(&uploadLock);
     pendingTiles.push_back(p);
     utils::threadUnlock(&uploadLock);
+
+    VulkanAzgaarPropsTileCallback cb = NULL;
+    void*                          user = NULL;
+    utils::threadLock(&uploadLock);
+    cb   = tileCallback;
+    user = tileCallbackUser;
+    utils::threadUnlock(&uploadLock);
+    if (cb) {
+        cb(tileX, tileZ, readyStamp, instances, instanceCount, ranges, rangeCount, 0, user);
+    }
 }
 
 void vulkanAzgaarPropsClearTile(i32 tileX, i32 tileZ) {
@@ -403,6 +472,16 @@ void vulkanAzgaarPropsClearTile(i32 tileX, i32 tileZ) {
     utils::threadLock(&uploadLock);
     pendingTiles.push_back(p);
     utils::threadUnlock(&uploadLock);
+
+    VulkanAzgaarPropsTileCallback cb = NULL;
+    void*                          user = NULL;
+    utils::threadLock(&uploadLock);
+    cb   = tileCallback;
+    user = tileCallbackUser;
+    utils::threadUnlock(&uploadLock);
+    if (cb) {
+        cb(tileX, tileZ, 0, NULL, 0, NULL, 0, 1, user);
+    }
 }
 
 void vulkanAzgaarPropsClearAll(void) {

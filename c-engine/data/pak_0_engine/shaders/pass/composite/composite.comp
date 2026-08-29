@@ -19,6 +19,10 @@ layout(push_constant) uniform PushConstants {
     uint volumetricColorIndex;
     uint weatherMaskIndex;   // 0xFFFFFFFF = no weather pass / no mask
     uint aoIndex;            // 0xFFFFFFFF = AO disabled / no output
+    uint giDiffuseIndex;    // 0xFFFFFFFF = GI disabled / no output
+    uint giSpecularIndex;   // 0xFFFFFFFF = GI disabled / no output
+    float giDiffuseFactor;
+    float giSpecularFactor;
     uint width;
     uint height;
 } pc;
@@ -118,6 +122,28 @@ void main() {
                           samplers[SAMPLER_CLAMP_NEAREST]),
                 coord, 0).r;
             composite *= aoFactor;
+        }
+
+        // ── 7b. Brixelizer GI (additive bounce light) ──────────────────
+        // Global illumination traced against the props SDF clipmap
+        // (VulkanBrixelizerPass), added after AO so bounce light is not
+        // re-darkened by ambient occlusion and before fog (step 8) so it
+        // fades out like direct light.  Same absent-sentinel pattern as
+        // AO: while GI is disabled the fetches are skipped entirely, so
+        // the frame stays bit-identical to the no-GI composite.
+        if (pc.giDiffuseIndex != 0xFFFFFFFFu) {
+            vec3 giD = texelFetch(
+                sampler2D(textures[nonuniformEXT(pc.giDiffuseIndex)],
+                          samplers[SAMPLER_CLAMP_NEAREST]),
+                coord, 0).rgb;
+            composite += giD * pc.giDiffuseFactor;
+        }
+        if (pc.giSpecularIndex != 0xFFFFFFFFu) {
+            vec3 giS = texelFetch(
+                sampler2D(textures[nonuniformEXT(pc.giSpecularIndex)],
+                          samplers[SAMPLER_CLAMP_NEAREST]),
+                coord, 0).rgb;
+            composite += giS * pc.giSpecularFactor;
         }
     }
 

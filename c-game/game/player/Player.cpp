@@ -47,6 +47,20 @@ static char engineAutoRun(void) {
     return v;
 }
 
+// ── Forced T-pose ──────────────────────────────────────────────────────────
+// ENGINE_TPOSE=1: the player always plays the T-pose animation regardless of
+// movement state (useful for inspecting the skeleton in isolation).
+static char engineTpose(void) {
+    static char v    = 0;
+    static char init = 0;
+    if (!init) {
+        init = 1;
+        const char* env = getenv("ENGINE_TPOSE");
+        if (env && *env && atoi(env)) v = 1;
+    }
+    return v;
+}
+
 // ── Animation speeds ────────────────────────────────────────────────────────
 #define ANIM_SPEED_IDLE 1.0f
 #define ANIM_SPEED_RUN 1.750f
@@ -1378,7 +1392,9 @@ static void playerMovementTopDownOnly(void) {
     // ── Animation state (skip while casting an ability) ────────────────
     engine::Entity* playerEntity = engine::getEntity(playerScene, playerEntityId);
 
-    if (!player->isCasting) {
+    if (!player->isCasting && engineTpose()) {
+        engine::animationPlayBlended(playerEntity, ANIM_TPOSE, ANIM_SPEED_TPOSE, true, 0.03f);
+    } else if (!player->isCasting) {
         // Jump takes priority over ground animations
         if (!onGround && !player->isJumping) {
             engine::animationPlayBlended(playerEntity, ANIM_JUMP, ANIM_SPEED_JUMP, false, 0.25f);

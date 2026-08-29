@@ -22,8 +22,13 @@ static void copyImage(VulkanCommand* cmd,
 VulkanImage r_vulkanCreateImg(VulkanImageInfo info) {
     assert(info.name);
     if (info.layers > 1 && info.viewType == VK_IMAGE_VIEW_TYPE_2D) {
-        info.isArray  = 1;
-        info.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
+        if (info.type == VK_IMAGE_TYPE_3D) {
+            // 3D: layers carries the volume depth — one 3D view covers it.
+            info.viewType = VK_IMAGE_VIEW_TYPE_3D;
+        } else {
+            info.isArray  = 1;
+            info.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
+        }
     }
 
     VulkanImage image = {};

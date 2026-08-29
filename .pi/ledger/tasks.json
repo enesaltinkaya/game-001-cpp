@@ -1,0 +1,62 @@
+[
+ {
+  "id": 1,
+  "desc": "Recon/validate (see notes.md round 1 for full inventory)",
+  "status": "done",
+  "result": "full recon in notes.md round 1"
+ },
+ {
+  "id": 2,
+  "desc": "Implement brixelizer voxelizer pass + log FfxBrixelizerStats",
+  "status": "done",
+  "result": "pass complete; healthy bake; two verifiers PASS"
+ },
+ {
+  "id": 3,
+  "desc": "Implement brixelizer GI pass (context + dispatch + debug hooks)",
+  "status": "done",
+  "result": "verifier PASS; saved diffuse GI shows real geometry-aware light"
+ },
+ {
+  "id": 4,
+  "desc": "Wire GI into composite (step 7b, sentinel, factors) + specular sanity",
+  "status": "done",
+  "result": "composite.comp step 7b + VulkanCompositePass push wiring; all-black specular confirmed expected (roughness gate); verifier PASS (factors logged, clean run); note: one destroy/recreate cycle of voxelizer context at startup \u2014 confirm intentional"
+ },
+ {
+  "id": 5,
+  "desc": "ENGINE_IBL_DISABLED hook + baseline",
+  "status": "done",
+  "result": "done, verifier PASS"
+ },
+ {
+  "id": 6,
+  "desc": "A/B screenshot verification: IBL off, GI on vs /tmp/gi-ibl-off.jpg baseline; confirm dark areas (house shadow side/interior, canopy shadows) are filled; check startup recreate not churn",
+  "status": "done",
+  "result": "A/B confirmed (final verifier): IBL off + GI on fills house shadow wall / ground shadow / canopy shadows vs baseline; sunlit areas unchanged; startup recreate = 2 cycles at +2s, zero churn in 25 s steady state"
+ },
+ {
+  "id": 7,
+  "desc": "Stability/cost: stats stable across frames, no FFX ERROR/WARNING, 30-frame sequence no boil/flicker, profile sane",
+  "status": "done",
+  "result": "37 stat samples identical over 25 s (bricksInUse=6650, total closes to 262144); zero FFX ERROR/WARNING/CRIT; 30-frame diff mean 0.42/255 (bumps = dust particles, not GI flicker); 60 fps cap held at 2880x1627"
+ },
+ {
+  "id": 8,
+  "desc": "Optional Wine sample (deprioritized \u2014 archive compiles in build)",
+  "status": "pending",
+  "result": "skipped by budget \u2014 SDK archive already compiles in the normal build (re-verified round 9), so no added diagnostic value"
+ },
+ {
+  "id": 9,
+  "desc": "Crash fix (24 MB stack temp) + TRANSFER_SRC",
+  "status": "done",
+  "result": "verifier PASS"
+ },
+ {
+  "id": 10,
+  "desc": "'Zero bricks' investigation",
+  "status": "done",
+  "result": "false alarm (deltas vs resident); log fixed; verifier PASS"
+ }
+]

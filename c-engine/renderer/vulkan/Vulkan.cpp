@@ -38,6 +38,7 @@
 #include "renderer/vulkan/pass/ao/VulkanAOPass.h"
 #include "renderer/vulkan/pass/azgaar_props/VulkanAzgaarPropsPass.h"
 #include "renderer/vulkan/pass/azgaar_weather/VulkanAzgaarWeatherPass.h"
+#include "renderer/vulkan/pass/brixelizer/VulkanBrixelizerPass.h"
 #include "renderer/vulkan/pass/oit/VulkanOitAccumulatePass.h"
 #include "renderer/vulkan/pass/oit/VulkanOitCompositePass.h"
 #include "renderer/vulkan/pass/fsr/VulkanFsrPass.h"
@@ -307,6 +308,7 @@ void vulkanInit(void) {
     addPass(&vulkanAOPass);
     addPass(&vulkanVolumetricPass);
     addPass(&vulkanDecalPass);
+    addPass(&vulkanBrixelizerPass);
     addPass(&vulkanCompositePass);
     addPass(&vulkanTaaPass);
     addPass(&vulkanDofPass);
