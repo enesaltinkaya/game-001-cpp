@@ -18,3 +18,13 @@ Run the game headless with the exact env combination (IBL off, weather reduced t
 - Build: `./scripts/build.sh` (code + shaders + assets; `SKIP_NAVMESH=1` to skip navmesh bake).
 - Run: `./scripts/run.sh play screenshot /tmp/brix 16` with the env vars above.
 - No unit tests for rendering; verification is screenshot comparison + code inspection.
+
+## Phase 2: fix (user follow-up "lets fix it then")
+
+**Chosen fix (minimal, FFX fork, single site)** — `ffx_brixelizergi_main.h` reproject/interpolate pass, the reset gate at ~line 1578 (`if (!has_world_probe && weight_sum < 1.0e-3)`):
+- Currently: `StoreStaticGITarget(tid, 0)` unconditionally → next frame temporal_weight=1 → fresh per-frame-jittered MC sample → 2-state flicker on non-voxelized thin limbs (character).
+- Fix: if a valid reprojected history exists (`reprojected.w > 0` and not NaN — the earlier reprojection pass already zeroed history on disocclusion/out-of-range, so this gate is safe), keep it: `StoreStaticGITarget(tid, FfxFloat32x4(reprojected.xyz, reprojected.w * 0.9))` (decay so the pixel re-accumulates quickly once probe weights recover). Full zero-reset only when no valid history. New debug-target color: green = history kept (red = full reset, unchanged). Must sit inside `#if FFX_BRIXELIZER_GI_OPTION_DISABLE_DENOISER == 0` (reprojected only exists there). Do NOT use ClipAABB against the new signal in the retain branch (new signal is garbage there and would crush history).
+- Rejected alternatives: voxelizing the character into the SDF (dynamic cascade) — large feature, per-frame re-bake cost; changing probe weighting — broader behavior change.
+- Rebuild Linux `libffx_fsr3upscaler_vk.a` via the fork build (worker knows the C++-only recipe from round 6; note the `shader_output` wipe hazard — use the scoped-restore-safe variant).
+
+**Verification (same recipe as phase 1)**: rerun the burst with `TERM=xterm ENGINE_HIDE_GUI=1 ENGINE_IBL_DISABLED=1 ENGINE_TPOSE=1 ENGINE_AZGAAR_WEATHER_COUNT=1 ENGINE_SCREENSHOT_DELAY_MS=12000 ENGINE_BRIX_GI_SAVE=1 ENGINE_BRIX_GI_SAVE_EVERY=1 ENGINE_BRIX_GI_MASK_SAVE=1 ./scripts/run.sh play screenshot /tmp/brix5 16`. Success = limb hot-pixel count (~978 px std>20 pre-fix) drops to background floor, per-ROI temporal stddev ≈ background (1.0–1.7 levels), green flag covers limb pixels in the mask dump, background still stable, no black/ghost artifacts on the character, clean log + build.

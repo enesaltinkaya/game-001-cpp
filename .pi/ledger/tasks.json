@@ -34,5 +34,29 @@
     "desc": "Decisive dump: fork-patch the FFX brixelizergi fork to read back per-pixel debug target (red=weight_sum<1e-3 reset) + disocclusion mask each frame (alongside existing GI saves); rerun burst; check which mask covers the limb ROI pixels (neck 1535,755 / hand_L 676,789 / hand_R 2199,874 / legs 1374,1400)",
     "status": "done",
     "result": "CONFIRMED: reset flag (weight_sum<1e-3, no world probe) covers 98.8-100% of limb hot pixels (6-13/16 frames); disocclusion 0/16 at hot pixels. Mechanism = per-frame history reset on non-voxelized character limbs. Files: ffx_brixelizergi.h/.cpp (fork) + VulkanBrixelizerPass.cpp (ENGINE_BRIX_GI_MASK_SAVE). Verifier PASS"
+  },
+  {
+    "id": 7,
+    "desc": "Implement fix in FFX fork ffx_brixelizergi_main.h reset gate (~line 1578): when !has_world_probe && weight_sum<1e-3, keep valid reprojected history (reprojected.w>0, !NaN) with decayed w*0.9 + green debug flag; full reset only when no history; inside DISABLE_DENOISER guard; rebuild Linux libffx_fsr3upscaler_vk.a",
+    "status": "done",
+    "result": "Fix implemented in ffx_brixelizergi_main.h reset gate (keep valid history w*0.9 + green flag; full reset only w/o history) + brixelizergi shader pool recompiled + Linux libffx_fsr3upscaler_vk.a rebuilt (new blob hash 400c5d7a). Verifier PASS."
+  },
+  {
+    "id": 8,
+    "desc": "Verification capture: rerun burst (same env + ENGINE_BRIX_GI_MASK_SAVE=1) to /tmp/brix5 16; quantify limb flicker with round-2 metrics (per-ROI temporal stddev, hot-pixel count) vs pre-fix; check green flag covers limb pixels in mask dump",
+    "status": "done",
+    "result": "Executed by verifier: burst /tmp/brix5 16 - limb hot px (std>20) 978->18 (2/1/1/14 per ROI), per-ROI stddev 0.94-1.13 = background floor, green flag in all 4 limb boxes all 16 frames, red reset down to 140-230 px image-wide stable."
+  },
+  {
+    "id": 9,
+    "desc": "Regression checks: background stability, no black/ghost artifacts on character, GI stats/perf normal, clean log, build clean (SKIP_NAVMESH=1 scripts/build.sh)",
+    "status": "done",
+    "result": "Executed by verifier: background stable (std 1.36/p95 3.93), no black/ghost artifacts (char luma ratio 0.999, near-black 0.007%), build+run clean, parked player/camera unchanged. Residual: 25 rim px on knee/collar silhouettes (secondary disocclusion effect)."
+  },
+  {
+    "id": 10,
+    "desc": "Document fix in ledger: what changed, why, verification numbers, remaining limitations (disocclusion rim secondary; character still has no world probe)",
+    "status": "done",
+    "result": "Manager wrote final fix summary + limitations in notes.md ('final: the fix (phase 2)'). Verifier PASS; fix verified."
   }
 ]

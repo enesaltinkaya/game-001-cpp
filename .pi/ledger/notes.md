@@ -110,3 +110,30 @@ Chain of evidence:
 Primary fix candidates: (a) relax the `weight_sum < 1e-3` reset gate (or the power-8 probe weighting) for pixels with no world probe; (b) give the character a world probe (voxelize character into the SDF as a dynamic cascade). Secondary: disocclusion-mask edge rejections produce the rim contours; TAA/FSR shape the final 2-state amplitude.
 
 Caveats carried forward: per-frame auto-normalized GI jpgs (use log float ranges for absolute radiance); burst runs hitch ~2.2 fps under readbacks; one weather particle unavoidable (clamp >=1).
+
+## round 6 (task 7: implement fix)
+
+**Findings**
+- Fix in ffx_brixelizergi_main.h reset gate (~1578, FfxBrixelizerGIInterpolateScreenProbes): `!has_world_probe && weight_sum<1e-3` now keeps valid reprojected history (`reprojected.w>0 && !any(isnan(reprojected))`, inside DISABLE_DENOISER guard) via `StoreStaticGITarget(tid, FfxFloat32x4(reprojected.xyz, reprojected.w*0.9))` + GREEN debug flag; full zero-reset + red flag only when no history. No ClipAABB in retain branch.
+- main.h is a GLSL header → required recompiling the brixelizergi shader pool (SC via wine, glslang, 19 shaders × 4 variants × 8 option perms) — the round-6 "C++-only" recipe was insufficient. Recipe + gotchas (quoted {0,1} perm args; all variants compile the same base .glsl; SC dedupe normal) documented; script kept at /tmp/ffx_rebuild_brixgi_shaders.sh.
+- Regenerated 16 new hashed SPIR-V blob headers + 5 renumbered index files; rebuilt build-linux/libffx_fsr3upscaler_vk.a (13.1 MB, new hash 400c5d7a… ×84 refs). Windows .a NOT rebuilt (release build regenerates).
+- Fork working tree: round-6 diagnostic edits + this fix + regenerated shader_output. No stray files.
+
+## round 7 (verifier for task 7; also executed tasks 8+9) — VERDICT PASS
+
+**Verification (against plan.md phase-2 success criteria)**
+1. Limb hot pixels (std>20): pre-fix ~978 limb-concentrated → **18 total across the 4 limb ROIs** (neck 2, hand_L 1, hand_R 1, legs 14). Whole-image 608 spread over edges/background (weather leaf + terrain rims), not limb-concentrated.
+2. Per-ROI temporal stddev 0.94–1.13 levels ≈ background floor (bg mean 1.36). Target 1.0–1.7 met.
+3. Mask dump: GREEN (history-kept) flag present in all 4 limb boxes in all 16 burst frames; RED (full reset) down to ~140–230 px image-wide, stable.
+4. Background stable (mean std 1.36, p95 3.93).
+5. No black/ghost artifacts: character-box mean luma ratio 0.999, near-black 0.007%; only 25 edge px with >100-level swings on knee/collar silhouette rims (known secondary disocclusion-rim effect).
+6. Build (SKIP_NAVMESH=1) + run clean; parked player/camera unchanged.
+- Residuals: 14 hot px on the knee silhouette rim (secondary disocclusion effect, documented); 4 orphaned pre-fix shader_output hash files (unreferenced, harmless); Windows .a stale until release build.
+
+## final: the fix (phase 2)
+
+**What changed**: FFX fork `ffx_brixelizergi_main.h` — the per-pixel GI reset gate no longer destroys valid temporal history on non-voxelized surfaces (the character). When the 4-nearest-probe weight hovers below 1e-3 (thin limbs, no world probe), the reprojected history is kept with a 0.9×/frame sample-count decay instead of a full zero-reset; the pixel re-accumulates quickly once probe weights recover, and disocclusions still force a fresh start via the earlier reprojection pass.
+
+**Result**: the 2-state glitchy color animation on wrists/legs/neck is gone — limb hot pixels 978 → 18 (all on the secondary silhouette rim), per-ROI temporal stddev at the background noise floor, green keep-flag covers the limbs every frame, no new artifacts.
+
+**Remaining limitations**: (a) the character still has no world probe — the keep-history path is a temporal mitigation, not a real GI signal for the character (proper fix would voxelize the character as a dynamic SDF cascade); (b) secondary disocclusion-mask rim flicker on silhouettes (knee/collar) remains, small amplitude; (c) Windows FFX lib must be rebuilt in the next release build; (d) diagnostic knobs kept (ENGINE_BRIX_GI_MASK_SAVE, mask output fields in the fork desc) — env-gated, no default-behavior change.
