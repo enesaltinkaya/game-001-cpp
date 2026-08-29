@@ -143,6 +143,8 @@ static VulkanImage giPrevLitOutput;     // R16G16B16A16_SFLOAT, previous-frame c
 static VulkanImage giDiffuse;           // R16G16B16A16_SFLOAT, GI output
 static VulkanImage giSpecular;          // R16G16B16A16_SFLOAT, GI output
 static VulkanImage giDebugVisualization; // R16G16B16A16_SFLOAT, FFX radiance/irradiance cache
+static VulkanImage giDebugTarget;        // R16G16B16A16_SFLOAT, probe size, per-pixel debug (red = weight_sum<1e-3 history reset)
+static VulkanImage giDisocclusionMask;   // R8_UNORM, internal size, per-pixel temporal-rejection mask
 static VulkanImage giNoiseTexture;      // R8G8_UNORM, 128^2 two-channel blue noise
 static char giNoiseCreated;
 
@@ -150,6 +152,7 @@ static char giNoiseCreated;
 static char giDebugMode;  // 0=off, 1=radiance cache, 2=irradiance cache (ENGINE_BRIX_GI_DEBUG)
 static u32 giSaveEvery;   // frames between GI debug saves (ENGINE_BRIX_GI_SAVE_EVERY)
 static char giSaveEnabled;
+static char giMaskSaveEnabled; // raw per-frame dumps of the debug target + disocclusion mask (ENGINE_BRIX_GI_MASK_SAVE)
 static char giLogInit;
 static u32 giFrameIndex;   // monotonic GI dispatch counter (drives the save cadence)
 
@@ -672,6 +675,11 @@ static void giReadEnvKnobs(void) {
     if (giSaveEnabled) {
         utils::info("vulkanBrixelizerPass: GI debug save every %u frames (ENGINE_BRIX_GI_SAVE)", giSaveEvery);
     }
+    const char* m = getenv("ENGINE_BRIX_GI_MASK_SAVE");
+    if (m && m[0] && strcmp(m, "0") != 0) {
+        giMaskSaveEnabled = 1;
+        utils::info("vulkanBrixelizerPass: GI mask save enabled (ENGINE_BRIX_GI_MASK_SAVE)");
+    }
 }
 
 // A 128^2 two-channel blue-noise tile, generated on the CPU (two independent
@@ -751,6 +759,14 @@ static void destroyGI(void) {
     if (giDebugVisualization.img) {
         vulkanDestroyImage(&giDebugVisualization, NULL);
         giDebugVisualization = VulkanImage{};
+    }
+    if (giDebugTarget.img) {
+        vulkanDestroyImage(&giDebugTarget, NULL);
+        giDebugTarget = VulkanImage{};
+    }
+    if (giDisocclusionMask.img) {
+        vulkanDestroyImage(&giDisocclusionMask, NULL);
+        giDisocclusionMask = VulkanImage{};
     }
     if (giNoiseTexture.img) {
         vulkanDestroyImage(&giNoiseTexture, NULL);
@@ -870,6 +886,42 @@ static char ensureGI(u32 width, u32 height) {
     }
     giContextReady = 1;
     utils::info("vulkanBrixelizerPass: GI context created (%ux%u, 50%% internal, DEPTH_INVERTED)", w, h);
+
+    // Mask-save diagnostic images (fork patch): the GI dispatch can redirect the
+    // per-pixel debug target (red = weight_sum<1e-3 history reset) and the
+    // disocclusion mask to caller-owned images.  The sizes come from the fork
+    // getter so they match the component's float internal-size arithmetic
+    // exactly (probe buffer for the debug target, internal for the mask).
+    if (giMaskSaveEnabled) {
+        u32 debugSize[2]   = {0, 0};
+        u32 disoccSize[2]  = {0, 0};
+        if (ffxBrixelizerGIGetDebugOutputSizes(&giContext, debugSize, disoccSize) == FFX_OK &&
+            debugSize[0] && debugSize[1] && disoccSize[0] && disoccSize[1]) {
+            giDebugTarget    = vulkanCreateImage(.name   = "BrixelizerGIDebugTarget",
+                                                 .format = VK_FORMAT_R16G16B16A16_SFLOAT,
+                                                 .usage  = outUsage,
+                                                 .width  = (int)debugSize[0],
+                                                 .height = (int)debugSize[1]);
+            giDisocclusionMask = vulkanCreateImage(.name   = "BrixelizerGIDisocclusionMask",
+                                                   .format = VK_FORMAT_R8_UNORM,
+                                                   .usage  = outUsage,
+                                                   .width  = (int)disoccSize[0],
+                                                   .height = (int)disoccSize[1]);
+            // Same layout discipline as the other GI outputs: the FFX backend
+            // expects UAV-registered resources to sit in a concrete GENERAL
+            // layout (a fresh image starts UNDEFINED), so move them there in a
+            // submitted transient before any dispatch can bind them.
+            VulkanCommand* cmd = vulkanTransientBegin();
+            vulkanTransition(cmd, &giDebugTarget, VK_IMAGE_LAYOUT_GENERAL, 0, 1);
+            vulkanTransition(cmd, &giDisocclusionMask, VK_IMAGE_LAYOUT_GENERAL, 0, 1);
+            vulkanTransientEnd(cmd, 1);
+            utils::info("vulkanBrixelizerPass: GI mask save images %ux%u (debug) + %ux%u (disocclusion)",
+                       debugSize[0], debugSize[1], disoccSize[0], disoccSize[1]);
+        } else {
+            utils::warn("vulkanBrixelizerPass: ffxBrixelizerGIGetDebugOutputSizes failed — mask save disabled");
+            giMaskSaveEnabled = 0;
+        }
+    }
     return 1;
 }
 
@@ -999,6 +1051,10 @@ static void dispatchGI(VulkanCommand* cmd, Camera* camera) {
 
     desc.outputDiffuseGI  = vulkanFfxWrapImageResource(&giDiffuse, FFX_RESOURCE_USAGE_UAV, FFX_RESOURCE_STATE_UNORDERED_ACCESS, L"brix_gi_diffuse");
     desc.outputSpecularGI = vulkanFfxWrapImageResource(&giSpecular, FFX_RESOURCE_USAGE_UAV, FFX_RESOURCE_STATE_UNORDERED_ACCESS, L"brix_gi_specular");
+    if (giMaskSaveEnabled) {
+        desc.outputDebugTarget      = vulkanFfxWrapImageResource(&giDebugTarget, FFX_RESOURCE_USAGE_UAV, FFX_RESOURCE_STATE_UNORDERED_ACCESS, L"brix_gi_debug_target");
+        desc.outputDisocclusionMask = vulkanFfxWrapImageResource(&giDisocclusionMask, FFX_RESOURCE_USAGE_UAV, FFX_RESOURCE_STATE_UNORDERED_ACCESS, L"brix_gi_disocc_mask");
+    }
 
     FfxBrixelizerRawContext* rawContext = NULL;
     FfxErrorCode             rc = ffxBrixelizerGetRawContext(&context, &rawContext);
@@ -1075,6 +1131,18 @@ static void dispatchGI(VulkanCommand* cmd, Camera* camera) {
             vulkanSaveImage(&giDebugVisualization, path);
         }
         utils::info("vulkanBrixelizerPass: saved GI debug images (frame %u)", giFrameIndex);
+    }
+
+    // ── Optional raw per-frame dumps of the per-pixel debug target and the
+    // disocclusion mask (fork patch) — raw bytes so the exact 0/1 flag values
+    // survive (the auto-normalized jpg path would rescale the flags).
+    if (giMaskSaveEnabled && giSaveEnabled && giFrameIndex % giSaveEvery == 0) {
+        char path[1024];
+        snprintf(path, sizeof(path), "/tmp/brix_gi_mask_debug_%u.raw", giFrameIndex);
+        vulkanSaveImageRaw(&giDebugTarget, path);
+        snprintf(path, sizeof(path), "/tmp/brix_gi_mask_disocc_%u.raw", giFrameIndex);
+        vulkanSaveImageRaw(&giDisocclusionMask, path);
+        utils::info("vulkanBrixelizerPass: saved GI mask dumps (frame %u)", giFrameIndex);
     }
     giFrameIndex++;
 }

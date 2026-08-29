@@ -1,3 +1,3 @@
-# Task
+# task
 
-implement brixelizer gi from fidelityfx. we have some other parts of fidelityfx already implemented. while testing we should disable IBL, so we can see full gi effect on dark areas.
+brixelizer gi is not working properly. run the game with IBL off. and disable weather effects if we have an env for that too. also use ENGINE_TPOSE animation, it will disable idle character animation. and take consecutive screenshots and analyze the glitchy color animation on the character. i see it on wrists, leg area, neck area.

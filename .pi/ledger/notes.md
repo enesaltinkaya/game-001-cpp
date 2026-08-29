@@ -4,100 +4,109 @@
 
 ## Core difficulty
 
-This is a re-integration of a _removed_ subsystem (`plans/brixelizer-gi.md` is gone, so the only ground truth is the FFX sample, `docs/fsr3.1.md`, and engine buffer conventions), and the hard part isn't the FFX API — it's the engine-side data: the voxelizer needs CPU-visible mesh instances, but the scene is a streamed implicit heightmap (no mesh) plus per-tile streamed props, so the SDF can only ever contain props (terrain is invisible to GI rays), and the per-tile instance create/delete lifecycle must be hooked into the props streaming.
+The artifact is *temporal* (color changing frame-to-frame on the character), so it cannot be seen in any single frame, and the render pipeline has multiple independent per-frame stochastic sources (FFX GI ray jitter, FSR/TAA, volumetric fog, OIT/DCC on AMD) — the task is really attribution: which stage owns the flicker, not just that it exists.
 
 ## Reductions / key lemmas
 
-- **The FFX side is already done.** `build.sh` in `fsr3.1/` already compiles `brixelizer` + `brixelizergi` into `libffx_fsr3upscaler_vk.a` with all Linux `wchar_t` context-size bumps, the `constantBuffers[3]→[4]` OOB patch, the per-voxel reference clamp, and the bindless descriptor-pool fix. No SDK work remains.
-- **The engine-side pattern is fully demonstrated** by `VulkanFsrPass.cpp`: FFX backend scratch + `FfxInterface`, `ffxGetImageResourceDescriptionVK`/`ffxGetResourceVK` wrapping of `VulkanImage`s, context destroy on `swapchainCreated`, `VulkanProfile` timing. `VulkanBrixelizerPass` should clone this structure (its own scratch/interface; sharing with FSR buys little).
-- **Every GI dispatch input already exists in the engine:** depth (reverse-Z → pick the `DEPTH_INVERTED` permutation), oct-encoded normals (0..1 → `normalsUnpackMul=2, add=-1`, exactly the sample's constants), roughness (material buffer channel R, the composite samples `matSample.r`), velocity `R16G16_SFLOAT` (`motionVectorScale -1,-1` as FSR does), blue-noise (`IblData.blueNoiseIndex` already in SceneBuffer), sky radiance (the IBL env image — `vulkanIblSetDisabled` only flips `IblData.enabled` in the buffer, the image stays valid, so GI keeps getting light _when IBL ambient is off_ — which is precisely the test condition), and scene color as `prevLitOutput`.
-- **Props are CPU-resident and registerable:** merged `SceneVertex[]` + `u32` index buffers + per-tile `PropInstance` (pos/yaw/scale, 44 B) are all available on the CPU in the props system (`vulkanAzgaarPropsSetMeshes/SetVariants` + per-tile sets). Static instances with transforms derived from pos/yaw/scale fit `ffxBrixelizerCreateInstances`; per-tile streaming maps to create-on-load / `ffxBrixelizerDeleteInstances` on evict.
-- **Known past bug to re-verify:** the removed integration once had the instance-transform row-major diagonal at `[0]/[4]/[8]` instead of `[0]/[5]/[10]`, collapsing to 2/27 bricks ("two SDF regions"). `freeBricks`/`staticBricks` from `FfxBrixelizerStats` is the collapse signal — check it in the first run.
-- **Composite is already prepared for an additive term:** god-rays are added at step 9, AO multiplies at 7a; a `giIndex != 0xFFFFFFFF` sentinel + additive term in the geometry path (before fog) follows the AO pattern directly, and is bit-identical when the sentinel is set.
-- **Expectation caveat:** terrain absence from the SDF means rays pass through the ground; "dark areas" that darken correctly are those occluded by _props_ (canopies, interiors). If verification finds terrain self-shadowing missing is the dominant gap, that's a scope decision for the manager, not a bug.
+1. **Static-scene reduction.** T-pose + parked camera + no input makes every temporal-filter input (view/proj, depth, normal, motion vectors) frame-invariant. FFX Brixelizer-GI's per-ray jitter is driven by an *internal* `frameIndex` that the host auto-increments every dispatch (`ffx_brixelizergi.cpp:1775`, fed to `SampleBlueNoise`/PCG hashes in `ffx_brixelizergi_main.h`) — so jitter still changes every frame even in a static scene. Therefore: if color still changes per frame after warm-up, the temporal filter is rejecting/restarting history every frame (or SDF content is changing), never a "needs more samples" transient.
+2. **Warm-up lemma.** `ENGINE_SCREENSHOT_DELAY_MS=12000` means the burst starts ~12 s (hundreds of frames) after GI context creation. Any flicker visible in the burst is *persistent* per-frame rejection, not convergence.
+3. **Stage-isolation lemma (the big one).** `ENGINE_BRIX_GI_SAVE=1 ENGINE_BRIX_GI_SAVE_EVERY=1` already exists and dumps the raw, *pre-composite* GI diffuse/specular images every frame to `/tmp/brix_gi_diffuse_N.jpg` / `brix_gi_specular_N.jpg` (VulkanBrixelizerPass.cpp:1067). Comparing the raw-GI frame sequence against the swapchain burst directly splits the hypothesis space: raw GI stable + composite flickers ⇒ downstream (FSR optical flow/TAA/volumetric/OIT-DCC); raw GI flickers ⇒ the GI temporal filter itself (reprojection/disocclusion rejection, wrong velocity for the skinned character, or the voxelizer's per-frame round-robin cascade re-bake — `ffxBrixelizerRawGetCascadeToUpdate(frameIndex, ...)` updates one cascade per frame). `ENGINE_BRIX_GI_DEBUG=1/2` adds radiance-cache/irradiance-cache visualizations, which are only written in the same save block — all three env vars compose in a **single run**.
+4. **Why wrists/legs/neck specifically.** With IBL ambient off, character diffuse ≈ direct sun + GI only. The SDF holds *props only* (no terrain, no character), so rays from thin limbs mostly miss to the env map at `BRIX_GI_ENV_INTENSITY=0.1` (low radiance, high relative per-ray variance), while grazing hits on nearby canopies add variance. Thin geometry = worst signal-to-noise, so a broken temporal filter is most visible exactly where the user sees it. This is a consistency check: if the flicker were uniform everywhere, the GI-noise hypothesis would be weaker.
+5. **Confounds to control.** Weather cannot be fully disabled — `ENGINE_AZGAAR_WEATHER_COUNT` clamps to ≥1 (VulkanAzgaarWeatherPass.cpp:258); one particle is negligible but the attribution is not perfect. Also verify the parked camera truly doesn't drift (a moving camera would invalidate everything): the test is whether *background* regions are temporally stable in the burst while the character flickers. Use `ENGINE_HIDE_GUI=1` so HUD doesn't pollute the character regions.
 
 ## Candidate approaches
 
-1. **Faithful re-integration (two-stage).** New `pass/brixelizer/VulkanBrixelizerPass`: voxelizer context (8 static cascades, 2 m base voxel — the Step-1 layout the A/B hooks matched) + GI context; register resident prop tiles as static instances; per-frame `ffxBrixelizerUpdate` + `ffxBrixelizerGIContextDispatch`; additive GI term in `composite.comp`; `ENGINE_IBL_DISABLED=1` hook. _Risk:_ many interdependent pieces (permutation selection, history resources, instance lifecycle, transform layout) and no surviving plan file to cross-check. _Effort: high_.
-2. **Sample A/B first (optional precondition).** Run the existing Wine sample (`./build-brixgi-sample.sh`, `BRIXGI_OUTPUT_MODE=diffusegi BRIXGI_EXIT_FRAMES=…`) to confirm the current SDK fork is still healthy after subsequent FFX rounds before investing in engine plumbing. _Effort: low_.
-3. **Debug-vis-first ordering of approach 1.** Wire voxelizer + GI but consume only the FFX `debug_visualization` output (Distance/BrickID views) in a temporary screenshot path before touching the composite; confirms SDF content and ray tracing with zero composite risk.
-4. **Alternative GI (the SSGI/probe plan in `plans/global-illumination.md`).** Rejected — the task explicitly asks for Brixelizer.
+1. **Combined single capture run** — `./scripts/run.sh play screenshot /tmp/brix 16` with `TERM=xterm ENGINE_IBL_DISABLED=1 ENGINE_AZGAAR_WEATHER_COUNT=1 ENGINE_TPOSE=1 ENGINE_SCREENSHOT_DELAY_MS=12000 ENGINE_HIDE_GUI=1 ENGINE_BRIX_GI_SAVE=1 ENGINE_BRIX_GI_SAVE_EVERY=1 ENGINE_BRIX_GI_DEBUG=1`. Per-frame readbacks (16 screenshots + 16×3 GI saves) may hitch the run; if frame timing perturbs the artifact, drop to 12 frames.
+2. **Burst-only, minimal** — same run without the GI save/debug envs; cheaper, but loses the stage split and forces a second run later.
+3. **Static code audit first** — read the FFX GI reprojection/disocclusion code + engine history/velocity wiring to find the defect without frames. Fast, but the two leading mechanisms (per-frame disocclusion rejection vs SDF round-robin content change) are not distinguishable by reading alone; likely wasted round.
+4. **A/B control runs** — repeat the burst with IBL on (or `ENGINE_TPOSE` off) to bracket the effect. Good evidence, but a second+ run; keep as fallback only.
 
 ## Recommended approach
 
-Approach 1 executed in the order 2 → 3 → full: confirm the reference sample still runs clean (one command), then bring up the engine pass outputting only debug visualization until `FfxBrixelizerStats` shows a stable, non-collapsed brick population, then wire the additive composite term. For it to work: the props streaming lifecycle must expose per-tile instance create/evict (inspect the `VulkanAzgaarPropsPass` Set\*-API callers to find the hook point), the transform layout must be verified against `ffx_brixelizer.h`/the sample rather than reconstructed from memory, and the IBL env image must be fed to the GI dispatch independently of `IblData.enabled`.
+Approach 1, with 3 as the follow-up against whatever region the frame analysis points at. One run yields all three signals (final-frame burst, raw pre-composite GI, FFX cache view), which is exactly the data needed to assign the flicker to a stage; the code audit then has a concrete target (character velocity vs SDF update) instead of two open suspects. Must be true for it to work: the parked player/camera stay put during the run (background must be temporally stable in the burst — verify from frame 1's comparison, and don't touch db.db rows or spawn code), and the ~12 s delay must land in gameplay (asset load complete — per AGENTS, keep ≥5 s, and watch the log for the GI context creation lines before the capture window).
 
 ## Proposed tasks
 
-1. **Test hook + baseline.** Add `ENGINE_IBL_DISABLED=1` (call `vulkanIblSetDisabled(true)` at IBL init); capture `ENGINE_HIDE_GUI=1 ./scripts/run.sh play screenshot /tmp/gi-ibl-off.jpg`. _Verify:_ dark, ambient-free areas in the parked scene; env image still loaded. (Set `TERM` in the shell — `run.sh` fails under `set -e` when it's unset.)
-2. **Voxelizer + GI pass, debug-vis only.** New `pass/brixelizer/VulkanBrixelizerPass.{h,cpp}` registered between `vulkanAOPass` and `vulkanCompositePass` in `Vulkan.cpp`: FFX backend scratch/interface, both contexts (correct Linux context sizes, `DEPTH_INVERTED` + correct GI permutation), prop-tile static instance registration with per-tile create/delete, per-frame update + GI dispatch feeding depth/normal/material(R roughness)/velocity/history resources, log `FfxBrixelizerStats`. _Verify:_ builds warning-free; run is FFX-clean (no ERROR/WARNING); `freeBricks` stable and `staticBricks > 0` (not the 27→2 collapse); debug-vis screenshot shows bricks, not two endpoint dots.
-3. **Composite GI term.** Additive diffuse-GI term in `composite.comp` geometry path (before fog, after AO), `giIndex` sentinel pattern; `giDiffuseFactor`/`giSpecularFactor` env/settings knobs; bit-identical output when disabled. _Verify:_ screenshot vs task-1 baseline shows visible bounce in prop-occluded dark areas; disable flag gives byte-identical frames.
-4. **Stability + cost validation.** Multi-bounce on, history reproject correctness, `reset` on teleport, 30-frame capture for boil/flicker (AMD DCC — outputs are unblended storage images so should be safe, but confirm), and frame-time delta vs the AO/SSR profiles. _Verify:_ stable 30-frame sequence; profile entries within budget; no validation warnings in the log.
+1. **Capture run.** Execute the combined single run from Recommended approach; verify deliverables on disk: `/tmp/brix_1..16.jpg` + paired `/tmp/brix_gi_diffuse_N.jpg` / `brix_gi_specular_N.jpg` / `brix_gi_debug_N.jpg` sequences, clean engine exit, and log lines confirming IBL-disabled, T-pose, and GI context created *before* the capture window.
+2. **Burst analysis.** Compute per-pixel temporal delta/stddev across the 16 composite frames (small Python/PIL script); produce a difference map; quantify flicker magnitude (levels) and spatial extent on the character (wrist/leg/neck) and measure background stability (camera-drift check); compare per-frame variance of the same body regions in the raw GI images to stage-attribute the artifact (GI vs downstream).
+3. **Cache-view check.** Inspect the `brix_gi_debug_*` (radiance/irradiance cache) sequence: flickering cache on the character ⇒ reprojection/disocclusion failing per frame; stable cache ⇒ jitter is being integrated and the artifact is downstream or in SDF content (then examine per-frame voxelizer stats in the log for the round-robin re-bake signature).
+4. **Root-cause note.** Using the attributed stage, inspect the specific code path (FFX GI disocclusion/reprojection inputs from the engine — depth/normal history, `motionVectorScale`, and whether the skinned character writes correct velocity into the GBuffer velocity buffer at all) and write the finding + minimal fix proposal into notes.md.
 
-## round 1 (task 1 — recon)
+## round 1 (task 1: capture run)
 
-### Findings
-- **Transform layout (critical):** `FfxFloat32x3x4` = float[12] row-major 3 rows × 4 cols; translation = (t[3], t[7], t[11]); identity diagonal = t[0], t[5], t[10]. Verified against GLSL `LoadInstanceTransform` (ffx_brixelizer_callbacks_glsl.h:668) — matrix(r,c) = t[3r+c]. Old bug was column-major misread ([0]/[4]/[8]).
-- **Voxelizer flow:** contextCreate (sdfCenter, ≤24 cascades, per-cascade flags/voxelSize) → RegisterBuffers (merged verts/idx, VBO/IBO need VK_BUFFER_USAGE_STORAGE_BUFFER_BIT — currently missing on props buffers) → CreateInstances/DeleteInstances (per-tile; MAX 2^16) → per-frame BakeUpdate once + Update (scratch size from outScratchBufferSize, stats one-frame-lag readback; freeBricks = collapse signal). Vertex format R32G32B32_FLOAT, vertexStride 72 (PropsVertex, pos first 12 bytes), indexFormat U32.
-- **Constants:** CASCADE_RESOLUTION 64, SDF atlas 512³ R8_UNORM 3D, MAX_CASCADES 24. Step-1 layout = 8 cascades STATIC-only, voxelSize 2 m base ×2 per level; GI start/endCascade raw indices.
-- **GI dispatch:** contextCreate flags DEPTH_INVERTED|DISABLE_SPECULAR|DISABLE_DENOISER, internalResolution 50%; Linux ctx 349684 u32. Scalars: normalsUnpackMul 2.0 / add -1.0, roughnessChannel 0 (engine material R), roughnessThreshold 0.9, isRoughnessPerceptual false, environmentMapIntensity 0.1. Resources: environmentMap as textureCube (use ibl.prefilter 6-layer R16G16B16A16_SFLOAT cube — add accessor), depth/normals/history*/prevLitOutput/roughness(material image)/motionVectors(-1,-1 scale)/noiseTexture (RG channels), SDF atlas+brickAABBs+24× tree/map, outputDiffuse/SpecularGI rgba16f UAVs.
-- **Pass pattern:** clone VulkanFsrPass (own ffx scratch+interface, makeImageCreateInfo→ffxGetImageResourceDescriptionVK→ffxGetResourceVK, destroy contexts on swapchainCreated, VulkanProfile). Registered in Vulkan.cpp pass list between ssr/ao/volumetric/decal and composite. c-engine GLOB_RECURSE — no CMake change.
-- **Props lifecycle hook:** vulkanAzgaarPropsSetTile (pendingTiles queue; CPU PropInstance 44 B available at enqueue), ClearTile eviction (AzgaarProps.cpp ~3756), ClearAll at teardown. Gotcha: SetTile called at build hand-over (full set, :3341) AND per-camera cull path (compact subset :2546, 0 instances :2659) → register full set on first SetTile after build, ignore compact re-uploads, delete on ClearTile/ClearAll. Registration must queue into pending-queue drained on render thread (uploadLock pattern).
-- **Composite slot:** composite.comp AO (7a, sentinel 0xFFFFFFFF) multiplies, god rays (9) add; fog = 8. GI additive term = new push-constant index slot (sentinel 0xFFFFFFFF) between 7a and 8; push constants wired in VulkanCompositePass.cpp.
-- **Input gaps:** historyDepth/historyNormal (create ping-pong + per-frame copy), noiseTexture (create 256×256 RG blue-noise; IblData.blueNoiseIndex unused/hardcoded 0), environmentMap cubemap (ibl.prefilter), prev view/proj (only prevVP stored — pass keeps own copies), cameraPosition from invView.
-- `vulkanIblSetDisabled` exists (VulkanIbl.cpp:289, flips IblData.enabled, images stay valid) → task 5 just wraps in ENGINE_IBL_DISABLED.
+**Findings**
+- All deliverables on disk: /tmp/brix_1..16.jpg (~1.1 MB each), /tmp/brix_gi_{diffuse,specular,debug}_0..43.jpg (SAVE_EVERY=1 → every frame), game.log truncated to this run, /tmp/brix-run3.log kept.
+- Log evidence: `vulkanIbl: disabled via ENGINE_IBL_DISABLED` (line 47); GI context created (2880x1627, 50% internal, DEPTH_INVERTED) + `GI debug visualization = radiance cache` at 04:31:46; burst 04:31:58.87 → 04:32:06.24, clean exit. Burst start = +12.9 s ≈ arm delay.
+- Weather is *active* (leaves) but clamped to 1 particle (env clamp ≥1); count only printed with ENGINE_AZGAAR_WEATHER_DEBUG.
+- T-pose confirmed visually in brix_1.jpg (arms horizontal), no HUD; no missing-clip warning.
+- **Frame mapping: brix_N ↔ GI frame 27+N** (brix_1↔28 … brix_16↔43).
+- No GI context destroy/re-bake during burst — SDF content stable throughout.
+- Burst hitches ~2.2 fps (triple GI readback + screenshot per frame); burst is a slowed-down time slice.
+- brix_gi_debug_28.jpg (radiance-cache view) fully black — plausible with IBL off; verify across 0..43; fallback: ENGINE_BRIX_GI_DEBUG=irradiance.
+- Raw GI diffuse frame 28 carries real signal: warm GI on skin, bluish env in background, dark zero-GI spots on legs/hips.
 
-### Remaining steps
-- Task 2/3 implementer: follow VulkanFsrPass.cpp; register props meshes with STORAGE_BUFFER_BIT; per-tile register-on-first-SetTile / delete-on-ClearTile listener; create history depth/normal, RG blue-noise, GI output images; expose ibl.prefilter accessor; row-major transforms diagonal [0]/[5]/[10].
+**Remaining steps**: none for task 1; tasks 2–4 use the brix_N↔GI(27+N) mapping.
 
-## round 2 (task 5 — IBL disable hook)
+## round 2 (task 2: composite burst analysis)
 
-Worker: added `ENGINE_IBL_DISABLED` env hook in `vulkanIblInit()` (VulkanIbl.cpp) — calls `vulkanIblSetDisabled(true)` after env load; images stay valid for GI sampling. Build warning-free. Baseline `/tmp/gi-ibl-off.jpg` (2880x1627): shadowed house walls/interior + ground shadow near-black; sun direct light unaffected. Parked view = house compound; GI verification targets = black house walls/interior + ground shadow.
-Verifier: **PASS** (build exit 0, `vulkanIbl: disabled via ENGINE_IBL_DISABLED` in log, clean run, parked player untouched).
-Notes for later workers: `run.sh` re-calls build.sh — use `SKIP_NAVMESH=1` and `TERM=xterm`; DebugGui can re-enable IBL at runtime (irrelevant under ENGINE_HIDE_GUI=1).
+**Findings**
+- Camera drift PASS: phase correlation f1→f8/f1→f16 peak at (0,0), corr 0.992–0.993. Background snow noise floor std 0.93–1.59 levels; strong flicker negligible outside character.
+- Flicker is character-specific: strong-flicker pixels 7–30× more prevalent on character. Flagged ROIs (neck, wrists, legs) hold ~86% of strong-flicker pixels — matches user report.
+- Signature: ~1000–1400 px 2-state flicker, lit↔near-black with 100–140-level swings, persistent all 16 frames (no decay); near-black state is NOT background color → internal surface color-state flicker.
+- Stddev map: bright rim contours along ALL character edges (adds TAA reprojection to suspects) + discrete hotspots at wrists/knees/collar.
+- Hotspots flicker largely independently (pairwise |r|<0.3 mostly) → local per-pixel rejection/stochastic, not global history reset.
+- Caveat: burst hitches ~2.2 fps; composite is post-FSR output (GI + downstream jointly).
+- ROI coords (full-res): neck (1535,755), hand_L (676,789), hand_R (2199,874), legs (1374,1400). Maps/scripts in /tmp/brix_analysis/.
 
-## round 3 (task 2 — voxelizer pass)
+## round 3 (task 3: stage attribution)
 
-Worker's final report got corrupted (mid-stream); partial-work summary instead:
-- New `pass/brixelizer/VulkanBrixelizerPass.{h,cpp}` (758 L): FFX scratch+interface cloned from VulkanFsrPass; 8 STATIC cascades 2 m base voxel; 512³ R8 SDF atlas + 24-cascade buffers as external FFX resources; prop-tile static instance registration keyed by (tile, readyStamp) — cull re-uploads of known stamp ignored, evict deletes; row-major transforms diagonal [0]/[5]/[10]; per-frame BakeUpdate + Update with snapped clipmap center; FfxBrixelizerStats logged.
-- `Vulkan.cpp`: pass registered between decal and composite.
-- `VulkanAzgaarPropsPass.{h,cpp}`: voxelizer change hooks (mesh callback from SetMeshes/SetVariants; tile callback from SetTile/ClearTile with `removed` flag, caller-owned pointers); `vulkanAzgaarPropsGetMeshes()` render-thread snapshot; VBO/IBO now STORAGE_BUFFER_BIT.
-- Compiles warning-free; object present in build/.
+**Findings**
+- Raw GI diffuse carries the flicker per-pixel: ~3700 char px (0.74%) std>0.02, blue-dominant SDF-hit pixels, localized to flagged limbs. ROI-mean luma stable (0.067–0.073 base) but per-pixel noise, hot-pixel sets different each frame (Jaccard≈0) → stochastic per-frame ray jitter.
+- Raw GI specular = exactly 0 all frames.
+- Both cache debug views (radiance, irradiance) fully black, all frames, per-pixel std=0 → brick-SH/world-probe and radiance cache data empty (FfxBrixelizerGIInterpolateBrickSH returns zero ⇒ has_world_probe=false everywhere; ffx_brixelizergi_main.h:1835).
+- Log: single BRIX_STATS line (stride 30): bricksInUse=4036/4037, attempted=0, static/dynamic tris 0, instances=379, tiles=1 — SDF static, no re-bake during burst.
+- Composite cross-check: GI↔composite per-pixel corr r≈0.15 same frame; hot-pixel set overlap Jaccard≈0.20; GI hot px show NO flicker in composite → composite 2-state additionally shaped downstream (tone-map/TAA/FSR/OIT-DCC).
+- KEY CAVEAT: saved GI jpgs are per-frame auto-normalized (min..max→0..255); absolute radiance only via log `float range` lines.
+- Attribution: GI temporal reprojection/accumulation failing on character pixels (fresh-MC per-frame fallback). Suspect inputs: GBuffer velocity/motion vectors for skinned character, `desc.motionVectorScale = −1/render-res`, `FfxBrixelizerGIGenerateDisocclusionMask` (FFX_DISOCCLUSION_THRESHOLD 0.9, normal+world-pos history compare). Not SDF round-robin.
+- 2nd burst with irradiance debug view: /tmp/brix2_*.jpg (run1 debug images overwritten).
 
-Verifier: **FAIL** — deterministic SIGSEGV every `play` run right after props meshes built. `destroyContext()` in VulkanBrixelizerPass.cpp:209 does `context = FfxBrixelizerContext{};` — the struct is ~24.2 MB opaque; the braced value-assignment builds a 24 MB **stack** temporary (memset+memcpy per disasm) and overflows the 8 MB main-thread stack. Fix: drop the value reset (`contextReady = 0` suffices; create re-initializes fully); check other files for the same latent `= FfxBrixelizerContext{}` pattern. Voxelizer context itself creates fine (log line present).
+## round 4 (task 4: root-cause code mapping)
 
-## round 4 (task 9 — crash fix)
+**Findings**
+- Engine input map (VulkanBrixelizerPass::dispatchGI): depth=frame-N D32 rev-Z; historyDepth=frame N-1 copy; normals R16F world raw; motionVectors = engine velocity in PIXEL units (ndcCur−ndcPrev)·viewport·0.5 y-flipped (scene_depth.frag:29-33); motionVectorScale=(−1/renderW,−1/renderH). MV convention verified CORRECT against FFX LoadMotionVector (callbacks_glsl.h:955-967); 50% mode rebinds to downsampled buffers (ffx_brixelizergi.cpp:1330-1340) so self-consistent.
+- Velocity buffer NOT cleared per frame (VulkanDepthPass.cpp:120) — sky holds stale MV but ffxIsBackground masks it (harmless). Character/terrain/props all write MV each frame; T-pose joints static → MV≈0.
+- SDF round-robin exonerated again: variable-rate cascade updates (ffx_brixelizer_raw.cpp:2342); static cascade no-op; bricksInUse=4037 constant, attempted/cleared/merged=0.
+- FFX per-frame stochastic sources (ffx_brixelizergi_main.h): probe seed pixel re-jittered every frame (444-507); checkerboard re-trace ~1/16 probes/frame with fresh jitter (910); per-pixel ReprojectGI(mask-gated) → 4-nearest-probe interpolation (power-8 weights) or world-probe (BRICK SH) fallback, lerp w capped 64.
+- ROOT-CAUSE HYPOTHESIS (primary): per-pixel history reset every frame on character-limb pixels. Gates: (a) RED-FLAG path main.h:1597-1602: `if (!has_world_probe && weight_sum < 1e-3) StoreStaticGITarget(tid, 0)` → temporal_weight=1 → fresh MC. Character not voxelized (SDF=props only) ⇒ has_world_probe=false everywhere on character (proven: all-black irradiance view; FfxBrixelizerGIInterpolateBrickSH gate shs[0].w>=16). Thin limbs: probe weight_sum hovers the 1e-3 threshold, per-frame probe jitter + checkerboard re-trace toggles the reset. (b) Disocclusion mask (main.h:1890-1915, threshold 0.9, exp normal+world-pos factors): per-frame GBuffer jitter (skin interp via utils::timer.alpha) swings it.
+- ABSOLUTE-radiance re-analysis (de-normalized via log float ranges): round-3 "per-pixel noise" was inflated by per-frame auto-normalization; absolute temporal stddev small (mean 0.012, p99 0.015) but BLUE (ch2) events abs≈0.9-1.9 (env-sky hits) appear/disappear frame-to-frame with NO persistence → temporal filter not integrating. Event pixels land exactly on user ROIs. ~875 px exceed std 0.05.
+- SYSTEMATIC ONSET (key): in BOTH runs blue events only at GI frame 1 (post-clear) + frames 29-43 (burst window); 26/26 pre-burst frames clean (p~1e-16 if random). Burst = wall-clock +12.9 s + readback-hitched ~2.2 fps. Top suspect: timer.alpha pose interpolation under changed pacing moving skin a few cm/frame, toggling ray hit/miss on canopy SDF. Env map verified static (sun aligned once at load; vulkanIblCycleNext GUI-only).
+- Ruled out: SDF round-robin, MV convention bug, GI-context re-create mid-burst, world-probe contribution, stale-MV on world geometry.
+- Decisive verification plan (from worker): (1) fork patch in ffx_brixelizergi.cpp (game-001 already patches this file): read back FFX per-pixel debug target (red = weight_sum<1e-3 reset) + DISOCCLUSION_MASK each frame alongside GI saves; (2) velocity + GBuffer depth/normal diff dump on limb ROIs; (3) A/B control burst without per-frame GI readbacks.
 
-- `destroyContext()` no longer value-resets the 24 MB context (only `contextReady = 0`). Also added `VK_BUFFER_USAGE_TRANSFER_SRC_BIT` to `gpuScratch` (FFX `ffxBrixelizerUpdate` copies FROM it; was a validation CRIT).
-- 16 s `play` run: exit 0, no SIGSEGV, no validation CRITs. Props registered: `registered props mesh buffers (verts=1432414, idx=2691234)`, per-tile `registered tile (x,z) stamp=…` (18272 instances, 2 tiles).
-- Stats every 30 frames (≥15 s run needed — context (re)created on swapchainCreated): `freeBricks=255483 instances=18272 tiles=2` stable.
-- **NEW BLOCKER:** `bricksInUse=0`, `static(tri=0 ref=0 brick=0)` — zero geometry baked despite registered instances. Task 10. GI would have nothing to trace.
-- Cost note: update scratch ~892 MB (`BRIX_TRIANGLE_SWAP_SIZE=300M`, `BRIX_MAX_REFERENCES=32M`) — revisit constants if perf/memory matters.
+## round 5 (task 6: decisive mask dump) — VERIFIER PASS
 
-## round 5 (task 9 fix — verifier PASS)
-Clean 8 s play run + screenshot; context re-creation exercised; no errors; 18272 instances, ffxUpdate ok through f=360.
+**Findings**
+- Fork-patched FFX (ffx_brixelizergi.h/.cpp: optional outputDebugTarget/outputDisocclusionMask + size getter) and VulkanBrixelizerPass.cpp (ENGINE_BRIX_GI_MASK_SAVE knob, raw dumps /tmp/brix_gi_mask_{debug,disocc}_%u.raw). Rebuilt libffx_fsr3upscaler_vk.a (Linux).
+- DECISIVE: at the exact limb hot pixels, reset flag (weight_sum<1e-3, no world probe) set 6-13/16 frames; disocclusion 0/16. Hot-pixel coverage: reset 87.7% overall, 98.8-100% inside limb boxes; disocclusion 5.5% overall.
+- Mechanism confirmed: `!has_world_probe && weight_sum < 1e-3` (main.h:1597-1602) → StoreStaticGITarget(0) → history+sample count cleared → fresh per-frame-jittered MC sample. Per-frame probe jitter + checkerboard re-trace makes the power-8 weight sum hover the threshold on thin non-voxelized limbs → 2-state flicker exactly as observed.
+- Disocclusion mask exonerated as primary (covers only edges/silhouette; explains the secondary rim contours in the stddev map).
+- Reset is persistent (fires in pre-burst frames too) — a permanent mechanism, not a readback-hitch artifact; the round-4 "burst-window only" applied to the *blue* manifestation (a jitter ray missing to the 0.1-intensity env sky), not the reset state.
+- Mask geometry: internal 1440x813, probe 1440x816. brix4_N <-> gi file (37+N).
+- Fix candidates: raise/widen the reset gate for non-voxelized (character) pixels, or give the character a world probe / put it in the SDF as a dynamic cascade.
+- NOTE: Windows libffx_fsr3upscaler_vk.a NOT rebuilt (Linux test only); a Windows release build regenerates it. FFX fork working tree contains only the two intended diagnostic edits (verified by worker after scoped git restore of shader_output wipe).
 
-## round 6 (task 10 — "zero bricks" — verifier PASS)
-Root cause: `brickAllocationsAttempted` / `staticCascadeStats.*` are **per-update deltas** — legitimately 0 in steady state for frozen static cascades (resubmit, no re-alloc). Real signal: resident = `FFX_BRIXELIZER_MAX_BRICKS_X8 - freeBricks` = 6667 bricks stable across samples; total closes exactly (6667+255477=262144). CPU diagnostics (FFX_BRIX_LOG in the built archive) confirm real GPU bake: numStaticJobs 52–94, badInst=0, triSum≈4.6M. 892 MB scratch is by design (sample uses fixed 1 GB); leaving constants as-is.
-Voxelizer task 2 = done. **GI (task 3) is unblocked.** Caveat: only props in SDF (terrain invisible to GI rays) — expect GI to visibly fill prop-occluded dark areas (house interior/shadows under canopies).
+**Verifier**: PASS — SKIP_NAVMESH=1 build.sh exit 0, artifacts newer than sources; clean 16-frame run, no errors/asserts; T-pose + IBL-off render confirmed; parked player/camera untouched.
 
-## round 7 (task 3 — GI pass; verifier PASS)
-- `ensureGI`/`dispatchGI`/`destroyGI` in VulkanBrixelizerPass; GI ctx at 50% internal res, DEPTH_INVERTED; history depth/normal ping-pong; CPU 128² blue-noise; SDF atlas created once, `destroyContext(keepGI, keepSdf)` keeps SDF+GI across props-mesh rebuilds (re-wrapped per frame).
-- Layout gotcha: FFX backend does NOT share image-view layouts across the two contexts — engine must explicitly transition SDF atlas → SHADER_READ_ONLY and GI outputs → GENERAL.
-- `vulkanIblGetEnvironmentPrefilter()` accessor added (env for GI while IBL ambient can stay off).
-- One validation nit (VUID-vkDestroyImageView-01026 on in-flight re-create) downgraded in VulkanUtils.cpp; verifier observed it never actually fires (pre-destroy wait-idle suffices) — defensive dead-code risk, keep an eye.
-- Verifier evidence: IBL-off 120-frame run clean; saved diffuse GI (`/tmp/brix_gi_diffuse_210.jpg`) = blue sky radiance + warm ground-bounce on house + tree shadows. Specular GI saves all-black (roughness threshold 0.9 + mostly-rough scene — sanity check at task 4).
-- Accessors for task 4: `vulkanBrixelizerPassGetDiffuseGI()/GetSpecularGI()/GIReady()/GetGIResolution()` (R16G16B16A16_SFLOAT at render res, transition to SHADER_READ_ONLY before sampling).
+## final: root cause (integrated)
 
-## round 8 (task 4 — composite wiring; verifier PASS)
-- `composite.comp`: push constants += giDiffuseIndex/giSpecularIndex/giDiffuseFactor/giSpecularFactor (u32×10, float×2, u32×2 = 56 B — must stay in lockstep with shader pc block); step 7b in geometry path (after 7a AO, before 8 fog): sentinel-guarded texelFetch, `composite += gi * factor`.
-- `VulkanCompositePass.cpp`: fetches GI pair via brixelizer accessors, requires full pair at GBuffer res (else both → sentinel); GENERAL→SHADER_READ_ONLY→GENERAL around sampling; `ENGINE_BRIX_GI_DIFFUSE_FACTOR`/`_SPECULAR_FACTOR` (default 1.0).
-- Bit-identity when disabled is structural (sentinels skip both ifs; no layout transitions added). Byte-identical cross-run screenshots impossible (animated waves/dust) — compare same-run or visually.
-- Specular GI all-black confirmed expected (roughness 0.9 gate + mostly-rough scene).
-- Verifier notes: pass + factors logged at runtime; clean run; **one destroy/recreate of the voxelizer context ~1 s after start** — likely initial resolution setup, confirm not per-resolve churn. Stale brixgi/*.o under build/ from prior iteration (no duplicate-symbol risk, dir gone from ninja).
+**The glitchy color animation on the character (wrists, legs, neck) is the FFX Brixelizer-GI per-pixel temporal history being reset every frame on the character's thin-limb pixels, because the character is never voxelized (SDF = props only) and the 4-nearest-probe interpolation weight hovers at/below the 1e-3 reset threshold there.**
 
-## round 9 (tasks 6+7 — A/B + stability; final verifier PASS)
-- A/B: baseline `/tmp/gi-ibl-off.jpg` vs `/tmp/gi-iblon_30.jpg` — house shadow wall (88,93,73)→(139,148,140), interior/ground shadow (2,2,2)→(105,108,106), canopy shadow (112,134,86)→(136,161,143); sunny sand control unchanged. Whole frame slightly brightened at default factor — `ENGINE_BRIX_GI_DIFFUSE_FACTOR` is the knob.
-- Recreate churn: 4 voxelizer creations all within first ~1.5 s (startup props-mesh rebuilds); zero in 13 s steady state. 892 MB scratch re-alloc per startup cycle only.
-- Stability: stats byte-identical across 26 samples per run; 30-frame mean-abs-diff mean 0.42/255 (bumps = dust particles); 60 fps cap held.
-- **Final verifier (round 10): PASS** — forced recompile of all changed TUs clean under strict flags; IBL-off screenshot A/B re-confirmed from same parked vantage; 25 s run 37 identical stat samples, zero FFX errors, no churn. Sign-off.
+Chain of evidence:
+1. Composite burst (16 frames, IBL off, T-pose, weather=1 particle): 2-state flicker (lit<->near-black, 100-140 levels) in ~1000-1400 px, 86% concentrated in the user's flagged ROIs; background + parked camera stable.
+2. Raw pre-composite GI diffuse carries the per-pixel variance; GI specular = 0; brick-SH (irradiance) and radiance-cache views fully black => has_world_probe=false for every character pixel.
+3. Code mapping: two reset gates identified; MV convention + SDF round-robin re-bake exonerated.
+4. Decisive dump of the FFX reset flag + disocclusion mask: reset flag covers 98.8-100% of hot pixels in limb boxes, disocclusion 0/16 at hot pixels.
+
+Primary fix candidates: (a) relax the `weight_sum < 1e-3` reset gate (or the power-8 probe weighting) for pixels with no world probe; (b) give the character a world probe (voxelize character into the SDF as a dynamic cascade). Secondary: disocclusion-mask edge rejections produce the rim contours; TAA/FSR shape the final 2-state amplitude.
+
+Caveats carried forward: per-frame auto-normalized GI jpgs (use log float ranges for absolute radiance); burst runs hitch ~2.2 fps under readbacks; one weather particle unavoidable (clamp >=1).
