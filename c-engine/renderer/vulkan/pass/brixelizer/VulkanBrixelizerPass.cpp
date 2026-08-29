@@ -147,6 +147,7 @@ static VulkanImage giDebugTarget;        // R16G16B16A16_SFLOAT, probe size, per
 static VulkanImage giDisocclusionMask;   // R8_UNORM, internal size, per-pixel temporal-rejection mask
 static VulkanImage giNoiseTexture;      // R8G8_UNORM, 128^2 two-channel blue noise
 static char giNoiseCreated;
+static char giEnabled = 1;  // runtime GI toggle (debug GUI); off = no dispatch, NULL outputs
 
 // Per-frame debug/save knobs (read once from the environment).
 static char giDebugMode;  // 0=off, 1=radiance cache, 2=irradiance cache (ENGINE_BRIX_GI_DEBUG)
@@ -1331,7 +1332,7 @@ void VulkanBrixelizerPass::update() {
     // temporal history.  The output is not yet consumed by the composite (task 4);
     // ENGINE_BRIX_GI_DEBUG/SAVE expose it for pre-composite verification.
     giReadEnvKnobs();
-    if (window.renderWidth > 0 && window.renderHeight > 0) {
+    if (giEnabled && window.renderWidth > 0 && window.renderHeight > 0) {
         if (ensureGI((u32)window.renderWidth, (u32)window.renderHeight)) {
             dispatchGI(cmd, camera);
         }
@@ -1385,19 +1386,19 @@ struct VulkanBuffer* vulkanBrixelizerPassGetCascadeBrickMap(u32 cascade) {
 }
 
 struct VulkanImage* vulkanBrixelizerPassGetDiffuseGI(void) {
-    return giContextReady && giDiffuse.img ? &giDiffuse : NULL;
+    return giEnabled && giContextReady && giDiffuse.img ? &giDiffuse : NULL;
 }
 
 struct VulkanImage* vulkanBrixelizerPassGetSpecularGI(void) {
-    return giContextReady && giSpecular.img ? &giSpecular : NULL;
+    return giEnabled && giContextReady && giSpecular.img ? &giSpecular : NULL;
 }
 
 struct VulkanImage* vulkanBrixelizerPassGetDebugVisualization(void) {
-    return giContextReady && giDebugVisualization.img ? &giDebugVisualization : NULL;
+    return giEnabled && giContextReady && giDebugVisualization.img ? &giDebugVisualization : NULL;
 }
 
 char vulkanBrixelizerPassGIReady(void) {
-    return giContextReady;
+    return giEnabled && giContextReady;
 }
 
 char vulkanBrixelizerPassGetGIResolution(u32* outWidth, u32* outHeight) {
@@ -1414,9 +1415,17 @@ char vulkanBrixelizerPassGetGIResolution(u32* outWidth, u32* outHeight) {
 }
 
 char vulkanBrixelizerPassGIResolutionMatches(const struct VulkanImage* gi) {
-    if (!giContextReady || !gi || !gi->img) {
+    if (!giEnabled || !giContextReady || !gi || !gi->img) {
         return 0;
     }
     return gi->extent.width == giWidth && gi->extent.height == giHeight;
+}
+
+void vulkanBrixelizerPassSetGIEnabled(char enabled) {
+    giEnabled = enabled ? 1 : 0;
+}
+
+char vulkanBrixelizerPassIsGIEnabled(void) {
+    return giEnabled;
 }
 }  // namespace engine

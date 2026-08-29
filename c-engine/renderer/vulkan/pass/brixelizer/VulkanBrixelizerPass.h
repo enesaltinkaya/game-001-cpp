@@ -75,6 +75,10 @@ struct VulkanImage* vulkanBrixelizerPassGetDiffuseGI(void);
 struct VulkanImage* vulkanBrixelizerPassGetSpecularGI(void);
 struct VulkanImage* vulkanBrixelizerPassGetDebugVisualization(void);
 char vulkanBrixelizerPassGIReady(void);
+// Runtime GI toggle (debug GUI): off skips the GI dispatch and makes the GI
+// accessors above report no output, so the composite falls back to no GI.
+void vulkanBrixelizerPassSetGIEnabled(char enabled);
+char vulkanBrixelizerPassIsGIEnabled(void);
 // The GI render resolution (matches the GBuffer; 0x0 while not created).
 char vulkanBrixelizerPassGetGIResolution(u32* outWidth, u32* outHeight);
 // 1 while the GI outputs exist and are exactly the given (GBuffer) size —
