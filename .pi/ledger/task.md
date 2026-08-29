@@ -1,3 +1,3 @@
-# Task
+# task
 
-i was expecting to see red house wall color bleeding into ground, and green ground color bleeding into red house wall. can you analyze please?
+our brixelizer gi doesnt seem to work correctly. i dont see gi color reflecting on either player character, house wall, or the terrain ground. should GI color bleeding (a.k.a. diffuse interreflection) be working?

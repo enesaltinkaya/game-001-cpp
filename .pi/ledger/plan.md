@@ -1,33 +1,15 @@
-# Plan
+# plan
 
-The user expects to see color bleeding between a red house wall and green ground
-(i.e. a visual artifact where one surface's albedo bleeds into the other's), but
-is not seeing it — so this is an *analysis* task: figure out the rendering path
-that would cause (or fail to cause) that cross-surface color bleed, and explain
-what is actually happening.
+**Goal:** determine whether Brixelizer (FFX GPU SDF GI) diffuse color bleeding should be visible in this project, and if it is broken, find and fix the defect so GI color reflects on the player character, house walls, and terrain ground.
 
-Strategy:
-1. Identify the render passes and shaders involved in drawing the house (walls,
-   red material) and the ground (green) — likely the forward/deferred lit pass,
-   the G-buffer, and any AO/SSAO or ambient-occlusion / soft-shadow /
-   screen-space effect that samples neighboring pixels.
-2. Determine whether there is any mechanism that would bleed albedo across
-   surfaces (e.g. a screen-space filter, a shared texture, a missing clear, a
-   depth test issue, or an implicit lattice/vertex-shader sampling of a shared
-   height/normal texture).
-3. If a real artifact exists or is expected, capture a screenshot around the
-   parked player (the object under test) to confirm what the frame actually shows.
-4. Produce a written analysis of the root cause and whether the expected bleed
-   is a bug or the correct behavior.
+**Strategy:** Brixelizer is the FFX GPU-SDF global illumination system: it bakes scene geometry into SDF bricks, marches them, and writes a per-pixel diffuse/specular GI result that the composite pass multiplies into the rendered image (knob: `ENGINE_BRIX_GI_DIFFUSE_FACTOR`, default 1.0). The investigation should first establish *whether the GI pipeline is alive at all* (context created, bricks populated, SDF atlas built, GI outputs present and resolution-matched in the composite) by reading logs and the debug GUI, then trace the full data path — SDF brick generation from meshes (player, house, terrain), the GI dispatch, the composite consumption (albedo GBuffer, image layout transitions, factor scaling) — to find where the diffuse color is lost. Verification is via `./scripts/build.sh` + screenshots (`./scripts/run.sh play screenshot /tmp/x.jpg`, `ENGINE_HIDE_GUI=1` for clean frames) and log inspection; a visible colored bleed from a colored surface onto a neighbor is the acceptance test.
 
-Approach: this is primarily a code-reading + screenshot-verification task.
-Workers should read the relevant shader/pass source, trace the data flow, and use
-`./scripts/run.sh play screenshot` (with `ENGINE_HIDE_GUI=1` for a clean frame)
-to confirm the actual on-screen result. No code changes are expected unless a
-concrete bug is found.
+**Approach:** read-only diagnosis first (logs, DebugGui brixelizer panel, code path audit), then a minimal targeted fix, then screenshot-based visual verification. Do not move the parked player/camera in the transform db.
 
-## Verification entry points
+**Build/test entry points:**
+- `./scripts/build.sh` (compile + asset pipeline; `SKIP_NAVMESH=1` to skip the bake when iterating)
+- `./scripts/run.sh play log 5000` (runtime log; read `build/c-game/data/game.log`)
+- `./scripts/run.sh play screenshot /tmp/shot.jpg` (frame capture; `ENGINE_HIDE_GUI=1` to hide HUD)
+- GDB for crashes: `ENGINE_DEBUG=1` + `VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/radeon_icd.json`
 
-- Build: `./scripts/build.sh`
-- Screenshot: `ENGINE_HIDE_GUI=1 ./scripts/run.sh play screenshot /tmp/screenshot.jpg`
-- Log timeout: `./scripts/run.sh play log 5000`
+**Key files:** `c-engine/renderer/vulkan/pass/brixelizer/VulkanBrixelizerPass.{h,cpp}`, `c-engine/renderer/vulkan/pass/composite/VulkanCompositePass.cpp`, `c-engine/gui/rmlui/guis/debugGui/DebugGui.cpp`, `c-engine/renderer/vulkan/resources/VulkanIbl.h`, FFX headers under thirdparty `cpp-thirdparty` (FidelityFX/gpu/brixelizer).
