@@ -160,10 +160,12 @@ static void recreatePipelines(void) {
         .colorFormat1         = VK_FORMAT_R16G16B16A16_SFLOAT,
         .colorFormat2         = VK_FORMAT_R16G16_SFLOAT,
         .colorFormat3         = VK_FORMAT_R8G8B8A8_UNORM,
+        .colorFormat4         = VK_FORMAT_R16G16B16A16_SFLOAT,
         .depthFormat          = VK_FORMAT_D32_SFLOAT,
         .clearColor1          = {0, 0, 0, 0}, .clearColor1Enabled = 1,
         .clearColor2          = {0, 0, 0, 0}, .clearColor2Enabled = 1,
-        .clearColor3          = {0, 0, 0, 0}, .clearColor3Enabled = 1);
+        .clearColor3          = {0, 0, 0, 0}, .clearColor3Enabled = 1,
+        .clearColor4          = {0, 0, 0, 0}, .clearColor4Enabled = 1);
 
     sceneWireFramePipe = vulkanCreatePipe(
         .name                 = "heightmap_terrain_wireframe",
@@ -173,11 +175,13 @@ static void recreatePipelines(void) {
         .colorFormat1         = VK_FORMAT_R16G16B16A16_SFLOAT,
         .colorFormat2         = VK_FORMAT_R16G16_SFLOAT,
         .colorFormat3         = VK_FORMAT_R8G8B8A8_UNORM,
+        .colorFormat4         = VK_FORMAT_R16G16B16A16_SFLOAT,
         .depthFormat          = VK_FORMAT_D32_SFLOAT,
         .wireFrame            = 1,
         .clearColor1          = {0, 0, 0, 0}, .clearColor1Enabled = 0,
         .clearColor2          = {0, 0, 0, 0}, .clearColor2Enabled = 0,
-        .clearColor3          = {0, 0, 0, 0}, .clearColor3Enabled = 0);
+        .clearColor3          = {0, 0, 0, 0}, .clearColor3Enabled = 0,
+        .clearColor4          = {0, 0, 0, 0}, .clearColor4Enabled = 0);
 
     // Depth/velocity pre-pass pipe: same lattice, writes depth + velocity +
     // view-normal XY + world normal (called inside VulkanDepthPass' render pass).
@@ -501,8 +505,9 @@ void VulkanHeightmapTerrainPass::update() {
     VulkanImage* sceneColor     = vulkanFrameResourcesGetSceneColor();
     VulkanImage* normals        = vulkanFrameResourcesGetNormals();
     VulkanImage* material       = vulkanFrameResourcesGetMaterial();
+    VulkanImage* albedo         = vulkanFrameResourcesGetAlbedo();
     VulkanImage* depthImage     = vulkanFrameResourcesGetDepth();
-    if (!sceneColor || !normals || !material || !depthImage) return;
+    if (!sceneColor || !normals || !material || !albedo || !depthImage) return;
 
     Transform* cameraTransform = getComponent(cameraEntity->scene, Transform, cameraEntity->id);
     if (!cameraTransform) return;
@@ -514,6 +519,7 @@ void VulkanHeightmapTerrainPass::update() {
                       .color1  = sceneColor,
                       .color2  = normals,
                       .color3  = material,
+                      .color4  = albedo,
                       .depth   = depthImage);
 
     vulkanViewport(cmd, 0, sceneColor->extent.height, sceneColor->extent.width,

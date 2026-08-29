@@ -52,6 +52,7 @@ typedef struct CompositePushConstants {
     u32 aoIndex;
     u32 giDiffuseIndex;
     u32 giSpecularIndex;
+    u32 albedoIndex;
     float giDiffuseFactor;
     float giSpecularFactor;
     u32 width;
@@ -96,6 +97,10 @@ void VulkanCompositePass::update() {
      * to the no-GI output. */
     VulkanImage   *giDiffuse  = (VulkanImage*)vulkanBrixelizerPassGetDiffuseGI();
     VulkanImage   *giSpecular = (VulkanImage*)vulkanBrixelizerPassGetSpecularGI();
+    /* Albedo GBuffer (written by scene/terrain/props) — the GI consumer
+     * contract weights the raw bounce radiance by the per-surface albedo,
+     * exactly like the IBL split-sum. */
+    VulkanImage   *albedo     = vulkanFrameResourcesGetAlbedo();
     /* One pair: either both GI outputs are present and sized for this GBuffer
      * or neither is consumed. */
     if ((giDiffuse && !vulkanBrixelizerPassGIResolutionMatches(giDiffuse)) ||
@@ -129,6 +134,11 @@ void VulkanCompositePass::update() {
     if (giSpecular) {
         vulkanTransition(cmd, giSpecular, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
     }
+    /* Only touched by the composite when a GI output is actually consumed,
+     * so no-GI frames skip the transition and stay bit-identical. */
+    if ((giDiffuse || giSpecular) && albedo) {
+        vulkanTransition(cmd, albedo, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
+    }
     vulkanTransition(cmd, composite, VK_IMAGE_LAYOUT_GENERAL, 0, 1);
 
     vulkanBeginProfile(cmd, &pipeline.profile, 0);
@@ -157,6 +167,11 @@ void VulkanCompositePass::update() {
          * frame stays bit-identical to the no-GI composite. */
         .giDiffuseIndex       = giDiffuse ? (u32)giDiffuse->sampledPoolIndex : 0xFFFFFFFFu,
         .giSpecularIndex      = giSpecular ? (u32)giSpecular->sampledPoolIndex : 0xFFFFFFFFu,
+        /* Albedo for GI weighting; the shader falls back to the unweighted
+         * (pre-fix) GI path when the sentinel is set. */
+        .albedoIndex          = ((giDiffuse || giSpecular) && albedo)
+                                   ? (u32)albedo->sampledPoolIndex
+                                   : 0xFFFFFFFFu,
         .giDiffuseFactor      = giDiffuseFactor,
         .giSpecularFactor     = giSpecularFactor,
         .width                = composite->extent.width,
@@ -176,6 +191,11 @@ void VulkanCompositePass::update() {
     }
     if (giSpecular) {
         vulkanTransition(cmd, giSpecular, VK_IMAGE_LAYOUT_GENERAL, 0, 1);
+    }
+    /* The albedo GBuffer is a color attachment of the next frame's scene
+     * pass, which assumes COLOR_ATTACHMENT_OPTIMAL. */
+    if ((giDiffuse || giSpecular) && albedo) {
+        vulkanTransition(cmd, albedo, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, 0, 1);
     }
     vulkanTransition(cmd, composite, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
 

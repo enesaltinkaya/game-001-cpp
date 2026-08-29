@@ -14,6 +14,7 @@ layout(location = 5) in flat uint inEntity;
 layout(location = 0) out vec4 outColor;
 layout(location = 1) out vec2 outNormal;
 layout(location = 2) out vec4 outMaterial;
+layout(location = 3) out vec4 outAlbedo;  // base albedo (R16G16B16A16)
 
 layout(push_constant) uniform PushConstants {
     uint64_t transformBufferAddress;
@@ -262,4 +263,5 @@ void main() {
     outNormal       = OctEncode(normalize(N));
     float alphaMask = (material.featureMask & (1u << MAT_ALPHA_MASK)) != 0u ? 1.0 : 0.0;
     outMaterial     = vec4(roughness, metallic, alphaMask, 0.0);
+    outAlbedo       = vec4(baseColor.rgb, 0.0);
 }

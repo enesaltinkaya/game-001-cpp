@@ -200,6 +200,8 @@ static void vulkanDebugDumpFrameImages(const char* shotPath) {
             img = vulkanFrameResourcesGetDepth();
         } else if (!strcmp(tok, "normals")) {
             img = vulkanFrameResourcesGetNormals();
+        } else if (!strcmp(tok, "albedo")) {
+            img = vulkanFrameResourcesGetAlbedo();
         } else if (!strcmp(tok, "color")) {
             VulkanImage* c = vulkanFrameResourcesGetCompositeColor();
             img           = c ? c : vulkanFrameResourcesGetSceneColor();
@@ -236,6 +238,8 @@ static void vulkanDebugDumpFrameImages(const char* shotPath) {
                 rawImg = vulkanFrameResourcesGetDepth();
             } else if (!strcmp(sub, "normals")) {
                 rawImg = vulkanFrameResourcesGetNormals();
+            } else if (!strcmp(sub, "albedo")) {
+                rawImg = vulkanFrameResourcesGetAlbedo();
             } else if (!strcmp(sub, "color")) {
                 VulkanImage* c = vulkanFrameResourcesGetCompositeColor();
                 rawImg         = c ? c : vulkanFrameResourcesGetSceneColor();

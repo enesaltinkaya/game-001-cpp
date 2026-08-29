@@ -268,12 +268,14 @@ static void recreatePipelines(void) {
         .colorFormat1         = VK_FORMAT_R16G16B16A16_SFLOAT,
         .colorFormat2         = VK_FORMAT_R16G16_SFLOAT,
         .colorFormat3         = VK_FORMAT_R8G8B8A8_UNORM,
+        .colorFormat4         = VK_FORMAT_R16G16B16A16_SFLOAT,
         .depthFormat          = VK_FORMAT_D32_SFLOAT,
         .noCull               = 1, // low-poly props: avoid back-face pops
         .blend                = 0, // opaque: LOD is a hard distance switch, no cross-fade blend
         .clearColor1          = {0, 0, 0, 0}, .clearColor1Enabled = 0,
         .clearColor2          = {0, 0, 0, 0}, .clearColor2Enabled = 0, // terrain pass clears; props load on top
         .clearColor3          = {0, 0, 0, 0}, .clearColor3Enabled = 0,
+        .clearColor4          = {0, 0, 0, 0}, .clearColor4Enabled = 0, // terrain pass clears; props load on top
         .clearDepth           = {0, 0}, .clearDepthEnabled = 0,
         .vertexAttributes     = vertexAttrs,
         .vertexAttributeCount = 11,
@@ -858,8 +860,9 @@ void VulkanAzgaarPropsPass::update() {
     VulkanImage* sceneColor     = vulkanFrameResourcesGetSceneColor();
     VulkanImage* normals        = vulkanFrameResourcesGetNormals();
     VulkanImage* material       = vulkanFrameResourcesGetMaterial();
+    VulkanImage* albedo         = vulkanFrameResourcesGetAlbedo();
     VulkanImage* depthImage     = vulkanFrameResourcesGetDepth();
-    if (!sceneColor || !normals || !material || !depthImage) return;
+    if (!sceneColor || !normals || !material || !albedo || !depthImage) return;
 
     const vec4* planes = (const vec4*)cam->cameraUbo.frustumPlanes;
 
@@ -871,6 +874,7 @@ void VulkanAzgaarPropsPass::update() {
                       .color1  = sceneColor,
                       .color2  = normals,
                       .color3  = material,
+                      .color4  = albedo,
                       .depth   = depthImage);
 
     vulkanViewport(cmd, 0, sceneColor->extent.height, sceneColor->extent.width,

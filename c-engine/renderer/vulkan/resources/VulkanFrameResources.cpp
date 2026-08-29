@@ -11,6 +11,7 @@ struct VulkanFrameResources {
     VulkanImage compositeColor;
     VulkanImage normals;
     VulkanImage material;
+    VulkanImage albedo;
     VulkanImage reflectionColor;
     VulkanImage reflectionDepth;
     VulkanImage oitAccum;
@@ -70,6 +71,10 @@ VulkanImage* vulkanFrameResourcesGetNormals(void) {
 
 VulkanImage* vulkanFrameResourcesGetMaterial(void) {
     return frameResources.material.img ? &frameResources.material : nullptr;
+}
+
+VulkanImage* vulkanFrameResourcesGetAlbedo(void) {
+    return frameResources.albedo.img ? &frameResources.albedo : nullptr;
 }
 
 VulkanImage* vulkanFrameResourcesGetResolvedColor(void) {
@@ -165,6 +170,22 @@ static void recreate(void) {
                           .format = VK_FORMAT_R8G8B8A8_UNORM,
                           .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
                           .width = window.renderWidth,
+                          .height = window.renderHeight);
+
+    /* Per-pixel base albedo (GBuffer attachment 4).  Written by the
+     * scene / heightmap terrain / azgaar props passes; cleared by the
+     * terrain pass' clear-first render.  HDR (16F) because base colours
+     * can exceed 1.0.  TRANSFER_SRC/DST: the debug frame-image dump
+     * (ENGINE_DEBUG_DUMP_IMAGES) blits it through a TRANSFER_SRC
+     * transition. */
+    frameResources.albedo =
+        vulkanCreateImage(.name   = "Albedo",
+                          .format = VK_FORMAT_R16G16B16A16_SFLOAT,
+                          .usage  = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+                                    VK_IMAGE_USAGE_SAMPLED_BIT |
+                                    VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+                                    VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                          .width  = window.renderWidth,
                           .height = window.renderHeight);
 
     frameResources.resolvedColor =
@@ -286,6 +307,7 @@ static void destroyAll(void) {
     destroyImage(&frameResources.compositeColor);
     destroyImage(&frameResources.normals);
     destroyImage(&frameResources.material);
+    destroyImage(&frameResources.albedo);
     destroyImage(&frameResources.reflectionColor);
     destroyImage(&frameResources.reflectionDepth);
     destroyImage(&frameResources.oitAccum);
@@ -316,6 +338,7 @@ static void transitionInitialLayouts(void) {
                      1);
     vulkanTransition(cmd, &frameResources.normals, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, 0, 1);
     vulkanTransition(cmd, &frameResources.material, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, 0, 1);
+    vulkanTransition(cmd, &frameResources.albedo, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, 0, 1);
     vulkanTransition(cmd,
                      &frameResources.resolvedColor,
                      VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,

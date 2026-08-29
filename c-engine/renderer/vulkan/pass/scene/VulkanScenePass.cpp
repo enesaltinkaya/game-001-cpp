@@ -60,6 +60,7 @@ static void recreatePipelines(void) {
                                   .colorFormat1         = VK_FORMAT_R16G16B16A16_SFLOAT,
                                   .colorFormat2         = VK_FORMAT_R16G16_SFLOAT,
                                   .colorFormat3         = VK_FORMAT_R8G8B8A8_UNORM,
+                                  .colorFormat4         = VK_FORMAT_R16G16B16A16_SFLOAT,
                                   .depthFormat          = VK_FORMAT_D32_SFLOAT,
                                   .depthTestOnly        = 1,
                                   .clearColor1          = {0, 0, 0, 0},
@@ -68,6 +69,8 @@ static void recreatePipelines(void) {
                                   .clearColor2Enabled   = 0,  // terrain pass clears first; scene loads to preserve terrain G-buffer
                                   .clearColor3          = {0, 0, 0, 0},
                                   .clearColor3Enabled   = 0,  // terrain pass clears first; scene loads to preserve terrain G-buffer
+                                  .clearColor4          = {0, 0, 0, 0},
+                                  .clearColor4Enabled   = 0,  // terrain pass clears first; scene loads to preserve terrain albedo
                                   .vertexAttributes     = sceneVertexAttrs,
                                   .vertexAttributeCount = 6,
                                   .vertexBindings       = &sceneVertexBinding,
@@ -79,6 +82,7 @@ static void recreatePipelines(void) {
                                              .colorFormat1 = VK_FORMAT_R16G16B16A16_SFLOAT,
                                              .colorFormat2 = VK_FORMAT_R16G16_SFLOAT,
                                              .colorFormat3 = VK_FORMAT_R8G8B8A8_UNORM,
+                                             .colorFormat4 = VK_FORMAT_R16G16B16A16_SFLOAT,
                                              .depthFormat  = VK_FORMAT_D32_SFLOAT,
                                              .depthTestOnly       = 1,
                                              .noCull              = 1,
@@ -108,10 +112,11 @@ void VulkanScenePass::update() {
     VulkanImage* sceneColor     = vulkanFrameResourcesGetSceneColor();
     VulkanImage* normals        = vulkanFrameResourcesGetNormals();
     VulkanImage* material       = vulkanFrameResourcesGetMaterial();
+    VulkanImage* albedo         = vulkanFrameResourcesGetAlbedo();
     VulkanImage* depthImage     = vulkanFrameResourcesGetDepth();
     u32 fi                      = renderer.flightIndex;
 
-    if (!sceneColor || !normals || !material || !depthImage) return;
+    if (!sceneColor || !normals || !material || !albedo || !depthImage) return;
 
     vulkanBeginProfile(cmd, &scenePipe.profile, 0);
 
@@ -123,6 +128,7 @@ void VulkanScenePass::update() {
                       .color1  = sceneColor,
                       .color2  = normals,
                       .color3  = material,
+                      .color4  = albedo,
                       .depth   = depthImage);
 
     vulkanViewport(cmd,

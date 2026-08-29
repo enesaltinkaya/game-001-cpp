@@ -25,6 +25,7 @@ layout(location = 6) in vec3 inVertColor;    // per-part colour (white = tintabl
 layout(location = 0) out vec4 outColor;
 layout(location = 1) out vec2 outNormal;   // oct-encoded world normal (R16G16)
 layout(location = 2) out vec4 outMaterial; // roughness, metallic, alphaMask, ao (R8G8B8A8)
+layout(location = 3) out vec4 outAlbedo;   // base albedo (R16G16B16A16)
 
 #include "../../includes/utils.shader"
 #include "../../includes/globalset.shader"
@@ -205,4 +206,5 @@ void main() {
     // Vegetation is matte: high roughness, no metal.  alphaMask = 1 because
     // leaf/flower textures are alpha-masked (FSR reactive mask uses this).
     outMaterial = vec4(0.9, 0.0, 1.0, 0.0);  // .a = ground flag: props (grass/trees) are not ground, so GROUND_ONLY decals don't paint onto canopies
+    outAlbedo   = vec4(albedo, 0.0);
 }
