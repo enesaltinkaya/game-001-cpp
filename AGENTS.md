@@ -46,6 +46,12 @@ frames exactly that object.
   **ask the user** to park the player there (or approve a temporary change)
   before touching anything.
 
+### File locations
+
+Everything related to project is either here /home/enes/Projects/c/game-001-cpp or in thirdparty directory /home/enes/Projects/c/cpp-thirdparty.
+
+Dont use "find / ..."
+
 ## RenderDoc (frame capture & inspection)
 
 For any work involving RenderDoc, frame captures, or GPU debugging, read

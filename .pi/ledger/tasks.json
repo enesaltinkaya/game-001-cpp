@@ -1,62 +1,6 @@
 [
-  {
-    "id": 1,
-    "desc": "Capture run: TERM=xterm ENGINE_HIDE_GUI=1 ENGINE_IBL_DISABLED=1 ENGINE_TPOSE=1 ENGINE_AZGAAR_WEATHER_COUNT=1 ENGINE_SCREENSHOT_DELAY_MS=12000 ENGINE_BRIX_GI_SAVE=1 ENGINE_BRIX_GI_SAVE_EVERY=1 ENGINE_BRIX_GI_DEBUG=1 ./scripts/run.sh play screenshot /tmp/brix 16. Verify /tmp/brix_1..16.jpg plus brix_gi_diffuse/specular/debug_N.jpg sequences exist and log shows IBL-disabled, T-pose, GI context created before capture window",
-    "status": "done",
-    "result": "Capture verified: /tmp/brix_1..16.jpg + brix_gi_{diffuse,specular,debug}_0..43.jpg; log shows IBL disabled, GI context created before window; brix_N <-> GI frame 27+N mapping; burst hitches ~2.2fps (expected); GI debug view (radiance cache) black in frame 28 - check whole sequence"
-  },
-  {
-    "id": 2,
-    "desc": "Analyze composite burst: per-pixel temporal delta/stddev across 16 frames, difference map, quantify flicker magnitude/extent on wrists/leg/neck, check background stability (camera-drift check)",
-    "status": "done",
-    "result": "Camera drift PASS (correlation 0.992 at zero shift); flicker is character-specific 2-state (lit<->near-black, 100-140 levels) in ~1000-1400 px concentrated in neck/wrists/legs (86% of strong-flicker px); hotspots flicker independently; maps+scripts in /tmp/brix_analysis/; hotspot coords: neck(1535,755) hand_L(676,789) hand_R(2199,874) legs(1374,1400)"
-  },
-  {
-    "id": 3,
-    "desc": "Stage attribution: per-frame variance of body regions in raw brix_gi_diffuse/specular sequences; inspect brix_gi_debug_* cache views for per-frame flicker (reprojection/disocclusion failing vs SDF content change, round-robin re-bake signature in log)",
-    "status": "done",
-    "result": "Flicker IS in raw GI diffuse (per-pixel stochastic SDF-hit noise, ~3700 px, blue-dominant, hot-pixel sets differ every frame); GI specular all-zero; both cache debug views black (brick-SH/radiance cache empty); log rules out SDF re-bake. Attribution: GI temporal reprojection/accumulation failing on character; secondary suspects TAA/FSR/OIT-DCC for composite 2-state. Note: GI jpgs are per-frame auto-normalized - use log float ranges. 2nd burst in /tmp/brix2_*.jpg"
-  },
-  {
-    "id": 4,
-    "desc": "Map attributed stage to code: VulkanBrixelizerPass inputs (depth/normal history, velocity/motion vectors for skinned character, SDF/voxelizer round-robin) and produce root-cause hypothesis",
-    "status": "done",
-    "result": "Root-cause hypothesis: per-frame history reset on character-limb pixels -> output = fresh MC sample. Two reset gates, both firing on flagged anatomy: (a) red-flag path main.h:1597-1602 (has_world_probe=false for character since SDF=props-only + weight_sum<1e-3 threshold toggling from per-frame probe jitter/checkerboard re-trace), (b) disocclusion mask (FFX_DISOCCLUSION_THRESHOLD 0.9; skin-interp jitter via timer.alpha). MV convention + SDF round-robin exonerated. NEW: absolute-radiance re-analysis shows blue (env) events only at GI frame 1 and burst window (26/26 pre-burst clean, p~1e-16) -> per-frame readback hitch may change pacing/skin jitter. Decisive test: dump FFX debug-target (red=reset) + disocclusion mask per frame"
-  },
-  {
-    "id": 5,
-    "desc": "Document findings in notes.md: root-cause hypothesis with code references, evidence, recommended fix or next verification step",
-    "status": "done",
-    "result": "Manager wrote integrated root-cause summary + fix candidates in notes.md ('final: root cause'); last verifier verdict PASS; task (analysis) complete"
-  },
-  {
-    "id": 6,
-    "desc": "Decisive dump: fork-patch the FFX brixelizergi fork to read back per-pixel debug target (red=weight_sum<1e-3 reset) + disocclusion mask each frame (alongside existing GI saves); rerun burst; check which mask covers the limb ROI pixels (neck 1535,755 / hand_L 676,789 / hand_R 2199,874 / legs 1374,1400)",
-    "status": "done",
-    "result": "CONFIRMED: reset flag (weight_sum<1e-3, no world probe) covers 98.8-100% of limb hot pixels (6-13/16 frames); disocclusion 0/16 at hot pixels. Mechanism = per-frame history reset on non-voxelized character limbs. Files: ffx_brixelizergi.h/.cpp (fork) + VulkanBrixelizerPass.cpp (ENGINE_BRIX_GI_MASK_SAVE). Verifier PASS"
-  },
-  {
-    "id": 7,
-    "desc": "Implement fix in FFX fork ffx_brixelizergi_main.h reset gate (~line 1578): when !has_world_probe && weight_sum<1e-3, keep valid reprojected history (reprojected.w>0, !NaN) with decayed w*0.9 + green debug flag; full reset only when no history; inside DISABLE_DENOISER guard; rebuild Linux libffx_fsr3upscaler_vk.a",
-    "status": "done",
-    "result": "Fix implemented in ffx_brixelizergi_main.h reset gate (keep valid history w*0.9 + green flag; full reset only w/o history) + brixelizergi shader pool recompiled + Linux libffx_fsr3upscaler_vk.a rebuilt (new blob hash 400c5d7a). Verifier PASS."
-  },
-  {
-    "id": 8,
-    "desc": "Verification capture: rerun burst (same env + ENGINE_BRIX_GI_MASK_SAVE=1) to /tmp/brix5 16; quantify limb flicker with round-2 metrics (per-ROI temporal stddev, hot-pixel count) vs pre-fix; check green flag covers limb pixels in mask dump",
-    "status": "done",
-    "result": "Executed by verifier: burst /tmp/brix5 16 - limb hot px (std>20) 978->18 (2/1/1/14 per ROI), per-ROI stddev 0.94-1.13 = background floor, green flag in all 4 limb boxes all 16 frames, red reset down to 140-230 px image-wide stable."
-  },
-  {
-    "id": 9,
-    "desc": "Regression checks: background stability, no black/ghost artifacts on character, GI stats/perf normal, clean log, build clean (SKIP_NAVMESH=1 scripts/build.sh)",
-    "status": "done",
-    "result": "Executed by verifier: background stable (std 1.36/p95 3.93), no black/ghost artifacts (char luma ratio 0.999, near-black 0.007%), build+run clean, parked player/camera unchanged. Residual: 25 rim px on knee/collar silhouettes (secondary disocclusion effect)."
-  },
-  {
-    "id": 10,
-    "desc": "Document fix in ledger: what changed, why, verification numbers, remaining limitations (disocclusion rim secondary; character still has no world probe)",
-    "status": "done",
-    "result": "Manager wrote final fix summary + limitations in notes.md ('final: the fix (phase 2)'). Verifier PASS; fix verified."
-  }
+  {"id": 1, "desc": "Reproduce: baseline screenshot with ENGINE_IBL_DISABLED=1 ENGINE_AZGAAR_WEATHER=0 ENGINE_TPOSE=1 ENGINE_HIDE_GUI=1 via scripts/run.sh play screenshot; note the washed-out look", "status": "pending", "result": null},
+  {"id": 2, "desc": "Inspect Brixelizer GI pass + composite (VulkanBrixelizerPass, ENGINE_BRIX_GI_* envs, brixelizer/composite shaders) to find root cause of washed-out colors with IBL off", "status": "pending", "result": null},
+  {"id": 3, "desc": "Implement fix for washed-out GI colors", "status": "pending", "result": null},
+  {"id": 4, "desc": "Rebuild and verify: after-screenshot with same env vars shows corrected colors vs baseline", "status": "pending", "result": null}
 ]
