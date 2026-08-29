@@ -1,10 +1,33 @@
 # Plan
 
-Strategy: The user reports that Brixelizer GI output makes the scene (player + house in front of her) look washed out when IBL is off and weather is disabled. The player/camera is parked in the SQLite transform db, so `./scripts/run.sh play screenshot /tmp/...` frames exactly the object under test — do not move it.
+The user expects to see color bleeding between a red house wall and green ground
+(i.e. a visual artifact where one surface's albedo bleeds into the other's), but
+is not seeing it — so this is an *analysis* task: figure out the rendering path
+that would cause (or fail to cause) that cross-surface color bleed, and explain
+what is actually happening.
 
-Approach:
-1. Reproduce: build with `./scripts/build.sh`, then run `ENGINE_IBL_DISABLED=1 ENGINE_AZGAAR_WEATHER=0 ENGINE_TPOSE=1 ./scripts/run.sh play screenshot /tmp/baseline.jpg` (plus `ENGINE_HIDE_GUI=1` for a clean frame) and inspect the screenshot for the washed-out look.
-2. Inspect the Brixelizer GI path (`c-engine/renderer/vulkan/pass/brixelizer/VulkanBrixelizerPass.{h,cpp}`, `ENGINE_BRIX_GI_*` debug envs, `ENGINE_BRIX_GI_SAVE`/`_MASK_SAVE` to dump buffers) and the composite pass to find where GI is added/tonemapped when IBL is off (likely over-additive GI, wrong scale, or missing IBL-dependent normalization).
-3. Fix the root cause in the pass/shader (not the parked camera), rebuild, re-screenshot, and compare to the baseline to confirm colors are no longer washed out.
+Strategy:
+1. Identify the render passes and shaders involved in drawing the house (walls,
+   red material) and the ground (green) — likely the forward/deferred lit pass,
+   the G-buffer, and any AO/SSAO or ambient-occlusion / soft-shadow /
+   screen-space effect that samples neighboring pixels.
+2. Determine whether there is any mechanism that would bleed albedo across
+   surfaces (e.g. a screen-space filter, a shared texture, a missing clear, a
+   depth test issue, or an implicit lattice/vertex-shader sampling of a shared
+   height/normal texture).
+3. If a real artifact exists or is expected, capture a screenshot around the
+   parked player (the object under test) to confirm what the frame actually shows.
+4. Produce a written analysis of the root cause and whether the expected bleed
+   is a bug or the correct behavior.
 
-Verification entry points: `./scripts/build.sh` (code + shaders), `./scripts/run.sh play screenshot <path>` with the env vars above; visual comparison of before/after JPGs. Verifier: build must be warning-free and the after-screenshot must show corrected (non-washed-out) colors in the player/house region.
+Approach: this is primarily a code-reading + screenshot-verification task.
+Workers should read the relevant shader/pass source, trace the data flow, and use
+`./scripts/run.sh play screenshot` (with `ENGINE_HIDE_GUI=1` for a clean frame)
+to confirm the actual on-screen result. No code changes are expected unless a
+concrete bug is found.
+
+## Verification entry points
+
+- Build: `./scripts/build.sh`
+- Screenshot: `ENGINE_HIDE_GUI=1 ./scripts/run.sh play screenshot /tmp/screenshot.jpg`
+- Log timeout: `./scripts/run.sh play log 5000`
