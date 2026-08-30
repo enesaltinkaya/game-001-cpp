@@ -13,11 +13,9 @@ layout(location = 2) in flat uint inMaterialId;
 layout(location = 3) in vec3 inViewNormal;
 layout(location = 4) in vec4 inClipPrev;
 layout(location = 5) in flat uint inEntity;
-layout(location = 6) in vec3 inWorldNormal;
 
 layout(location = 0) out vec2 outVelocity;
 layout(location = 1) out vec2 outViewNormalXY;
-layout(location = 2) out vec3 outWorldNormal;
 
 void main() {
     /* Per-pixel velocity from perspective-correct clip-space positions.
@@ -62,12 +60,7 @@ void main() {
     if ((material.featureMask & (1u << MAT_ALPHA_MASK)) != 0u) {
         vec3 upView = normalize((sceneBuffer.cameras[0].view * vec4(0.0, 1.0, 0.0, 0.0)).xyz);
         outViewNormalXY = upView.xy;
-        /* Same override in world space: the FFX shadow classifier's
-         * backfacing test and the shadow denoiser's reprojection read the
-         * world normal, and foliage must read as ground-like there too. */
-        outWorldNormal = vec3(0.0, 1.0, 0.0);
     } else {
         outViewNormalXY = normalize(inViewNormal).xy;
-        outWorldNormal  = normalize(inWorldNormal);
     }
 }

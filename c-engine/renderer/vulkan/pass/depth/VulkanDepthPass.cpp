@@ -82,10 +82,8 @@ static void recreatePipelines(void) {
         .fs                 = "shaders/pass/scene/spv/scene_depth.frag.spv",
         .colorFormat1       = VK_FORMAT_R16G16_SFLOAT,
         .colorFormat2       = VK_FORMAT_R16G16_SNORM,
-        .colorFormat3       = VK_FORMAT_R16G16B16A16_SFLOAT,
         .clearColor1        = {0, 0, 0, 0}, .clearColor1Enabled = 1,
         .clearColor2        = {0, 0, 0, 0}, .clearColor2Enabled = 1,
-        .clearColor3        = {0, 0, 0, 0}, .clearColor3Enabled = 1,
         .depthFormat        = VK_FORMAT_D32_SFLOAT,
         .clearDepth         = {0, 0}, .clearDepthEnabled = 1,
         .vertexAttributes   = sceneVertexAttrs,
@@ -99,7 +97,6 @@ static void recreatePipelines(void) {
         .fs                 = "shaders/pass/scene/spv/scene_depth.frag.spv",
         .colorFormat1       = VK_FORMAT_R16G16_SFLOAT,
         .colorFormat2       = VK_FORMAT_R16G16_SNORM,
-        .colorFormat3       = VK_FORMAT_R16G16B16A16_SFLOAT,
         .depthFormat        = VK_FORMAT_D32_SFLOAT,
         .noCull             = 1,
         .vertexAttributes   = sceneVertexAttrs,
@@ -126,10 +123,8 @@ static void recreatePipelines(void) {
         .fs                 = "shaders/pass/azgaar_water/spv/azgaar_water_depth.frag.spv",
         .colorFormat1       = VK_FORMAT_R16G16_SFLOAT,
         .colorFormat2       = VK_FORMAT_R16G16_SNORM,
-        .colorFormat3       = VK_FORMAT_R16G16B16A16_SFLOAT,
         .clearColor1        = {0, 0, 0, 0}, .clearColor1Enabled = 0,
         .clearColor2        = {0, 0, 0, 0}, .clearColor2Enabled = 0,
-        .clearColor3        = {0, 0, 0, 0}, .clearColor3Enabled = 0,
         .noCull             = 1,
         .vertexAttributes   = terrainVertexAttrs,
         .vertexAttributeCount = 4,
@@ -162,7 +157,6 @@ void VulkanDepthPass::preUpdate() {
     VulkanImage* depthImage      = vulkanFrameResourcesGetDepth();
     VulkanImage* velocityImage   = vulkanFrameResourcesGetVelocity();
     VulkanImage* viewNormalImage = vulkanFrameResourcesGetViewNormal();
-    VulkanImage* worldNormalImage = vulkanFrameResourcesGetWorldNormal();
     VulkanImage* sceneColorImage = vulkanFrameResourcesGetSceneColor();
     VulkanImage* normalsImage    = vulkanFrameResourcesGetNormals();
     VulkanImage* materialImage   = vulkanFrameResourcesGetMaterial();
@@ -170,7 +164,6 @@ void VulkanDepthPass::preUpdate() {
     if (depthImage)     vulkanTransition(vulkan.currentCmd, depthImage,     VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, 0, 1);
     if (velocityImage)  vulkanTransition(vulkan.currentCmd, velocityImage,  VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, 0, 1);
     if (viewNormalImage) vulkanTransition(vulkan.currentCmd, viewNormalImage, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, 0, 1);
-    if (worldNormalImage) vulkanTransition(vulkan.currentCmd, worldNormalImage, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, 0, 1);
     if (sceneColorImage) vulkanTransition(vulkan.currentCmd, sceneColorImage, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, 0, 1);
     if (normalsImage)   vulkanTransition(vulkan.currentCmd, normalsImage,   VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, 0, 1);
     if (materialImage)  vulkanTransition(vulkan.currentCmd, materialImage,  VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, 0, 1);
@@ -182,7 +175,6 @@ void VulkanDepthPass::update() {
     VulkanImage* depthImage      = vulkanFrameResourcesGetDepth();
     VulkanImage* velocityImage   = vulkanFrameResourcesGetVelocity();
     VulkanImage* viewNormalImage = vulkanFrameResourcesGetViewNormal();
-    VulkanImage* worldNormalImage = vulkanFrameResourcesGetWorldNormal();
 
     if (vulkan.skipFrame || !depthImage) return;
 
@@ -197,7 +189,6 @@ void VulkanDepthPass::update() {
     vulkanBeginRender(.cmd = cmd, .pipe = &depthPipe,
                       .color1 = velocityImage,
                       .color2 = viewNormalImage,
-                      .color3 = worldNormalImage,
                       .depth  = depthImage);
 
     vulkanViewport(cmd, 0, depthImage->extent.height, depthImage->extent.width, -((i32)depthImage->extent.height));
@@ -363,8 +354,7 @@ Entity* camEntity = cameraGetEntity();
         vulkanBeginRender(.cmd = cmd,
                           .pipe = &waterDepthPipe,
                           .color1 = velocityImage,
-                          .color2 = viewNormalImage,
-                          .color3 = worldNormalImage);
+                          .color2 = viewNormalImage);
 
         vulkanViewport(cmd, 0, depthImage->extent.height, depthImage->extent.width,
                        -((i32)depthImage->extent.height));

@@ -557,7 +557,7 @@ void azgaarSettlementsInit(const AzgaarWorld* world,
         u32 rc = 0;
         for (u32 s2 = 0; s2 < AZGAAR_PROP_COUNT; s2++) {
             if (perSpecies[s2] > 0) {
-                g_ranges.push_back(engine::PropTileRange{.species = s2, .variant = 0, .start = offsets[s2], .count = perSpecies[s2]});
+                g_ranges.push_back(engine::PropTileRange{.species = s2, .variant = 0, .start = offsets[s2], .count = perSpecies[s2], .aabb = {}});
                 rc++;
             }
         }

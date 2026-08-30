@@ -94,6 +94,11 @@ typedef struct PropTileRange {
     u32 variant; // mesh-variant index within the species
     u32 start;   // index into the tile's instance array
     u32 count;   // instance count
+    // World-space AABB (min xyz, max xyz) of this range's instances, inflated
+    // by each instance's variant bounding sphere (scale * reach).  Filled by
+    // the cull stage; all-zero means "unavailable" (initial uploads), in which
+    // case per-range culling must treat the range as always visible.
+    float aabb[6];
 } PropTileRange;
 
 class VulkanAzgaarPropsPass : public System {
@@ -167,5 +172,9 @@ void vulkanAzgaarPropsDrawPrepass(void);
 // shadow map's render pass).  Draws the culled props with the cascade's light
 // view-projection so vegetation / settlement buildings / landmarks cast sun
 // shadows.  No-op when props are not active.
-void vulkanAzgaarPropsDrawShadow(struct VulkanCommand* cmd, u32 cascadeIndex);
+// `cascadePlanes` are the 6 world-space planes of this cascade's light-frustum
+// (near/far included): a range whose AABB is outside any of them cannot project
+// into this cascade's shadow map, so it is not drawn for this cascade.
+void vulkanAzgaarPropsDrawShadow(struct VulkanCommand* cmd, u32 cascadeIndex,
+                                 const vec4* cascadePlanes);
 }  // namespace engine

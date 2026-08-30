@@ -2382,6 +2382,8 @@ namespace game {
                 lodMinSq = m * m;
             }
             u32 c = 0;
+            float aabbMin[3] = {FLT_MAX, FLT_MAX, FLT_MAX};
+            float aabbMax[3] = {-FLT_MAX, -FLT_MAX, -FLT_MAX};
             for (u32 i = c0; i < c1; i++) {
                 const engine::PropInstance* inst = &src[i];
                 float dx                         = inst->pos[0] - camPos[0];
@@ -2393,19 +2395,24 @@ namespace game {
                     continue;
                 }
                 u32 row = base[sp] + inst->variant;
+                // Inflated variant sphere: centre + radius in world space.
+                float sx = inst->pos[0], sy = inst->pos[1], sz = inst->pos[2];
+                float sr = inst->scale;
                 if (row < g_variantSphereRows) {
-                    float sx = inst->pos[0] + inst->scale * g_variantSphereC[row * 3 + 0];
-                    float sy = inst->pos[1] + inst->scale * g_variantSphereC[row * 3 + 1];
-                    float sz = inst->pos[2] + inst->scale * g_variantSphereC[row * 3 + 2];
+                    sx += inst->scale * g_variantSphereC[row * 3 + 0];
+                    sy += inst->scale * g_variantSphereC[row * 3 + 1];
+                    sz += inst->scale * g_variantSphereC[row * 3 + 2];
+                    sr  = inst->scale * g_variantSphereR[row];
+                }
+                if (row < g_variantSphereRows) {
                     // Distance-scaled frustum margin: covers the frustum sweep
                     // between re-culls (rotation ~d*sin(ROT), translation ~MOVE).
                     float cdx   = sx - camPos[0];
                     float cdy   = sy - camPos[1];
                     float cdz   = sz - camPos[2];
                     float cdist = sqrtf(cdx * cdx + cdy * cdy + cdz * cdz);
-                    float rad = inst->scale * g_variantSphereR[row] + cdist * PROPS_CULL_ROT_SWEEP +
-                                PROPS_CULL_MOVE;
-                    bool out  = false;
+                    float rad   = sr + cdist * PROPS_CULL_ROT_SWEEP + PROPS_CULL_MOVE;
+                    bool out    = false;
                     for (int p = 0; p < 6; p++) {
                         const float* pl = planes[p];
                         if (pl[0] * sx + pl[1] * sy + pl[2] * sz + pl[3] < -rad) {
@@ -2415,6 +2422,12 @@ namespace game {
                     }
                     if (out) continue;
                 }
+                if (sx - sr < aabbMin[0]) aabbMin[0] = sx - sr;
+                if (sy - sr < aabbMin[1]) aabbMin[1] = sy - sr;
+                if (sz - sr < aabbMin[2]) aabbMin[2] = sz - sr;
+                if (sx + sr > aabbMax[0]) aabbMax[0] = sx + sr;
+                if (sy + sr > aabbMax[1]) aabbMax[1] = sy + sr;
+                if (sz + sr > aabbMax[2]) aabbMax[2] = sz + sr;
                 dst[w + c] = *inst;
                 c++;
             }
@@ -2422,7 +2435,13 @@ namespace game {
                 outRanges[rc] = engine::PropTileRange{.species = sp,
                                                       .variant = rng->variant,
                                                       .start   = w,
-                                                      .count   = c};
+                                                      .count   = c,
+                                                      .aabb    = {aabbMin[0],
+                                                                  aabbMin[1],
+                                                                  aabbMin[2],
+                                                                  aabbMax[0],
+                                                                  aabbMax[1],
+                                                                  aabbMax[2]}};
                 rc++;
             }
             w += c;
@@ -3318,6 +3337,7 @@ namespace game {
                     .variant = pairs[p].variant,
                     .start   = pairs[p].offset,
                     .count   = pairs[p].count,
+                    .aabb    = {} /* filled by the cull stage when planes are known */,
                 };
             }
         }

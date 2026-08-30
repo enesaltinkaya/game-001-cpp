@@ -125,6 +125,14 @@ namespace engine {
     static float cascadeSplits[SHADOW_CASCADE_COUNT]; /* view-space far plane */
     static vec3 cascadeLightDir;                      /* toward the scene (-sun.direction) */
 
+    /* Bounding-sphere / ortho extents in light space, kept per cascade so the
+     * scissor can be clamped to the sphere's map-space extent (see
+     * cascadeScissorRect). */
+    static float cascadeSphereCenterLS[SHADOW_CASCADE_COUNT][2]; /* pre-snap */
+    static float cascadeOrthoCenterLS[SHADOW_CASCADE_COUNT][2];  /* snapped   */
+    static float cascadeSphereRadius[SHADOW_CASCADE_COUNT];
+    static float cascadeOrthoExtent[SHADOW_CASCADE_COUNT];
+
     /* ── Helpers ──────────────────────────────────────────────────────────── */
 
     static void computeCascadeSplits(float zNear, float zFar, int cascadeCount) {
@@ -288,11 +296,21 @@ namespace engine {
         vec4 centerLS4;
         glm_mat4_mulv(lightView, center4, centerLS4);
 
+        float sphereCenterLSx = centerLS4[0];
+        float sphereCenterLSy = centerLS4[1];
+
         float texelSize = (extent * 2.0f) / (float)shadowMapSize;
         if (texelSize > 0.0f) {
             centerLS4[0] = roundf(centerLS4[0] / texelSize) * texelSize;
             centerLS4[1] = roundf(centerLS4[1] / texelSize) * texelSize;
         }
+
+        cascadeSphereCenterLS[cascadeIndex][0] = sphereCenterLSx;
+        cascadeSphereCenterLS[cascadeIndex][1] = sphereCenterLSy;
+        cascadeOrthoCenterLS[cascadeIndex][0]  = centerLS4[0];
+        cascadeOrthoCenterLS[cascadeIndex][1]  = centerLS4[1];
+        cascadeSphereRadius[cascadeIndex]      = radius;
+        cascadeOrthoExtent[cascadeIndex]       = extent;
 
         /* Fit Z to the actual slice bounds in light space so casters stay in
          * range without reintroducing XY instability. */
@@ -485,8 +503,9 @@ namespace engine {
                                       .vs          = "shaders/pass/shadow/spv/shadow_csm.vert.spv",
                                       .fs          = "shaders/pass/shadow/spv/shadow_csm.frag.spv",
                                       .depthFormat = VK_FORMAT_D32_SFLOAT,
-                                      .clearDepth  = {1.0f, 0},
-                                      .clearDepthEnabled       = 1,
+                                      /* No per-cascade clear: the whole map is cleared once
+                                       * per frame (vkCmdClearAttachments) and each cascade's
+                                       * rendering instance uses loadOp=LOAD. */
                                       .depthClamp              = 1,
                                       .noCull                  = 1,
                                       .depthCompareOp          = VK_COMPARE_OP_LESS_OR_EQUAL,
@@ -535,17 +554,68 @@ namespace engine {
         vulkanResetProfile(vulkan.currentCmd, &shadowPipe.profile, 0);
     }
 
+    /* Map-space scissor rect covering the cascade's bounding sphere under the
+     * cascade ortho projection. The ortho maps [orthoCenter ± extent] onto the
+     * full map, and radius < extent always holds (extent = radius + padding),
+     * so the sphere's extent sits strictly inside the map: shadow-map texels
+     * outside this rect can never be sampled by receivers inside the cascade
+     * frustum slice (their projection, plus the receiver normal bias and the
+     * 3x3 PCF taps, stays inside the slice's projected range, which is inside
+     * the sphere's range).  Rounding only ever widens the rect, so the clip
+     * can only trim texels that are provably unsampled. */
+    static void cascadeScissorRect(int cascade, int &x, int &y, int &w, int &h) {
+        int mapSize  = shadowMapSize;
+        float size2F = 2.0f * cascadeOrthoExtent[cascade];
+        float left   = cascadeOrthoCenterLS[cascade][0] - cascadeOrthoExtent[cascade];
+        float bottom = cascadeOrthoCenterLS[cascade][1] - cascadeOrthoExtent[cascade];
+        float sx     = cascadeSphereCenterLS[cascade][0];
+        float sy     = cascadeSphereCenterLS[cascade][1];
+        float r       = cascadeSphereRadius[cascade];
+
+        auto mapX = [left, size2F, mapSize](float lsx) {
+            return (lsx - left) / size2F * (float)mapSize;
+        };
+        /* light +y points up: fbY = 0 at light-space top */
+        auto mapY = [bottom, size2F, mapSize](float lsy) {
+            return (1.0f - (lsy - bottom) / size2F) * (float)mapSize;
+        };
+
+        int x0 = (int)floorf(mapX(sx - r));
+        int x1 = (int)ceilf(mapX(sx + r));
+        int y0 = (int)floorf(mapY(sy + r));
+        int y1 = (int)ceilf(mapY(sy - r));
+
+        if (x0 < 0) x0 = 0;
+        if (y0 < 0) y0 = 0;
+        if (x1 > mapSize) x1 = mapSize;
+        if (y1 > mapSize) y1 = mapSize;
+        if (x1 <= x0 || y1 <= y0) { /* degenerate: fall back to the full map */
+            x0 = 0;
+            y0 = 0;
+            x1 = mapSize;
+            y1 = mapSize;
+        }
+        x = x0;
+        y = y0;
+        w = x1 - x0;
+        h = y1 - y0;
+    }
+
     /* ── Render one cascade ───────────────────────────────────────────────── */
 
     static void renderCascade(VulkanCommand* cmd, int cascade, u32 fi) {
-        /* Begin rendering into the cascade's layer */
+        /* Begin rendering into the cascade's layer (loadOp=LOAD: the whole
+         * map is cleared once per frame for all active layers in a dedicated
+         * no-draw rendering instance — see update()) */
         vulkanBeginRender(.cmd        = cmd,
                           .pipe       = &shadowPipe,
                           .depth      = &shadowMapImage,
                           .depthLayer = cascade + 1 /* 1-indexed for per-layer view */);
 
         vulkanViewport(cmd, 0, shadowMapSize, shadowMapSize, -shadowMapSize);
-        vulkanScissor(cmd, 0, 0, shadowMapSize, shadowMapSize);
+        int scX, scY, scW, scH;
+        cascadeScissorRect(cascade, scX, scY, scW, scH);
+        vulkanScissor(cmd, scX, scY, scW, scH);
 
         u32 visibleSceneCount       = 0;
         const Scene** visibleScenes = vulkanGetVisibleScenes(&visibleSceneCount);
@@ -607,8 +677,25 @@ namespace engine {
 
         /* Azgaar props (vegetation, settlement buildings, landmarks) live outside
          * the VulkanScene draw list, so they are drawn into this cascade with
-         * their own instanced pipe to cast shadows too. */
-        vulkanAzgaarPropsDrawShadow(cmd, (u32)cascade);
+         * their own instanced pipe to cast shadows too.  The cascade's
+         * world-space light-frustum planes let the props hook skip instance
+         * ranges that project outside this cascade's map (a camera-frustum
+         * range can still sit outside a far cascade's coverage, and vice
+         * versa).  Same ZO extraction as the camera frustum planes:
+         *   near = row2 (z >= 0), far = row3 - row2 (w - z >= 0). */
+        {
+            mat4 t;
+            glm_mat4_transpose_to(cascadeViewProj[cascade], t);
+            vec4 cascadePlanes[6];
+            glm_vec4_add(t[3], t[0], cascadePlanes[0]);
+            glm_vec4_sub(t[3], t[0], cascadePlanes[1]);
+            glm_vec4_add(t[3], t[1], cascadePlanes[2]);
+            glm_vec4_sub(t[3], t[1], cascadePlanes[3]);
+            glm_vec4_copy(t[2], cascadePlanes[4]);
+            glm_vec4_sub(t[3], t[2], cascadePlanes[5]);
+            for (int p = 0; p < 6; p++) glm_plane_normalize(cascadePlanes[p]);
+            vulkanAzgaarPropsDrawShadow(cmd, (u32)cascade, cascadePlanes);
+        }
 
         vulkanEndRender(cmd);
     }
@@ -695,6 +782,34 @@ namespace engine {
                          VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
                          0,
                          SHADOW_CASCADE_COUNT);
+
+        /* Clear the whole map exactly once, for all active cascade layers:
+         * a no-draw rendering instance over the full-array view with
+         * loadOp=CLEAR and layerCount = active cascade count.  The per-cascade
+         * instances below then use loadOp=LOAD and scissor to each cascade's
+         * bounding-sphere extent, so the old per-cascade full-map clear and
+         * full-map scissor are gone. */
+        {
+            VkRenderingAttachmentInfo depthAttachment = {};
+            depthAttachment.sType       = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+            depthAttachment.imageView   = shadowMapImage.view; /* full-array view */
+            depthAttachment.loadOp      = VK_ATTACHMENT_LOAD_OP_CLEAR;
+            depthAttachment.storeOp     = VK_ATTACHMENT_STORE_OP_STORE;
+            depthAttachment.imageLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL;
+            depthAttachment.clearValue.depthStencil.depth = 1.0f;
+
+            VkRenderingInfo clearRenderInfo = {};
+            clearRenderInfo.sType              = VK_STRUCTURE_TYPE_RENDERING_INFO_KHR;
+            clearRenderInfo.renderArea.offset.x = 0;
+            clearRenderInfo.renderArea.offset.y = 0;
+            clearRenderInfo.renderArea.extent.width  = (u32)shadowMapSize;
+            clearRenderInfo.renderArea.extent.height = (u32)shadowMapSize;
+            clearRenderInfo.layerCount         = (u32)activeCascadeCount;
+            clearRenderInfo.pDepthAttachment   = &depthAttachment;
+
+            vkCmdBeginRendering(cmd->cmd, &clearRenderInfo);
+            vkCmdEndRendering(cmd->cmd);
+        }
 
         /* Render each active cascade.  The UBO and the 4-layer image always
          * reserve the full cascade count; only the active prefix is rendered. */

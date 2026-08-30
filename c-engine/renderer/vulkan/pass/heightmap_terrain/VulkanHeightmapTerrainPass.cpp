@@ -62,15 +62,167 @@ static bool terrainDefaultsSet     = false;
 // accepted (the 5x5 window's VRAM budget covers it).
 static const VkFormat heightFormat = VK_FORMAT_R32_SFLOAT;
 
+// Lattice tessellation of the corner VBO/IBO (uniform for every ring, see
+// heightmapRingSegments). A per-ring segment ladder would need per-ring
+// corner data instead of one shared VBO/IBO pair.
+static const i32 LATTICE_SEG = 255;
+
+typedef struct HeightmapCornerVertex {
+    float pos[3];
+    float normal[3];
+} HeightmapCornerVertex;
+
+static VulkanBuffer latticeIbo;
+static u32 latticeIdxCount = 0;
+
+// Bilinear fetch of the CPU height grid in TEXEL SPACE (s in [0, dim-1],
+// texel centres at integers), replicating the linear sampler's spec formula
+// (1-t)*S(u) + t*S(u+1) per axis. Within 1 ulp of the R32F texture the GPU
+// samples, so the lifted surface matches the old implicit-lattice surface
+// to float noise.
+static float latticeBilinear(const float* grid, u32 dim, float sx, float sy) {
+    float lim = (float)dim - 1.0f;
+    if (sx < 0.0f) sx = 0.0f;
+    if (sy < 0.0f) sy = 0.0f;
+    if (sx > lim) sx = lim;
+    if (sy > lim) sy = lim;
+    i32 ix = (i32)sx;
+    i32 iz = (i32)sy;
+    if (ix > (i32)dim - 2) ix = (i32)dim - 2;
+    if (iz > (i32)dim - 2) iz = (i32)dim - 2;
+    float fx   = sx - (float)ix;
+    float fy   = sy - (float)iz;
+    const float* r0 = grid + (size_t)iz * dim;
+    const float* r1 = r0 + dim;
+    float h00 = r0[(u32)ix], h10 = r0[(u32)ix + 1];
+    float h01 = r1[(u32)ix], h11 = r1[(u32)ix + 1];
+    float x0  = (1.0f - fx) * h00 + fx * h10;
+    float x1  = (1.0f - fx) * h01 + fx * h11;
+    return (1.0f - fy) * x0 + fy * x1;
+}
+
+// Precompute the tile's render lattice: 256^2 world-space corners
+// (pos + normal) that replicate, bit-for-bit in f32, what the old implicit
+// vertex shader computed per corner (same cell math, same texel-centre
+// addressing, same border-aware one-sided stencil normals). The render
+// surface is thus geometry-identical; the VS becomes a thin transform.
+static bool latticeIboEnsure(void) {
+    if (latticeIbo.buf) return true;
+
+    latticeIdxCount = 6u * (u32)LATTICE_SEG * (u32)LATTICE_SEG;
+    std::vector<u32> idx(latticeIdxCount);
+    u32* p = idx.data();
+    const u32 cols = (u32)LATTICE_SEG + 1u;
+    for (u32 pz = 0; pz < (u32)LATTICE_SEG; pz++) {
+        for (u32 px = 0; px < (u32)LATTICE_SEG; px++) {
+            u32 a = pz * cols + px; // (x, z)
+            u32 b = a + 1;          // (x+1, z)
+            u32 c = a + cols;        // (x, z+1)
+            u32 d = c + 1;           // (x+1, z+1)
+            *p++ = a; *p++ = c; *p++ = d;
+            *p++ = a; *p++ = d; *p++ = b;
+        }
+    }
+
+    latticeIbo = vulkanCreateGpuBuffer(
+        "heightmap_lattice_ibo",
+        (u64)latticeIdxCount * sizeof(u32),
+        VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+    if (!latticeIbo.buf) {
+        utils::warn("heightmapTerrain: lattice IBO creation failed");
+        latticeIdxCount = 0;
+        return false;
+    }
+    VulkanCommand* cmd = vulkanTransientBegin();
+    vulkanCopy(.cmd = cmd,
+               .source.data = idx.data(),
+               .target.buf  = &latticeIbo,
+               .size        = (u32)(latticeIdxCount * sizeof(u32)));
+    vulkanTransientEnd(cmd, 1);
+    return true;
+}
+
+// Fill `corners` (256^2 HeightmapCornerVertex) from the tile's CPU height
+// grid. Replicates the old VS float arithmetic corner-for-corner.
+static void latticeBuildCorners(const HeightmapTileView* v, HeightmapCornerVertex* corners) {
+    const u32   tex    = HEIGHTMAP_TEX;
+    const float size   = v->sizeMeters;
+    const float seg    = (float)LATTICE_SEG;
+    const float cell   = size / seg;
+    const float invTex = 1.0f / (float)tex;
+    const float k      = 1.0f - invTex; // (TEX-1)/TEX
+    const float cellTexel = size / ((float)tex - 1.0f);
+    const float* g = v->heights;
+
+    for (u32 pz = 0; pz <= (u32)LATTICE_SEG; pz++) {
+        for (u32 px = 0; px <= (u32)LATTICE_SEG; px++) {
+            HeightmapCornerVertex* o = corners + pz * ((u32)LATTICE_SEG + 1u) + px;
+
+            float localX = (float)px * cell;
+            float localZ = (float)pz * cell;
+
+            // Texel-centre addressing, same formula as the old VS.
+            float uvsX = (localX / size) * k + 0.5f * invTex;
+            float uvsY = (localZ / size) * k + 0.5f * invTex;
+            float sx = uvsX * (float)tex - 0.5f; // texel space
+            float sy = uvsY * (float)tex - 0.5f;
+
+            float h = latticeBilinear(g, tex, sx, sy);
+
+            // Border-aware one-sided stencil (outward fetch would REPEAT-wrap
+            // to the opposite tile edge): same logic as the old VS.
+            float spanX = 2.0f * cellTexel;
+            float spanZ = 2.0f * cellTexel;
+            float hL, hR, hD, hU;
+            if (uvsX < invTex) {
+                hL = h;
+                hR = latticeBilinear(g, tex, sx + 1.0f, sy);
+                spanX = cellTexel;
+            } else if (uvsX > 1.0f - invTex) {
+                hR = h;
+                hL = latticeBilinear(g, tex, sx - 1.0f, sy);
+                spanX = cellTexel;
+            } else {
+                hL = latticeBilinear(g, tex, sx - 1.0f, sy);
+                hR = latticeBilinear(g, tex, sx + 1.0f, sy);
+            }
+            if (uvsY < invTex) {
+                hD = h;
+                hU = latticeBilinear(g, tex, sx, sy + 1.0f);
+                spanZ = cellTexel;
+            } else if (uvsY > 1.0f - invTex) {
+                hU = h;
+                hD = latticeBilinear(g, tex, sx, sy - 1.0f);
+                spanZ = cellTexel;
+            } else {
+                hD = latticeBilinear(g, tex, sx, sy - 1.0f);
+                hU = latticeBilinear(g, tex, sx, sy + 1.0f);
+            }
+
+            float nx = (hL - hR) / spanX;
+            float nz = (hD - hU) / spanZ;
+            float inv = 1.0f / sqrtf(nx * nx + 1.0f + nz * nz);
+
+            o->pos[0]    = v->originX + localX;
+            o->pos[1]    = h;
+            o->pos[2]    = v->originZ + localZ;
+            o->normal[0] = nx * inv;
+            o->normal[1] = inv;
+            o->normal[2] = nz * inv;
+        }
+    }
+}
+
 // Per-tile GPU data (height texture + descriptor set).
 // Managed on the main renderer thread; the CPU side (grids) lives in
 // HeightmapTerrain.
 typedef struct HeightmapGpuTile {
-    bool        inUse;
-    i32         tileX, tileZ;
-    u64         readyStamp;
-    VulkanImage heightTex;
-    VulkanDesc  heightDesc;
+    bool         inUse;
+    i32          tileX, tileZ;
+    u64          readyStamp;
+    VulkanImage  heightTex;
+    VulkanDesc   heightDesc;
+    VulkanBuffer cornerVbo; // (worldPos, normal) per lattice corner, 256^2
 } HeightmapGpuTile;
 
 static std::vector<HeightmapGpuTile> gpuTiles;
@@ -157,6 +309,15 @@ static void recreatePipelines(void) {
         .vs                   = "shaders/pass/heightmap_terrain/spv/heightmap_terrain.vert.spv",
         .fs                   = "shaders/pass/heightmap_terrain/spv/heightmap_terrain.frag.spv",
         .set1                 = &layoutHeightDesc,
+        .in1attr              = VkVertexInputAttributeDescription{
+            .location = 0, .binding = 0, .format = VK_FORMAT_R32G32B32_SFLOAT, .offset = 0,
+        },
+        .in1bind              = VkVertexInputBindingDescription{
+            .binding = 0, .stride = sizeof(HeightmapCornerVertex), .inputRate = VK_VERTEX_INPUT_RATE_VERTEX,
+        },
+        .in2attr              = VkVertexInputAttributeDescription{
+            .location = 1, .binding = 0, .format = VK_FORMAT_R32G32B32_SFLOAT, .offset = 12,
+        },
         .colorFormat1         = VK_FORMAT_R16G16B16A16_SFLOAT,
         .colorFormat2         = VK_FORMAT_R16G16_SFLOAT,
         .colorFormat3         = VK_FORMAT_R8G8B8A8_UNORM,
@@ -172,6 +333,15 @@ static void recreatePipelines(void) {
         .vs                   = "shaders/pass/heightmap_terrain/spv/heightmap_terrain.vert.spv",
         .fs                   = "shaders/pass/heightmap_terrain/spv/heightmap_terrain.frag.spv",
         .set1                 = &layoutHeightDesc,
+        .in1attr              = VkVertexInputAttributeDescription{
+            .location = 0, .binding = 0, .format = VK_FORMAT_R32G32B32_SFLOAT, .offset = 0,
+        },
+        .in1bind              = VkVertexInputBindingDescription{
+            .binding = 0, .stride = sizeof(HeightmapCornerVertex), .inputRate = VK_VERTEX_INPUT_RATE_VERTEX,
+        },
+        .in2attr              = VkVertexInputAttributeDescription{
+            .location = 1, .binding = 0, .format = VK_FORMAT_R32G32B32_SFLOAT, .offset = 12,
+        },
         .colorFormat1         = VK_FORMAT_R16G16B16A16_SFLOAT,
         .colorFormat2         = VK_FORMAT_R16G16_SFLOAT,
         .colorFormat3         = VK_FORMAT_R8G8B8A8_UNORM,
@@ -184,15 +354,23 @@ static void recreatePipelines(void) {
         .clearColor4          = {0, 0, 0, 0}, .clearColor4Enabled = 0);
 
     // Depth/velocity pre-pass pipe: same lattice, writes depth + velocity +
-    // view-normal XY + world normal (called inside VulkanDepthPass' render pass).
+    // view-normal XY (called inside VulkanDepthPass' render pass).
     prepassPipe = vulkanCreatePipe(
         .name               = "heightmap_terrain_depth_prepass",
         .vs                 = "shaders/pass/heightmap_terrain/spv/heightmap_terrain_depth.vert.spv",
         .fs                 = "shaders/pass/heightmap_terrain/spv/heightmap_terrain_depth.frag.spv",
         .set1               = &layoutHeightDesc,
+        .in1attr            = VkVertexInputAttributeDescription{
+            .location = 0, .binding = 0, .format = VK_FORMAT_R32G32B32_SFLOAT, .offset = 0,
+        },
+        .in1bind            = VkVertexInputBindingDescription{
+            .binding = 0, .stride = sizeof(HeightmapCornerVertex), .inputRate = VK_VERTEX_INPUT_RATE_VERTEX,
+        },
+        .in2attr            = VkVertexInputAttributeDescription{
+            .location = 1, .binding = 0, .format = VK_FORMAT_R32G32B32_SFLOAT, .offset = 12,
+        },
         .colorFormat1       = VK_FORMAT_R16G16_SFLOAT,
         .colorFormat2       = VK_FORMAT_R16G16_SNORM,
-        .colorFormat3       = VK_FORMAT_R16G16B16A16_SFLOAT,
         .depthFormat        = VK_FORMAT_D32_SFLOAT);
 }
 
@@ -204,6 +382,7 @@ static void swapchainCreated(void*) {
 
 static void heightmapGpuTileDestroy(HeightmapGpuTile* e) {
     if (e->heightTex.img) vulkanDestroyImage(&e->heightTex, VK_NULL_HANDLE);
+    if (e->cornerVbo.buf) vulkanDestroyBuffer(&e->cornerVbo, VK_NULL_HANDLE);
     if (e->heightDesc.set) {
         deferredDescs.push_back((DeferredDescDestroy{.desc = e->heightDesc, .framesLeft = 3}));
         e->heightDesc = VulkanDesc{};
@@ -261,6 +440,32 @@ static bool heightmapPassUploadTile(HeightmapGpuTile* e, const HeightmapTileView
         e->heightDesc = vulkanCreateDesc(.name = "heightmap_height_set", .combinedImageSamplers = 1);
     }
     vulkanUpdateDesc(&e->heightDesc, VULKAN_BINDING_COMBINED_IMAGE_SAMPLER, &heightImg, 0, 0);
+
+    // Corner VBO (pos+normal per lattice corner) — same heights as the
+    // texture, precomputed on the CPU so the VS no longer enumerates the
+    // implicit lattice or re-fetches up to 5 texels per vertex.
+    if (!latticeIboEnsure()) return false;
+    const u32 cornerCount = ((u32)LATTICE_SEG + 1u) * ((u32)LATTICE_SEG + 1u);
+    static std::vector<HeightmapCornerVertex> cornerScratch;
+    cornerScratch.resize(cornerCount);
+    latticeBuildCorners(v, cornerScratch.data());
+
+    VulkanBuffer vbo = vulkanCreateGpuBuffer(
+        utils::strtmp("heightmap_cornervbo_%d_%d", v->tileX, v->tileZ),
+        (u64)cornerCount * sizeof(HeightmapCornerVertex),
+        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+            VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+    if (!vbo.buf) {
+        utils::warn("heightmapTerrain: corner VBO creation failed tile(%d,%d)", v->tileX, v->tileZ);
+        return false;
+    }
+    VulkanCommand* vboCmd = vulkanTransientBegin();
+    vulkanCopy(.cmd = vboCmd,
+               .source.data = cornerScratch.data(),
+               .target.buf  = &vbo,
+               .size        = (u32)(cornerCount * sizeof(HeightmapCornerVertex)));
+    vulkanTransientEnd(vboCmd, 1);
+    e->cornerVbo = vbo;
 
     e->heightTex    = heightImg;
     e->tileX        = v->tileX;
@@ -470,7 +675,9 @@ static void heightmapPassDrawTiles(VulkanCommand* cmd,
 
         vulkanBindDesc(cmd, pipe, &e->heightDesc, 1);
         vulkanPush(cmd, pipe, sizeof(pc), &pc);
-        vulkanDraw(cmd, 6 * seg * seg, 1); // 3 corners per triangle patch, 2 * seg^2 patches
+        vulkanBindVertex(cmd, &e->cornerVbo, 0, NULL, 0, NULL, 0);
+        vulkanBindIndex(cmd, &latticeIbo, 0, VK_INDEX_TYPE_UINT32);
+        vulkanDrawIndexed(cmd, 3 * 2 * seg * seg, 1);
 
         renderer.drawCalls++;
         renderer.instanceCount++;
@@ -601,7 +808,9 @@ void vulkanHeightmapTerrainDrawPrepass(void) {
 
         vulkanBindDesc(cmd, &prepassPipe, &e->heightDesc, 1);
         vulkanPush(cmd, &prepassPipe, sizeof(pc), &pc);
-        vulkanDraw(cmd, 6 * seg * seg, 1); // 3 corners per triangle patch, 2 * seg^2 patches
+        vulkanBindVertex(cmd, &e->cornerVbo, 0, NULL, 0, NULL, 0);
+        vulkanBindIndex(cmd, &latticeIbo, 0, VK_INDEX_TYPE_UINT32);
+        vulkanDrawIndexed(cmd, 3 * 2 * seg * seg, 1);
 
         renderer.drawCalls++;
         renderer.instanceCount++;
@@ -626,5 +835,6 @@ void VulkanHeightmapTerrainPass::removed() {
     vulkanDestroyPipe(&sceneWireFramePipe);
     vulkanDestroyPipe(&prepassPipe);
     if (layoutHeightDesc.set) vulkanDestroyDesc(&layoutHeightDesc);
+    if (latticeIbo.buf) vulkanDestroyBuffer(&latticeIbo, VK_NULL_HANDLE);
     cachedHt = NULL;
 }}  // namespace engine

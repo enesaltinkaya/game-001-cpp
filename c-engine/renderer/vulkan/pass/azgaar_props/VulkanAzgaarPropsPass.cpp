@@ -250,7 +250,6 @@ static void recreatePipelines(void) {
         .fs                   = "shaders/pass/azgaar_props/spv/azgaar_props_depth.frag.spv",
         .colorFormat1         = VK_FORMAT_R16G16_SFLOAT,
         .colorFormat2         = VK_FORMAT_R16G16_SNORM,
-        .colorFormat3         = VK_FORMAT_R16G16B16A16_SFLOAT,
         .depthFormat          = VK_FORMAT_D32_SFLOAT,
         .noCull               = 1,
         .vertexAttributes     = depthPrepassAttrs,
@@ -697,11 +696,14 @@ static const PropVariantRange* findVariant(u32 species, u32 variant) {
     return nullptr;
 }
 
-// Draw one whole-map instance set (settlement buildings, landmarks), culled by
-// the map AABB the game supplied.  Shared by the two global slots and by the
-// colour / pre-pass / shadow draws (`pipe` selects the pipeline receiving the
-// push constants; `forShadow` switches to the cascade-indexed PC block).
-static void drawGlobalSet(VulkanCommand* cmd, PropGpuGlobal* g, const vec4* planes,
+// Draw one whole-map instance set (settlement buildings, landmarks).  For the
+// colour / pre-pass draws the set is culled as a whole by the map AABB the
+// game supplied (the game's cull stage already compacted the buffer to the
+// camera frustum).  For shadow draws each range is culled individually
+// against the cascade's light-frustum planes (`cullPlanes`): instances
+// visible to the camera but outside this cascade's coverage would otherwise
+// be VS-transformed into both cascades' maps.
+static void drawGlobalSet(VulkanCommand* cmd, PropGpuGlobal* g, const vec4* cullPlanes,
                           bool* loggedOnce, const char* label,
                           VulkanPipe* pipe, bool forShadow, u32 cascadeIndex) {
     utils::threadLock(&uploadLock);
@@ -711,7 +713,7 @@ static void drawGlobalSet(VulkanCommand* cmd, PropGpuGlobal* g, const vec4* plan
     utils::threadUnlock(&uploadLock);
     if (!draw) return;
 
-    bool culled = aabbOutsideFrustum(gmin, gmax, (vec4*)planes);
+    bool culled = aabbOutsideFrustum(gmin, gmax, (vec4*)cullPlanes);
     if (culled) return;
 
     if (!*loggedOnce) {
@@ -725,6 +727,17 @@ static void drawGlobalSet(VulkanCommand* cmd, PropGpuGlobal* g, const vec4* plan
     for (u32 r = 0u; r < g->rangeCount; r++) {
         PropTileRange* range = &g->ranges[r];
         if (range->count == 0) continue;
+        if (forShadow) {
+            // Per-range cull against the cascade's light frustum.  An all-zero
+            // AABB marks "unavailable" (never compacted) → treat as visible.
+            float a0 = range->aabb[0], a1 = range->aabb[1], a2 = range->aabb[2];
+            float a3 = range->aabb[3], a4 = range->aabb[4], a5 = range->aabb[5];
+            if (a0 != 0.0f || a1 != 0.0f || a2 != 0.0f || a3 != 0.0f || a4 != 0.0f || a5 != 0.0f) {
+                vec3 rmin = {a0, a1, a2};
+                vec3 rmax = {a3, a4, a5};
+                if (aabbOutsideFrustum(rmin, rmax, (vec4*)cullPlanes)) continue;
+            }
+        }
         const PropVariantRange* v = findVariant(range->species, range->variant);
         if (!v || v->indexCount == 0) continue;
 
@@ -862,7 +875,7 @@ void VulkanAzgaarPropsPass::update() {
 // same transform logic as the colour pass (LOD hard switch + wind sway),
 // projected by the cascade's light view-projection.  Runs INSIDE the shadow
 // pass' render pass, so this must not begin/end a render or change viewports.
-void vulkanAzgaarPropsDrawShadow(VulkanCommand* cmd, u32 cascadeIndex) {
+void vulkanAzgaarPropsDrawShadow(VulkanCommand* cmd, u32 cascadeIndex, const vec4* cascadePlanes) {
     if (!enabled || !cmd) return;
 
     utils::threadLock(&uploadLock);
@@ -893,10 +906,24 @@ void vulkanAzgaarPropsDrawShadow(VulkanCommand* cmd, u32 cascadeIndex) {
         vec3 bmin = {e->tileX * 2048.0f - half, tileYMin, e->tileZ * 2048.0f - half};
         vec3 bmax = {bmin[0] + 2048.0f + 2.0f * half, tileYMax, bmin[2] + 2048.0f + 2.0f * half};
         if (aabbOutsideFrustum(bmin, bmax, (vec4*)planes)) continue;
+        // Per-cascade cull: nothing in the tile projects into this
+        // cascade's map when the tile AABB is outside the cascade's light
+        // frustum (same reasoning as the global sets below).
+        if (aabbOutsideFrustum(bmin, bmax, (vec4*)cascadePlanes)) continue;
 
         for (u32 r = 0u; r < e->rangeCount; r++) {
             PropTileRange* range = &e->ranges[r];
             if (range->count == 0) continue;
+            // Per-range cull against the cascade's light frustum.  An
+            // all-zero AABB marks "unavailable" (initial uploads before the
+            // first cull) → treat as visible, like drawGlobalSet.
+            float a0 = range->aabb[0], a1 = range->aabb[1], a2 = range->aabb[2];
+            float a3 = range->aabb[3], a4 = range->aabb[4], a5 = range->aabb[5];
+            if (a0 != 0.0f || a1 != 0.0f || a2 != 0.0f || a3 != 0.0f || a4 != 0.0f || a5 != 0.0f) {
+                vec3 rmin = {a0, a1, a2};
+                vec3 rmax = {a3, a4, a5};
+                if (aabbOutsideFrustum(rmin, rmax, (vec4*)cascadePlanes)) continue;
+            }
             const PropVariantRange* v = findVariant(range->species, range->variant);
             if (!v || v->indexCount == 0) continue;
 
@@ -923,9 +950,9 @@ void vulkanAzgaarPropsDrawShadow(VulkanCommand* cmd, u32 cascadeIndex) {
 
     static bool shadowGlobalLogged = false;
     static bool shadowLandmarksLogged = false;
-    drawGlobalSet(cmd, &gpuGlobal, planes, &shadowGlobalLogged,
+    drawGlobalSet(cmd, &gpuGlobal, cascadePlanes, &shadowGlobalLogged,
                   "shadow: global settlement buildings", &shadowPipe, true, cascadeIndex);
-    drawGlobalSet(cmd, &gpuLandmarks, planes, &shadowLandmarksLogged, "shadow: landmarks",
+    drawGlobalSet(cmd, &gpuLandmarks, cascadePlanes, &shadowLandmarksLogged, "shadow: landmarks",
                   &shadowPipe, true, cascadeIndex);
 }
 

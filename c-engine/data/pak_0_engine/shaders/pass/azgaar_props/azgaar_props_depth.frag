@@ -17,11 +17,9 @@ layout(location = 2) in vec4 inClipPrev;
 layout(location = 3) in vec2 inUV;
 layout(location = 4) flat in uint inTexId;
 layout(location = 5) flat in uint inSpecies;
-layout(location = 6) in vec3 inWorldNormal;
 
 layout(location = 0) out vec2 outVelocity;
 layout(location = 1) out vec2 outViewNormalXY;
-layout(location = 2) out vec3 outWorldNormal;
 
 void main() {
     /* ── Alpha discard — must match azgaar_props.frag exactly. ──
@@ -79,9 +77,4 @@ void main() {
      */
     if (!gl_FrontFacing) n = -n;
     outViewNormalXY = n.xy;
-    /* Same outward-normal rule in world space for the FFX shadow
-     * classifier / denoiser (they read the world normal). */
-    vec3 wn = normalize(inWorldNormal);
-    if (!gl_FrontFacing) wn = -wn;
-    outWorldNormal = wn;
 }

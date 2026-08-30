@@ -36,7 +36,6 @@ layout(location = 2) out vec4 outClipPrev;
 layout(location = 3) out vec2 outUV;
 layout(location = 4) flat out uint outTexId;
 layout(location = 5) flat out uint outSpecies;
-layout(location = 6) out vec3 outWorldNormal;
 
 void main() {
     // Match azgaar_props.vert: hard LOD switch, collapse the hidden side to a
@@ -101,7 +100,6 @@ void main() {
     outClipCurrent = sceneBuffer.cameras[0].viewProjectionNoJitter * worldPos4;
     outClipPrev    = sceneBuffer.cameras[0].prevViewProjectionNoJitter * prevWorldPos4;
     outViewNormal  = normalize((sceneBuffer.cameras[0].view * vec4(nrm, 0.0)).xyz);
-    outWorldNormal = nrm;
 
     // Routed to the fragment so it can apply the SAME alpha discard as the
     // colour pass (see azgaar_props_depth.frag).

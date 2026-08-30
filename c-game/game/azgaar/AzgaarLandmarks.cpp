@@ -375,7 +375,7 @@ void azgaarLandmarksInit(const AzgaarWorld* world,
         u32 rc = 0;
         for (u32 s = 0; s < AZGAAR_PROP_COUNT; s++) {
             if (perSpecies[s] > 0) {
-                g_ranges.push_back(engine::PropTileRange{.species = s, .variant = 0, .start = offsets[s], .count = perSpecies[s]});
+                g_ranges.push_back(engine::PropTileRange{.species = s, .variant = 0, .start = offsets[s], .count = perSpecies[s], .aabb = {}});
                 rc++;
             }
         }

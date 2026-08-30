@@ -22,5 +22,4 @@ VulkanImage* vulkanFrameResourcesGetRoadLayer(void);
 VulkanImage* vulkanFrameResourcesGetDepth(void);
 VulkanImage* vulkanFrameResourcesGetVelocity(void);
 VulkanImage* vulkanFrameResourcesGetViewNormal(void);
-VulkanImage* vulkanFrameResourcesGetWorldNormal(void);
 }  // namespace engine
