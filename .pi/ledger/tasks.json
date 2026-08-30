@@ -1,9 +1,0 @@
-[
-  {"id": 1, "desc": "Baseline capture + hotspot ranking (RenderDoc, per-pass GPU timings, ranked table) + reference screenshot", "status": "done", "result": "Baseline 9.44ms; hot spots: azgaar_props 3.51ms, depth 1.51, shadow 1.40, heightmap_terrain 0.75; ref screenshot /tmp/gpuopt/ref.jpg"},
-  {"id": 2, "desc": "Static audit of top-4 passes, levers ranked (no code)", "status": "done", "result": "L1-L6 ranked in notes round 2"},
-  {"id": 3, "desc": "L1: remove unused worldNormal attachment", "status": "done", "result": "Total 9.44 -> 9.21 ms; verifier PASS; screenshot identical"},
-  {"id": 5, "desc": "L2: per-cascade culling of global props in shadow pass", "status": "done", "result": "Implemented with safe fallback; no delta at parked vantage (globals already compacted); verifier PASS"},
-  {"id": 6, "desc": "L3a: per-tile indexed corner VBO/IBO for terrain + per-cascade tile-veg culling in shadow hook", "status": "done", "result": "Total 9.23 -> 9.07 ms; verifier PASS; screenshot within shimmer baseline"},
-  {"id": 7, "desc": "L5: one multi-layer shadow clear + per-cascade scissor to sphere extent", "status": "done", "result": "Verifier PASS (build + code review); runtime check passed round 8 (validation-layer clean); no measurable saving at this vantage"},
-  {"id": 4, "desc": "Final full verification: full build incl. navmesh bake, smoke test, ENGINE_LOG_PASS_GPU measurement, screenshot diff vs ref", "status": "done", "result": "Display recovered; all checks pass: final total 9.05 ms vs 9.44 baseline (-0.39 ms, -4.1%); screenshot within shimmer baseline; no cascade-corner artifacts"}
-]
