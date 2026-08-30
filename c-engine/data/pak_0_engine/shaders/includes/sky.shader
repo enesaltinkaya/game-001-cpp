@@ -1,4 +1,4 @@
-// Shared procedural sky (skybox.frag + the brixelizer env-cube bake).
+// Shared procedural sky (skybox.frag).
 // Requires globalset.shader (sceneBuffer for the directional light).
 // worldDir must be a normalized world-space direction.
 vec3 skyEvaluate(vec3 worldDir) {

@@ -24,26 +24,22 @@ is a registry edit (see "Build Script" below).
 
 ### Compiled C++ Sources
 
-| File                                                                      | Purpose                                                                                                                                |
-| ------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/components/fsr3upscaler/ffx_fsr3upscaler.cpp`                        | FSR3 upscaler core logic                                                                                                               |
-| `src/components/cacao/ffx_cacao.cpp`                                      | CACAO AO core logic (`ffxCacaoContextCreate/Dispatch/Destroy`, `ffxCacaoUpdateSettings`)                                               |
-| `src/components/dof/ffx_dof.cpp`                                          | DOF core logic (`ffxDofContextCreate/Dispatch/Destroy`, `ffxDofCalculateCoc{Scale,Bias}`)                                              |
-| `src/components/lpm/ffx_lpm.cpp`                                          | LPM core logic (`ffxLpmContextCreate/Dispatch/Destroy`, `FfxPopulateLpmConsts`)                                                       |
-| `src/components/brixelizer/ffx_brixelizer.cpp` + `ffx_brixelizer_raw.cpp` | Brixelizer SDF voxelizer (high-level + raw contexts: `ffxBrixelizer{ContextCreate,BakeUpdate,Update,CreateInstances,DeleteInstances}`) |
-| `src/components/brixelizergi/ffx_brixelizergi.cpp`                        | Brixelizer GI (`ffxBrixelizerGIContext{Create,Dispatch,Destroy,DebugVisualization}`)                                                   |
-| `src/shared/ffx_assert.cpp`                                               | Assert/debug utilities                                                                                                                 |
-| `src/shared/ffx_message.cpp`                                              | Message/logging utilities                                                                                                              |
-| `src/shared/ffx_object_management.cpp`                                    | Internal object management                                                                                                             |
-| `src/backends/vk/ffx_vk.cpp`                                              | Vulkan backend implementation                                                                                                          |
-| `src/backends/shared/ffx_shader_blobs.cpp`                                | Shader blob dispatch (routes by `FFX_FSR3UPSCALER` / `FFX_CACAO` defines)                                                              |
-| `src/backends/shared/blob_accessors/ffx_fsr3upscaler_shaderblobs.cpp`     | Precompiled SPIR-V shader permutations (FSR3)                                                                                          |
-| `src/backends/shared/blob_accessors/ffx_cacao_shaderblobs.cpp`            | Precompiled SPIR-V shader permutations (CACAO)                                                                                         |
-| `src/backends/shared/blob_accessors/ffx_dof_shaderblobs.cpp`              | Precompiled SPIR-V shader permutations (DOF)                                                                                           |
-| `src/backends/shared/blob_accessors/ffx_lpm_shaderblobs.cpp`              | Precompiled SPIR-V shader permutations (LPM)                                                                                           |
-| `src/backends/shared/blob_accessors/ffx_brixelizer_shaderblobs.cpp`       | Precompiled SPIR-V shader permutations (Brixelizer)                                                                                    |
-| `src/backends/shared/blob_accessors/ffx_brixelizergi_shaderblobs.cpp`     | Precompiled SPIR-V shader permutations (Brixelizer GI)                                                                                 |
-| `../../ffx_stubs.cpp`                                                     | Stubs for unbuilt components (breadcrumbs, frame interpolation swapchain)                                                              |
+| File                                                                  | Purpose                                                                                   |
+| --------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `src/components/fsr3upscaler/ffx_fsr3upscaler.cpp`                    | FSR3 upscaler core logic                                                                  |
+| `src/components/cacao/ffx_cacao.cpp`                                  | CACAO AO core logic (`ffxCacaoContextCreate/Dispatch/Destroy`, `ffxCacaoUpdateSettings`)  |
+| `src/components/dof/ffx_dof.cpp`                                      | DOF core logic (`ffxDofContextCreate/Dispatch/Destroy`, `ffxDofCalculateCoc{Scale,Bias}`) |
+| `src/components/lpm/ffx_lpm.cpp`                                      | LPM core logic (`ffxLpmContextCreate/Dispatch/Destroy`, `FfxPopulateLpmConsts`)           |
+| `src/shared/ffx_assert.cpp`                                           | Assert/debug utilities                                                                    |
+| `src/shared/ffx_message.cpp`                                          | Message/logging utilities                                                                 |
+| `src/shared/ffx_object_management.cpp`                                | Internal object management                                                                |
+| `src/backends/vk/ffx_vk.cpp`                                          | Vulkan backend implementation                                                             |
+| `src/backends/shared/ffx_shader_blobs.cpp`                            | Shader blob dispatch (routes by `FFX_FSR3UPSCALER` / `FFX_CACAO` defines)                 |
+| `src/backends/shared/blob_accessors/ffx_fsr3upscaler_shaderblobs.cpp` | Precompiled SPIR-V shader permutations (FSR3)                                             |
+| `src/backends/shared/blob_accessors/ffx_cacao_shaderblobs.cpp`        | Precompiled SPIR-V shader permutations (CACAO)                                            |
+| `src/backends/shared/blob_accessors/ffx_dof_shaderblobs.cpp`          | Precompiled SPIR-V shader permutations (DOF)                                              |
+| `src/backends/shared/blob_accessors/ffx_lpm_shaderblobs.cpp`          | Precompiled SPIR-V shader permutations (LPM)                                              |
+| `../../ffx_stubs.cpp`                                                 | Stubs for unbuilt components (breadcrumbs, frame interpolation swapchain)                 |
 
 All SDK paths relative to `git/sdk/`. `ffx_stubs.cpp` lives next to `build.sh`.
 
@@ -63,13 +59,6 @@ REVERSE_DEPTH) × 4 variants. The VK backend forces `fp16Supported = false`
 (1080 Ti compat), so the engine selects the 32-bit permutations — the
 internal UAVs (bilateral color, near/far, radius) stay `rgba32f`/`rg32f`,
 matching the GLSL qualifiers without any host-side format patch.
-
-Brixelizer: 31 shaders, no permutation axes → 31 × 4 variants = 124
-permutation headers (18 cascade-ops, 10 context-ops, 3 debug).
-
-Brixelizer GI: 19 shaders × 8 permutations (DEPTH_INVERTED ×
-DISABLE_SPECULAR × DISABLE_DENOISER) × 4 variants = 608 permutation
-headers — the slowest pool in the build on both platforms.
 
 Output: `git/sdk/src/backends/vk/shader_output/`.
 
@@ -113,20 +102,6 @@ DOF shaders (5): `ffx_dof_downsample_depth_pass`,
 LPM: 1 shader, no permutation axes → 1 × 4 variants = 4 permutation
 headers: `ffx_lpm_filter_pass`.
 
-Brixelizer shaders (31): 18 `ffx_brixelizer_cascade_ops_*` passes (build
-AABB tree, coarse culling, voxelize, E… job/reference scanning + counters,
-cascade scroll/reset/invalidate), 10 `ffx_brixelizer_context_ops_*` passes
-(brick clear/merge, Eikonal, merge cascades, args preparation) and 3 debug
-passes (`debug_draw_aabb_tree`, `debug_draw_instance_aabbs`,
-`debug_visualization_pass`). No permutation axes.
-
-Brixelizer GI shaders (19): `ffx_brixelizergi_{blur_x, blur_y, clear_cache,
-debug_visualization, downsample, emit_irradiance_cache,
-emit_primary_ray_radiance, fill_screen_probes, generate_disocclusion_mask,
-interpolate_screen_probes, prepare_clear_cache, project_screen_probes,
-propagate_sh, reproject_gi, reproject_screen_probes, spawn_screen_probes,
-specular_pre_trace, specular_trace, upsample}`.
-
 SSSR + Denoiser shaders (5 + 8, **currently not built** — see intro): the
 registry blocks in `build.sh` remain, so these lists document what a
 re-enable compiles: `ffx_sssr_{depth_downsample, classify_tiles,
@@ -145,7 +120,7 @@ with `FFX_DENOISER_REFLECTIONS`).
 - **ffx-api layer** (`ffx-api/`) — has hard-coded Windows/DX12 dependencies; we use the SDK-level API directly
 - **Frame generation / interpolation** (`src/components/frameinterpolation/`, `src/components/opticalflow/`)
 - **All other FidelityFX effects** (blur, CAS, FSR1, FSR2, VRS, etc.)
-- **All other shader blob accessors** — only the accessors of the enabled components (`ffx_fsr3upscaler`, `ffx_cacao`, `ffx_spd`, `ffx_lens`, `ffx_dof`, `ffx_lpm`, `ffx_brixelizer`, `ffx_brixelizergi`) are compiled
+- **All other shader blob accessors** — only the accessors of the enabled components (`ffx_fsr3upscaler`, `ffx_cacao`, `ffx_spd`, `ffx_lens`, `ffx_dof`, `ffx_lpm`) are compiled
 
 ## SDK Header Patches
 
@@ -166,7 +141,7 @@ includable from C11 code (committed in git):
 ### `sdk/include/FidelityFX/host/ffx_util.h`
 
 - Wrapped `ffxCountBitsSet()` (`noexcept`, `static_cast`) in `#ifdef __cplusplus` with a plain C fallback
-- Added `#include <bit>` (Brixelizer 6.4 win round): `std::popcount` lives in
+- Added `#include <bit>`: `std::popcount` lives in
   `<bit>`; the header only compiled where `<bit>` was pulled in transitively
   (Linux libstdc++ did, llvm-mingw's headers did not)
 
@@ -311,21 +286,6 @@ includable from C11 code (committed in git):
   blit, not a UAV write. `rw_depth_hierarchy` stays `r32f` (host R32_FLOAT,
   already matching).
 
-### `sdk/src/components/brixelizergi/ffx_brixelizergi_private.h` + `sdk/include/FidelityFX/host/ffx_brixelizergi.h` (Brixelizer GI round, 6.3)
-
-- **Upstream bug:** `FfxBrixelizerGIContext_Private.constantBuffers` was
-  declared `[3]` while four constant-buffer identifiers exist
-  (`FFX_BRIXELIZER_GI_CONSTANTBUFFER_IDENTIFIER_GI_CONSTANTS / PASS_CONSTANTS
-/ SCALING_CONSTANTS / CONTEXT_INFO` = 0..3). `updateConstantBuffer(...
-, CONTEXT_INFO, ...)` staged into `constantBuffers[3]` — one
-  `FfxConstantBuffer` (16 B) **past the end of the private struct**, i.e.
-  past the host's `FfxBrixelizerGIContext` allocation. In the engine this
-  silently corrupted `.bss` statics of the consumer pass every frame
-  (caught with a gdb watchpoint inside `StageConstantBufferDataVK`).
-- Fork patch: `constantBuffers[3]` → `[4]`, and
-  `FFX_BRIXELIZER_GI_CONTEXT_SIZE` 349680 → **349684** uint32s on
-  non-Windows (the +16 B slot).
-
 ### `sdk/include/FidelityFX/host/ffx_denoiser.h` + `ffx_sssr.h` (SSSR round — kept in the fork, SSSR currently not built)
 
 - `FFX_DENOISER_CONTEXT_SIZE` 73098 → 140000 uint32s on non-Windows (Linux
@@ -348,64 +308,16 @@ The denoiser's **reflections** UAV qualifiers already matched the host
 formats (`rgba16f`/`r16f`/`r11f_g11f_b10f`), so no GLSL patch was needed for
 it — only the context-size bump.
 
-### `sdk/include/FidelityFX/host/ffx_brixelizer.h` + `ffx_brixelizer_raw.h` (Brixelizer round)
-
-Linux `wchar_t` inflation (4 vs 2 bytes), same `#if defined(_WIN32)`
-pattern as the CACAO/SPD/DOF bumps. Four constants:
-
-- `FFX_BRIXELIZER_CONTEXT_SIZE` 5938838 → 6196886 uint32s (24787544 B):
-  the high-level context embeds the raw context + the baked update
-  description, so it absorbs both bumps below.
-- `FFX_BRIXELIZER_RAW_CONTEXT_SIZE` 2924058 → 3182106 uint32s (12728424 B):
-  the raw context's 24 cascade × FfxPipelineState name arrays.
-- `FFX_BRIXELIZER_UPDATE_DESCRIPTION_SIZE` 2099376 → 2100976 uint32s
-  (8403904 B): the baked update description's per-instance name arrays.
-- `FFX_BRIXELIZER_GI_CONTEXT_SIZE` 210000 → 349680 uint32s (1398720 B,
-  `ffx_brixelizergi.h`): 19 GI FfxPipelineState members.
-
-The SDK's `FFX_STATIC_ASSERT`s in `ffxBrixelizerContextCreate`,
-`ffxBrixelizerRawContextCreate`, `ffxBrixelizerBakeUpdate`'s description
-check, and `ffxBrixelizerGIContextCreate` catch regressions at compile
-time.
-
-### `sdk/src/components/brixelizer/ffx_brixelizer_raw.cpp` + `ffx_brixelizergi.cpp` (Brixelizer round)
-
-- Explicit `static_cast<uint32_t>` on the buffer-size fields of the
-  internal-resource initializer lists (6 × `context->totalBricks *
-sizeof(uint32_t)`, 5 × `width * height * sizeof(FfxUInt32x{2,4}...)`) —
-  the strict `-Wc++11-narrowing` build rejects the implicit `size_t` →
-  `uint32_t` narrowing in brace-initializers (SSSR precedent).
-
-No GLSL patches: the GI internal UAV qualifiers already match the host
-formats (probe images rgba16f, radiance cache r11f_g11f_b10f), and the
-engine-provided GI outputs are rgba16f UAVs — matching the engine's
-R16G16B16A16_SFLOAT HDR convention out of the box.
-
-### `sdk/include/FidelityFX/gpu/brixelizer/ffx_brixelizer_cascade_ops.h` (Brixelizer 6.2 round)
-
-- **Per-voxel reference clamp** (`FFX_BRIXELIZER_MAX_REFS_PER_VOXEL 128`):
-  over-quota reference increments roll back instead of `MarkFailed`-ing the
-  voxel. Without it, dense scenes (87k–225k-tri authored tree variants) blew
-  the reference/triangle budgets on ~15k voxels per bake, and
-  `FfxBrixelizerScanReferences` refuses to heal or allocate failed voxels —
-  the brick map wedged with permanent UNINIT holes.
-- **2D→3D distance-cull port**: the 2D voxelize path's "drop refs > 2 voxels
-  from the triangle" cull applied to the 3D voxelize branch (120M → 532k
-  references on the pathological scene).
-- Together with the engine-side GI-LOD swap (voxelize simplified `_far`
-  geometry for near trees), the bake triangle sum dropped 29.3M → 1.5M.
-  Defensive depth for future dense scenes.
-
-### `sdk/src/backends/vk/ffx_vk.cpp` (Brixelizer round)
+### `sdk/src/backends/vk/ffx_vk.cpp` (descriptor-pool round)
 
 - `bindlessDescriptorPool` created with `flags = 0`, but the backend
   destroys its descriptor sets with `vkFreeDescriptorSets` on context
   teardown — legal only on pools created with
-  `VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT`. Any brixelizer
-  context destroy (including the self-test's per-frame churn of the
-  FFX-internal views) hit a validation CRIT. Universal fix, no platform
-  guard. Both FFX archives (Linux + Windows) were rebuilt after this
-  patch.
+  `VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT`. Any context destroy
+  that churned FFX-internal descriptor sets (e.g. a per-frame
+  create/destroy self-test) hit a validation CRIT. Universal fix, no
+  platform guard. Both FFX archives (Linux + Windows) were rebuilt after
+  this patch.
 
 ## Compatibility Header
 
@@ -593,141 +505,3 @@ function-pointer variables. Without this, the compiler would emit direct
 `call` instructions to Vulkan symbols, but at link time those symbols resolve
 to volk's global variables (data, not code), causing a segfault when the CPU
 tries to execute raw pointer data as instructions.
-
-## Brixelizer GI sample cross-build (Wine reference)
-
-`build-brixgi-sample.sh` (in `fsr3.1/`) cross-compiles the Cauldron-based
-Brixelizer GI sample (`git/samples/brixelizergi`) for Windows x64 + Vulkan
-with llvm-mingw, links it against `sdk/build-win/libffx_fsr3upscaler_vk.a`
-(run `./build.sh` first), and assembles a runnable tree in `git/bin/`
-(exe + `dxcompiler.dll`/`dxil.dll` + `configs/` + `shaders/`). Run it with
-Wine against the host's radeon ICD:
-
-```bash
-cd /home/enes/Projects/c/cpp-thirdparty/fsr3.1 && ./build-brixgi-sample.sh
-cd git/bin && VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/radeon_icd.json \
-  wine FFX_BrixelizerGI_VK.exe
-```
-
-Scene/IBL/noise media lives in `git/media/` (fetched via
-`sdk/tools/media_delivery/MediaDelivery.exe`, see the brixelizer-gi plan).
-
-### Test hooks (fork additions in `brixelizergirendermodule.cpp`)
-
-- `BRIXGI_OUTPUT_MODE` — force the Output Mode: `diffusegi` / `speculargi` /
-  `radiance` / `irradiance` / `debugvis` / `example` / `none` (otherwise the
-  ImGui combo drives it).
-- `BRIXGI_EXIT_FRAMES=N` — `PostQuitMessage` after N frames so the run is
-  headless; with a screenshot-enabled config the framework's `PostRun` dumps
-  the last swapchain frame to `git/bin/screenshots/`.
-- FFX messages (`ffxSetPrintMessageCallback`) are mirrored to stdout as
-  `[FFX ERROR|WARNING|INFO] …` — a run is "FFX-clean" when the log has no
-  ERROR/WARNING lines.
-
-### Test hooks for engine A/B comparisons (2026-08-27, ghost-cube hunt)
-
-Added while hunting the engine's Step-2 "two SDF regions / 27→2 brick
-collapse" artifact; they reproduce the engine's voxelizer conditions inside
-the reference sample:
-
-- `BRIXGI_STATIC_ONLY=1` — cascade layout parity with the engine's Step 1:
-  8 STATIC-only cascades (raw cascade == level), base voxel 2 m doubling per
-  level, trace range moved down to cascades 0..7.
-- `BRIXGI_SINGLE_CUBE=<frame>` — at frame N, drop every instance and submit
-  exactly one static instance (`maxCascade = 0`) 10 m ahead of the SDF center
-  — the sparse-object regime of the engine's smoke test.
-- `BRIXGI_CUBE_MIN_EXTENT=<m>` / `BRIXGI_CUBE_SOLID=1` /
-  `BRIXGI_CUBE_SCALE=<m>` — object picker filters: minimum largest extent,
-  require extent on every axis (planar decals legitimately free their
-  adjacent voxels and hide solid-object failure modes), and per-axis scale to
-  a cube-like target size (the toyshop's meshes are sub-voxel at 2 m).
-- `BRIXGI_CUBE_FRESH=1` — destroy + recreate both FFX contexts before the
-  single-instance submission (pristine voxelizer state, no deletion
-  invalidations).
-- `BRIXGI_SDF_CENTER=x,y,z` — pin the clipmap center to a fixed world
-  position instead of the camera's (engine-parity large/negative coords).
-  NOTE: this also moves the grid away from the toyshop (world ~0..20 m), so a
-  pinned run has NO scene geometry — only the single instance.
-- `BRIXGI_LOG_STATS=<stride>` — print the lagged `FfxBrixelizerStats` every
-  N frames (`free=… sTris=… sBricks=…`); `freeBricks` is the collapse signal.
-- `BRIXGI_DIAG_PATH` — where to write the `FFX_BRIX_DIAG` fork dump.
-
-Result of the A/B that found the bug: with a SOLID 4 m object at the engine's
-exact coordinates, the reference sample bakes ~24-34 bricks and keeps them
-(retention ~100%), while the engine kept 2 of 27 — proving the failure was in
-the engine integration, not FFX: the row-major instance transform had its
-identity diagonal at `[0]/[4]/[8]` instead of `[0]/[5]/[10]`, projecting the
-cube onto its main diagonal (degenerate line-segment triangles; `CompressBrick`
-freed every brick without near-surface samples, leaving the diagonal's two
-endpoint voxels — the "two regions").
-
-The FFX fork's `FFX_BRIX_DIAG` dump was also extended (2026-08-27):
-`FFX_BRIX_DIAG_AT=<frame>` + `FFX_BRIX_DIAG_COUNT=<n>` capture up to 4
-consecutive cascade-0 bakes (each region: 40 B counters, 4 KB compression
-list, and the 1 MB cascade-0 brick map) instead of one first-bake snapshot;
-scratch source offsets are computed per bake via `getScratchMemorySize`
-(the job-counter partitions scale with `numJobs + numInstances`); and the
-capture state resets in `ffxBrixelizerRawContextCreate` so a recreated
-context can be captured cleanly.
-
-`enable-brixgi-screenshot.sh` (in `fsr3.1/`) flips
-`configs/brixelizergiconfig.json` → `"FidelityFX Brixelizer GI" →
-"Screenshot": true` (the sample loads that file, NOT cauldronconfig.json;
-re-run it after every build — the build re-copies stock configs). Reference
-captures (2558×1413, RADV, 1200 frames each, 2026-08-26) are in
-`git/bin/screenshots/ref-{diffusegi,speculargi,radiance,irradiance,debugvis}.jpg`.
-
-### Fork patches the sample build relies on (clang-on-MinGW, in `git/framework/…`)
-
-MSVC-tolerant idioms that clang rejects — all patched with `[clang patch]`
-comments in-tree:
-
-- **Volk dispatch for the whole sample** — same root cause as the library
-  build (Volk integration above): all sources compile with
-  `VK_NO_PROTOTYPES` + force-included `volk.h` (+ `VK_USE_PLATFORM_WIN32_KHR`
-  for the Win32 surface entry points, which volk only generates under that
-  define), and the link **drops `vulkan-1.lib`** — every `vk*` symbol
-  resolves to a volk function-pointer variable, and `volkInitialize()` /
-  `volkLoadInstance()` / `volkLoadDevice()` (hooks in `device_vk.cpp`)
-  populate them. `VMA_STATIC_VULKAN_FUNCTIONS=1` is also defined so
-  vk_mem_alloc copies the volk variables instead of its dynamic-import path
-  (which would dereference unpopulated proc-addr members).
-- `volkInitialize()` runs **before** the `InstanceCreator` ctor in
-  `device_vk.cpp` (its ctor calls volk-dispatched `vkEnumerate*`).
-- Copy-queue fallback: RADV exposes no dedicated transfer-only family
-  (family 0 is GRAPHICS|COMPUTE|TRANSFER, family 1 COMPUTE|TRANSFER); the
-  copy-queue search falls back to any family with the transfer flag.
-- `RenderModuleInfo::InitOptions` is null for name-only config entries and
-  the modules call `.value()` on it (nlohmann throws `type_error.306`);
-  the framework's init loop now hands them an empty object.
-- MSVC-isms fixed in-tree: `L#shift` wide-string stringification macro and
-  `x##/` include-path pasting (sample.cpp), `##` in `CHECK_FEATURE_SUPPORT`
-  feature macros, `UISlider` out-of-class virtual specializations needing
-  `template<>`, `AddShaderDesc`/`AddTask` by value (temp bindings),
-  address-of-temporary `GetResourceView()`/`Barrier::Transition` call
-  sites, `auto&` iterator temporaries in for-loops, non-const
-  `operator float()` used by `std::sort`, `__uuidof` for the DXC COM
-  interfaces (generated `dxc_uuids` shim in `git/build/brixgi-compat/`),
-  missing `<share.h>`/`<cfloat>`/`<experimental/filesystem>` includes,
-  `_WIN32_WINNT=0x0A00` (DPI + shellscaling APIs), a compat `Xinput.h`
-  (MinGW lacks it; fields are `BYTE bLeftTrigger/bRightTrigger`, not WORD),
-  and a lowercase include for `lightingrendermodule.h` (case-sensitive fs).
-- The FFX lib build has no frame-interpolation component, so the five
-  `ffx*Frameinterpolation*VK` entry points the VK backend references at
-  static-init time are stubbed in
-  `samples/brixelizergi/ffx_frameinterpolation_stubs.cpp` (they fail loudly
-  if ever called; the GI sample never enables FG).
-
-The build is incremental (`src -nt obj`); changes to the script's defines
-need a `rm -rf git/build/brixgi-win` first.
-
-## Brixelizer GI engine integration — removed
-
-The engine-side integration (the `c-engine/renderer/vulkan/pass/brixelizer/
-VulkanBrixelizerPass` voxelizer + GI pass, the composite GI terms, the
-per-pixel albedo depth-prepass attachment, the scene/props SDF registration
-and the `giEnabled` / `giResolution` / `giDiffuseFactor` /
-`giSpecularFactor` settings) was removed on 2026-09-02. The FFX static
-library still compiles the brixelizer + GI components (see the component
-tables above); the cross-build sample section above remains the reference
-for bringing it back. Full history: `plans/brixelizer-gi.md`.

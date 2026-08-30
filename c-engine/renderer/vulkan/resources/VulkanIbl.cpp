@@ -290,10 +290,6 @@ namespace engine {
         return ibl.environment.img ? &ibl.environment : nullptr;
     }
 
-    VulkanImage* vulkanIblGetEnvironmentPrefilter(void) {
-        return ibl.prefilter.img ? &ibl.prefilter : nullptr;
-    }
-
     RendererSunLight vulkanIblGetExtractedSun(void) {
         return ibl.extractedSun;
     }

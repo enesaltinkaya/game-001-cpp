@@ -19,11 +19,6 @@ layout(push_constant) uniform PushConstants {
     uint volumetricColorIndex;
     uint weatherMaskIndex;   // 0xFFFFFFFF = no weather pass / no mask
     uint aoIndex;            // 0xFFFFFFFF = AO disabled / no output
-    uint giDiffuseIndex;    // 0xFFFFFFFF = GI disabled / no output
-    uint giSpecularIndex;   // 0xFFFFFFFF = GI disabled / no output
-    uint albedoIndex;       // 0xFFFFFFFF = no albedo GBuffer (unweighted fallback)
-    float giDiffuseFactor;
-    float giSpecularFactor;
     uint width;
     uint height;
 } pc;
@@ -125,51 +120,6 @@ void main() {
             composite *= aoFactor;
         }
 
-        // ── 7b. Brixelizer GI (additive bounce light) ──────────────────
-        // Global illumination traced against the props SDF clipmap
-        // (VulkanBrixelizerPass), added after AO so bounce light is not
-        // re-darkened by ambient occlusion and before fog (step 8) so it
-        // fades out like direct light.  Same absent-sentinel pattern as
-        // AO: while GI is disabled the fetches are skipped entirely, so
-        // the frame stays bit-identical to the no-GI composite.
-        //
-        // The FFX contract: the GI outputs are raw incoming radiance and
-        // the consumer applies the material response, exactly like the IBL
-        // split-sum in scene.frag — diffuse is albedo-tinted (metals lose
-        // their diffuse lobe), specular is weighted by the BRDF LUT
-        // (F0-only fallback when the IBL LUT is absent).  Without this the
-        // bounce light lands unattenuated on every surface and the
-        // radiance-cache feedback runs at gain ~1, washing the image out.
-        if (pc.giDiffuseIndex != 0xFFFFFFFFu) {
-            vec3 giD = texelFetch(
-                sampler2D(textures[nonuniformEXT(pc.giDiffuseIndex)],
-                          samplers[SAMPLER_CLAMP_NEAREST]),
-                coord, 0).rgb;
-            vec3 giDWeight = vec3(1.0);
-            if (pc.albedoIndex != 0xFFFFFFFFu) {
-                vec3 albedo = texelFetch(
-                    sampler2D(textures[nonuniformEXT(pc.albedoIndex)],
-                              samplers[SAMPLER_CLAMP_NEAREST]),
-                    coord, 0).rgb;
-                giDWeight = albedo * (1.0 - metallic);
-            }
-            composite += giD * giDWeight * pc.giDiffuseFactor;
-        }
-        if (pc.giSpecularIndex != 0xFFFFFFFFu) {
-            vec3 giS = texelFetch(
-                sampler2D(textures[nonuniformEXT(pc.giSpecularIndex)],
-                          samplers[SAMPLER_CLAMP_NEAREST]),
-                coord, 0).rgb;
-            vec3 giSWeight = F0;
-            if (sceneBuffer.ibl.brdfLutIndex != 0u) {
-                vec2 brdf = texture(
-                    sampler2D(textures[nonuniformEXT(sceneBuffer.ibl.brdfLutIndex)],
-                              samplers[SAMPLER_CLAMP_LINEAR]),
-                    vec2(NdotV, roughness)).rg;
-                giSWeight = F0 * brdf.x + brdf.y;
-            }
-            composite += giS * giSWeight * pc.giSpecularFactor;
-        }
     }
 
     // ── 8. Fog (geometry only — skybox is the backdrop) ─────────────────

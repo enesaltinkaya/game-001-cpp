@@ -38,25 +38,6 @@ namespace engine {
             return VK_FALSE;
         }
 
-        // Known FFX-backend <-> engine interaction (brixelizer re-create): the
-        // voxelizer/GI FFX contexts are torn down while the previous frame's
-        // flight command buffer — which samples their image views — is still
-        // submitted but not yet reset.  destroyContext() already
-        // vkDeviceWaitIdle's, so the GPU has finished that buffer's work and the
-        // engine resets the buffer next frame; this is spec-legally a
-        // submit/reset-lifetime nit, not a real GPU hazard.  Log it, don't kill
-        // the process.  Match the exact VUID so a genuine image-view lifetime
-        // bug elsewhere still aborts.
-        if (pCallbackData->pMessage &&
-            strstr(pCallbackData->pMessage, "VUID-vkDestroyImageView-imageView-01026")) {
-            utils::warn("%s - %s: %s [frame %llu] (brixelizer re-create: known, non-fatal)",
-                        severity,
-                        type,
-                        pCallbackData->pMessage,
-                        utils::timer.frameCounter);
-            return VK_FALSE;
-        }
-
         utils::terminate("---------\n%s - %s\n%s\nframeCounter: %llu\n",
                          severity,
                          type,

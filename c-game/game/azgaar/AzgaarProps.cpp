@@ -2767,7 +2767,6 @@ namespace game {
             job->landmarks  = (gs == &g_landmarkSet);
             job->tileX      = 0;
             job->tileZ      = 0;
-            job->readyStamp = 0;
             memcpy(job->camPos, camPos, sizeof(camPos));
             memcpy(job->planes, planes, sizeof(planes));
             job->yaw   = cam->yaw;

@@ -140,8 +140,8 @@ void vulkanAzgaarPropsSetTileYBounds(float yMin, float yMax);
 // the per-species push constants).  Same thread-safe pending-upload pattern
 // as the tiles.
 void vulkanAzgaarPropsSetGlobal(const PropInstance* instances, u32 instanceCount,
-                                  const PropTileRange* ranges, u32 rangeCount,
-                                  const float aabbMin[3], const float aabbMax[3]);
+                                const PropTileRange* ranges, u32 rangeCount,
+                                const float aabbMin[3], const float aabbMax[3]);
 void vulkanAzgaarPropsClearGlobal(void);
 
 // ── Second whole-map slot (landmark props, workstream E) ───────────────────
@@ -149,44 +149,12 @@ void vulkanAzgaarPropsClearGlobal(void);
 // so landmarks (AzgaarLandmarks) and settlement buildings can both be live
 // without one upload clobbering the other's buffer.
 void vulkanAzgaarPropsSetLandmarks(const PropInstance* instances, u32 instanceCount,
-                                    const PropTileRange* ranges, u32 rangeCount,
-                                    const float aabbMin[3], const float aabbMax[3]);
+                                   const PropTileRange* ranges, u32 rangeCount,
+                                   const float aabbMin[3], const float aabbMax[3]);
 void vulkanAzgaarPropsClearLandmarks(void);
 
 // Kill switch (draws nothing; also the default for non-Azgaar scenes).
 void vulkanAzgaarPropsSetEnabled(bool enabled);
-
-// ── Voxelizer change hooks (brixelizer GI) ────────────────────────────────
-// Fired on the calling (game / props-pool) thread; handlers must not assume
-// thread safety of anything beyond the pointers passed in and should copy
-// what they need, scheduling GPU work for the render thread.
-//
-// The mesh callback fires from SetMeshes and SetVariants (both, so a handler
-// that copies both halves always converges after the load sequence finishes).
-// The tile callback fires from SetTile (removed == 0) and ClearTile
-// (removed == 1).  SetTile also fires for per-camera cull re-uploads, whose
-// instance set is a COMPACT subset (or empty): consumers that need the full
-// tile must track (tile, readyStamp) themselves and ignore re-uploads of a
-// stamp they already registered.  `instances` / `ranges` are caller-owned and
-// only valid during the call.
-typedef struct PropsMeshInfo {
-    u32 vertCount;
-    u32 idxCount;
-    const PropVariantRange* variants;
-    u32 variantCount;
-} PropsMeshInfo;
-typedef void (*VulkanAzgaarPropsMeshCallback)(const PropsMeshInfo* mesh, void* user);
-typedef void (*VulkanAzgaarPropsTileCallback)(i32 tileX, i32 tileZ, u64 readyStamp,
-                                              const PropInstance* instances, u32 instanceCount,
-                                              const PropTileRange* ranges, u32 rangeCount,
-                                              char removed, void* user);
-void vulkanAzgaarPropsSetMeshCallback(VulkanAzgaarPropsMeshCallback cb, void* user);
-void vulkanAzgaarPropsSetTileCallback(VulkanAzgaarPropsTileCallback cb, void* user);
-
-// Snapshot of the merged mesh buffers + counts (render thread).  Returns 0
-// while no world has loaded props meshes.
-char vulkanAzgaarPropsGetMeshes(VulkanBuffer* outVbo, VulkanBuffer* outIbo,
-                                u32* outVertCount, u32* outIdxCount);
 
 // Depth/velocity pre-pass hook (called by VulkanDepthPass).  Renders the
 // animated props into the velocity + view-normal attachments so FSR gets
