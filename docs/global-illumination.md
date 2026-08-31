@@ -254,7 +254,7 @@ no C++ passes**:
 Embedded symbols show a prior session prototyped exactly the recommended architecture:
 hemisphere ray directions, depth ray trace, IBL-sky fallback on miss
 (`sampleIblSky`), depth-edge fade, jittered reprojection (ssgi + ssgi*temporal), and a
-second generation (gi*_) that moved the per-texel work into a `traceRay` gather shader
+second generation (gi*\_) that moved the per-texel work into a `traceRay` gather shader
 (`gi_gather`) with separate initial/blur/temporal stages. The artifacts are orphaned — no
 sources means the next pak rebuild drops them — so treat them as a **reference design only**,
 not something to decompile. They confirm the phase-1 plan was already exercised in this

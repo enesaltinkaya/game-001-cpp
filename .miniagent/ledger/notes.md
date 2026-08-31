@@ -1,117 +1,48 @@
 # notes
 
-## brainstorm
+**Status:** all 4 tasks done. Deliverable `plans/ssgi.md` (SSGI++ plan doc) written (task 3) and fully cross-checked against the tree (task 4, 14 fixes applied). Fact-sweep approach (brainstorm "approach 2") was executed; candidate approaches 1/3 rejected and are no longer relevant.
 
-## Core difficulty
+## Invariants (verified tree facts — ground truth for the plan)
 
-The question "which GI methods suit our engine" is only answerable by mapping each candidate
-technique against this renderer's concrete pipeline — not generic literature. The difficulty
-is that the engine's constraints interact in non-obvious ways: Forward+ lighting at FSR-scaled
-internal resolution with TAA jitter, IBL environment map as the _only_ ambient source, infinite
-streaming heightmap terrain with a strict tile-determinism contract (no per-tile state), OIT
-transparency, and an AMD-DCC-sensitive OIT/OIT-accumulate path — plus a hard GPU floor
-(GTX 1080 Ti / RADV class) that kills heavyweight world-space methods.
+- **Pass order** `vulkanInit()` (`c-engine/renderer/vulkan/Vulkan.cpp:293-323`); GI inserts after `vulkanSsrPass` (line 310) before `vulkanAOPass` (line 311). 0-based indices: scene = 10, ssr = 17, **GI = 18**, ao = 19.
+- **AO temporal precedent is live:** `ao_temporal.comp` exists (rewritten for CACAO output). `VulkanAOPass` (CACAO dispatch → temporal pipe → `vulkanAOPassGetOutput()` NULL-sentinel) is the structural template for `VulkanGiPass`.
+- **Ambient blocks:** `scene.frag` 195-227 (`ambientDiffuse = kD_ibl * irradiance * baseColor.rgb / PI * iblIntensity`; final `color = (ambientDiffuse + ambientSpecular) * shadowDarkFactor + Lo`); `azgaar_props.frag` 171-180 (same IBL chain, own cascade-only `shadowDarkFactor`).
+- **AO strength knob exists** (survey's "no knob" claim stale): `settings.shadowMultiplier = aoEnvFloat("ENGINE_AO_STRENGTH", 1.0f)` (`VulkanAOPass.cpp:258`). It is **reassigned from env every frame in cacaoUpdate** — a runtime setter needs a precedence override, not a one-time set.
+- **Orphan spv inventory (exact):** `ssgi/{ssgi,ssgi_temporal}` + `gi/{gi_estimate,gi_initial,gi_gather,gi_blur,gi_temporal}.comp.spv.debug` (survey §5 omits `gi_estimate`).
+- **G-buffer formats** `VulkanFrameResources.cpp`: albedo R16G16B16A16_SFLOAT, normals R16G16_SFLOAT (157), material R8G8B8A8_UNORM (165), depth D32, velocity R16G16_SFLOAT (257); half-res precedent `renderWidth/2` line 210 (ReflectionDepth).
+- **GetOutput contract** `vulkanAOPassGetOutput()` (`VulkanAOPass.h:34-37`, `.cpp:533-541`): temporal ping-pong output when temporal enabled, raw CACAO buffer when not, **NULL** before context exists / while disabled. Composite maps NULL → `0xFFFFFFFFu` push-const index (`VulkanCompositePass.cpp:99-103`, `composite.comp:21,115-120`); `composite.comp:116-120` applies `composite *= aoFactor`.
+- **`AoTemporalPushConstants`** (`VulkanAOPass.cpp:328-342`), 13 fields: u32 `aoIndex/velocityIndex/depthIndex/prevIndex` (sampled), `outIndex` (storage), `width/height`; float `blendWeight` (ENGINE_AO_TWEIGHT 0.92), `depthThreshold` (TDEPTH 0.05), `clampSlack` (TCLAMP 0.35), `clampFloor` (TFLOOR 0.15), `devStart` (TDEV0 0.12), `devEnd` (TDEV1 0.50). Accumulators `temporalA/B` are **R16G16B16A16_SFLOAT** (.r AO, .g inverse view depth, 0 = no history, cleared black), dispatched at CACAO internal `cacaoWidth/cacaoHeight`, 8×8 workgroups, output transitioned to SHADER_READ_ONLY at end of dispatch (line 444); re-enable reset at 465-470. GI temporal copies all of this.
+- **FSR reactive mask:** `docs/fsr3.1.md` has NO reactive-mask section (only SDK `ffx_fsr3upscaler_autogen_reactive_pass` / `_luma_instability_pass` names, lines 77/79; `rw_luma_history` rgba8→rgba16f patch at lines 181-184). The real per-pixel reactive signal is the engine's own `c-engine/data/pak_0_engine/shaders/pass/fsr/reactive.comp` (pipe `fsr_reactive`, `VulkanFsrPass.cpp:108-110`) → render-res R32F mask via `vulkanFsrPassGetReactiveMaskImage()` (DOF max-blends CoC into it). Terms: planar reflection, specular, **composite-difference fallback** (roughness>=0.25, rel. luma diff opaque-vs-composite, smoothstep 0.10-0.30 × 0.25), terrain grazing; alpha-cutout intentionally disabled. No `ENGINE_FSR` env var exists anywhere; `vulkanFsrPassSetReactiveMask` (`VulkanFsrPass.cpp:657`) is defined but called by nothing (usable only as a temporary diagnostic hook).
+- **Build system needs no edits for the GI pass:** `build.sh` sources `scripts/shaders.sh` per module (c-engine then c-game); `shaders.sh` does `find ./data/pak_*/shaders -name "*.comp"` → compiles each to `<dir>/spv/<name>.comp.spv.debug` (`.spv.release` in release) with `glslc -I <pak>/shaders/includes`; `data.sh` zips the pak into `build/c-game`; missing spv → always compiled (mtime fast path only skips existing sources). CMake: `file(GLOB_RECURSE cSrc CONFIGURE_DEPENDS "*.cpp")` in both c-engine and c-game.
+- **Scene-pass texture binding has no ceiling** (survey/round-1 "texture slot budget" premise was misframed): scene pass samples via `textures[MAX_IMAGES=4096]` / `samplers[MAX_SAMPLERS=11]` (`globalset.shader:3-4,374-375`). Real work for the GI texture = new `giIndex` uint in the `SceneBuffer` buffer-ref struct (`globalset.shader:247-264`) + host mirror `VulkanSceneBuffer` (`VulkanResourceManager.cpp:107`) + pool registration.
+- **Blue noise:** `sceneBuffer.blueNoiseIndex` slot exists (`globalset.shader:227`) but is unpopulated (`VulkanIbl.cpp:107` "unused") — GI supplies its own LUT.
+- **`ao.comp` does NOT exist** (removed in CACAO migration, `plans/cacao-ao.md:42-44`; `plans/ambient-occlusion.md` marked SUPERSEDED). HiZ chain + `vulkanHiZGetMipSampledIndex` still live (`VulkanHiZPass.cpp:408-412`); **no current shader does HiZ early-out** — `ssr.comp` has `hizIndex` but linear-marches (`depthEdgeFade` line 65, `local_size 8`, unjittered-UV + `invViewProjectionNoJitter` convention). `taa.comp` has `depthToInv` (50) and `prevUv = uv - mv / res` (117). AO "village-tuned scale" constants (startDist, clamp(0.15×dist,1,20)) belong to the removed pass, not CACAO.
+- **Historical numbers:** 0.98 ms / 16.6 ms / "32 rays × ≤16 HiZ steps" / "≈0.5/255" all come from the SUPERSEDED XeGTAO plan (NVIDIA validation) — labeled historical in the doc; P1 re-baselines the current CACAO `ao` GPU cost (`plans/cacao-ao.md` records none). The `aoFrame` dump token was removed with XeGTAO (historical lesson only).
+- **`azgaar_props` does not write velocity** → GI history over canopies relies on depth rejection (logged as a plan risk).
+- **Debug-dump token table** (`Vulkan.cpp:165-271`): velocity/depth/normals/albedo/color/taa/ao/scene/oitReveal/oitAccum/lensIn/lensOut/dof/bloom + `<name>Raw` raw-byte variant. Plan adds `gi`, `giEstimate` (and `reactive` in P4).
+- Survey section refs §1/§2.2/§2.4/§3/§4.1/§4.2/§5 all exist in `docs/global-illumination.md`.
+- `Renderer.cpp:85` aoDisabled pattern; AO toggle in `c-game/game/settingsGui/graphics/SettingsGraphicsGui.cpp`.
 
-## Reductions / key lemmas
+## Design decisions (pinned in plans/ssgi.md; deviations from survey noted in the doc)
 
-- **L1 — "GI" reduces to the ambient term.** In `scene.frag`, everything except the ambient is
-  already solved: direct sun (cascaded shadows + contact shadow), Forward+ point/spot (16x16
-  screen tiles, max 64 lights/tile, MAX*GPU_LIGHTS=1024), emissive, SSR (specular), volumetric
-  light shafts. The only "global" term is `ambientDiffuse`/`ambientSpecular` from the IBL env
-  map (prefilter + SH-L1 irradiance + BRDF LUT), attenuated by `shadowDarkFactor`. Any suitable
-  GI method therefore only has to credibly produce an \_ambient/irradiance* term to replace or
-  extend that; it does not need to resupply direct or specular lighting. This shrinks the survey
-  from "radiosity methods" to "techniques that produce per-fragment irradiance from available
-  inputs."
-- **L2 — available inputs bound the candidate set.** The engine already rasterizes everything
-  a screen-space method needs: albedo (R16G16B16A16), oct-encoded normals + view normals,
-  roughness/metallic material buffer, depth, velocity, camera jitter state (existing shaders use
-  `jitteredUvFromUnjittered`, `prevViewProjection`, `invViewProjection`). What it _lacks_ is any
-  persistent world-space representation: no SDFs, no world mesh (terrain is an implicit
-  vertex-shader lattice), and the determinism contract forbids per-tile persisted state. Hence:
-  screen-space methods are fully viable; SDF-based (Lumen) is infeasible at this world scale;
-  world-space volumetric/grid methods are viable only if they stream per-terrain-tile and are
-  regenerated deterministically like the heightmap tiles.
-- **L3 — there is an established temporal-integration pattern.** CACAO AO deliberately has its
-  own temporal accumulation pass (`ao_temporal.comp`) with jitter reprojection because the color
-  TAA cannot average spatially-correlated half-res noise; volumetric light shafts also have a
-  temporal pass. A noisy GI estimate is expected to ship with a dedicated temporal filter
-  (jittered reprojection + velocity + depth clamp), and must remain stable under FSR 3's
-  reactive mask (large unstable luminance changes trigger FSR accumulation suppression).
-- **L4 — prior art already exists in the tree (unwired).** Orphan compiled debug SPIR-V with
-  **no sources and no C++ passes** referencing them, at
-  `c-engine/data/pak_0_engine/shaders/pass/ssgi/spv/{ssgi,ssgi_temporal}.comp.spv.debug` and
-  `.../pass/gi/spv/{gi_initial,gi_gather,gi_blur,gi_temporal}.comp.spv.debug`. (An earlier note
-  had a wrong repo-root "shapters/" path — corrected here.) Strings show the ssgi shader already
-  implements the right architecture: hemisphere ray directions, depth ray trace, IBL-sky fallback
-  on miss (`sampleIblSky`), depth-edge fade, and jittered reprojection; `gi_gather` does per-texel
-  traceRay gather; `gi_blur`/`gi_temporal` are the spatial/temporal filters. A previous session
-  prototyped exactly the SSGI class and left the artifacts orphaned (no `.comp` sources, so the
-  next pak rebuild drops them).
-- **L5 — performance floor.** Minimum supported GPU is GTX 1080 Ti class (Vulkan 1.3, BDA,
-  descriptor indexing, sync2) on RADV. Per-pass GPU profiling exists (`ENGINE_LOG_PASS_GPU=1`).
-  The budget implies: half-resolution GI estimate, ≤ a few rays per hemisphere sample, no
-  per-frame world-space updates over a multi-kilometer streaming area.
+1. **Pass:** `VulkanGiPass` in `c-engine/renderer/vulkan/pass/gi/`, registered after `vulkanSsrPass` before `vulkanAOPass`.
+2. **Resolution (was open in survey §4.1):** estimate at **half**-internal-res (single pass-owned slot, 1280×720×8 B ≈ 7.3 MB); temporal history at **full** internal-res ping-pong (each slot 2560×1440×8 B ≈ 29.5 MB; total ≈ 66 MB).
+3. **One-frame latency:** `scene.frag`/`azgaar_props.frag` sample *last* frame's history, handed in as a `sceneBuffer` texture with NULL/absent-sentinel before the first GI frame (mirrors the AO output contract), plus a layout barrier after the GI temporal write so next-frame `scene` sampling is legal. `vulkanGiPassGetOutput()` adopts the identical NULL-sentinel contract.
+4. **AO attenuation:** new `vulkanAOPassSetStrength(float)` runtime override of `settings.shadowMultiplier` (needs precedence over the per-frame env reassignment); survey's composite `aoStrength` uniform kept as documented fallback.
+5. **FSR:** P4 targets `reactive.comp` (dump mask GI on/off); mitigation via `ENGINE_GI_TLUMA`, **not** by editing reactive.comp; P4 also delivers a new "reactive mask" section in `docs/fsr3.1.md`.
+6. **Env knobs** modeled on the `ENGINE_AO_*` family (fact-check ref is #4, not #6).
+7. **Phases P1–P4** each independently shippable/verifiable with own verification commands (`ENGINE_HIDE_GUI=1 ./scripts/run.sh play screenshot`, `ENGINE_LOG_PASS_GPU=1`, parked-player do-not-move rule): P1 estimate-only debug pass, P2 temporal filter (ping-pong + reprojection), P3 ambient injection + AO attenuation, P4 validation (reactive mask, GPU budget vs AO+SSR, OIT/vegetation artifact documentation).
 
-## Recommended approach
+## Open questions
 
-Deliverable: `docs/global-illumination.md` — scoped survey + ranked recommendation (folded in:
-cost/benefit "do we need GI at all" intro section; prior-work note on the orphan ssgi/gi
-`.spv.debug` artifacts). The generic literature-first approach was rejected as ungrounded.
+- None outstanding in the notes. The former "sceneBuffer texture-slot budget" question is resolved (see binding invariant above). The plan's own "Open questions" section is the authority for implementation-time unknowns.
 
-The natural conclusion — which must be stated — is **SSGI/SSGI++-style screen-space
-irradiance as phase 1** (only method fully compatible with all constraints: half-res, temporal
-filter per the AO precedent, replaces `ambientDiffuse` in `scene.frag`, IBL-sky fallback on ray
-miss, no world-space state so the terrain determinism contract is untouched), **streamed
-per-tile GI probes as an optional phase 2** for long-range soft bounce (regenerated with
-terrain tiles; excludes vegetation), and **SDF-based GI rejected** (no SDF representation,
-unbounded world, vegetation density, GPU floor). Must-be-true conditions for the
-recommendation to hold: (1) the GI pass can run at internal (FSR-scaled) resolution before the
-scene pass and feed `scene.frag` as an irradiance texture, with the same jitter/velocity
-machinery as the AO temporal pass; (2) ambient replacement stays energy-consistent with the
-existing `shadowDarkFactor` ambient suppression and CACAO AO (GI already encodes diffuse
-occlusion, so AO strength must be reduced when GI is on, to avoid double darkening);
-(3) vegetation (azgaar_props Lambert-only Forward+ path) gets the same GI ambient;
-(4) OIT-transparent objects simply not receiving GI is an accepted artifact; (5) the FSR
-reactive mask does not fire on GI shimmer (temporal filter must clamp luminance changes).
+## Round log
 
-## rounds
+- **round 1:** wrote `plans/ssgi.md` (457 lines): status checklist, background, survey corrections & fact checks, 7 design decisions, P1–P4, cost budget, risks. Residual fact checks (a) FSR reactive, (b) shader glob, (c) AO temporal push constants, (d) GetOutput contract — all resolved as recorded above.
+- **round 2:** cross-checked every path/name/slot in `plans/ssgi.md` against the tree; fixed 14 stale/invented references (ao.comp attribution → ssr.comp + superseded plan; blue-noise unpopulated; D4 fact-check numbering; D5 per-frame env reassignment; GI pass index 11→18; aoFrame token historical; line-range corrections 533-541 / 181-184; XeGTAO numbers labeled historical; VRAM math 7.3/29.5/66 MB; no ENGINE_FSR env var; sceneBuffer slot premise misframed). All fixes are reflected in the invariants/decisions above.
+- **round 3:** curator round — task 4 (cross-check) marked done per the round-2 log; no new sub-tasks from notes; verifier verdict PASS, deliverable `plans/ssgi.md` present (492 lines). Task complete.
 
-Round 1 (task 4): wrote `docs/global-illumination.md` (5 sections: cost/benefit intro, engine
-inventory, 5-method comparison table, SSGI-primary + per-tile-probes-fallback recommendation with
-pass/buffer sketch and the 5 must-be-true conditions, orphan prior-work note). Verifier PASS.
+## final
 
-Round 2 (task 5, done — **tasks.json still shows it pending; manager should mark done**):
-independently re-verified every existing-code claim in docs/global-illumination.md against
-c-engine sources. Fixed 3 factual errors (below); everything else verified correct, incl. pass
-order (Vulkan.cpp `vulkanInit()` lines 293-323, exact match with doc §2.1), scene.frag ambient
-block (scene.frag:227, IBL chain lines 213/217/219/221; shadowDarkFactor grazing recovery
-lines 187-188), Forward+ config (16 px tiles VulkanLightCullingPass.cpp:79-80; 64/tile line 22;
-1024 lights LightComponent.h:20), AO (CACAO no internal temporal + `ao_temporal.comp`; applied in
-composite.comp:115-120 as plain `composite *= aoFactor`, no strength uniform), volumetric
-temporal (light_shafts_temporal.comp, VulkanVolumetricPass.cpp:196-198), TAA input
-(VulkanTaaPass.cpp:189-191), internal res (Renderer.cpp rendererUpdateRenderDimensions),
-`ENGINE_LOG_PASS_GPU`/`ENGINE_DEBUG_DUMP_IMAGES`, jitter machinery (globalset.shader), terrain
-512²/2048 m (HeightmapTerrain.h), azgaar_props diffuse-only ambient (azgaar_props.frag:168-174),
-and orphan .spv.debug file list (grep: no C++ references).
-
-FOUND & FIXED (3 errors, all in §2.2 G-buffer table + one clarification; corrections already
-applied to the doc):
-
-1. material row: doc said "R16G16_SFLOAT / R8G8B8A8_UNORM" — actual: R8G8B8A8_UNORM only
-   (VulkanFrameResources.cpp:165); content is vec4(roughness, metallic, alphaMask, 0)
-   (scene.frag:265). No 16F material buffer exists.
-2. view normal row: doc said R16G16B16A16_SFLOAT full view-space normal — actual:
-   R16G16_SNORM storing only normalize(inViewNormal).xy (triangle_depth.frag:59), z
-   reconstructed at use.
-3. velocity row: doc said R16G16B16A16_SFLOAT — actual: R16G16_SFLOAT (xy pixel velocity
-   from clip-space positions, triangle_depth.frag:58, clamped ±32767).
-   → GI design impact: SSGI estimate sampling velocity/view-normal must decode these
-   2-component encodings (viewNormal z = sqrt(1-xy·xy); velocity xy only).
-4. §4.2 "single aoStrength uniform" read like it exists — clarified it would be a NEW
-   uniform multiplied into the plain `composite *= aoFactor` in composite.comp.
-
-Residual uncertainty: the doc's GI pass placement ("after oit*composite, before ao") and the
-one-frame-latency history cadence are \_design choices*, not existing-code facts — the doc labels
-them as design proposals (§2.1 "can slot in", §4.1 "registered after oit_composite"), confirmed
-in round 2; everything else in the doc is verified against code.
+Compaction: merged brainstorm fact list + round 1 + round 2 into the Invariants/Decisions sections; dropped the rejected candidate approaches and per-round duplication. Invariants, decisions, and open questions preserved.
