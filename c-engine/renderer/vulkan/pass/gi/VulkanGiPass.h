@@ -17,17 +17,22 @@ struct VulkanImage;
  * Consumer wiring: the previous frame's temporal output is published into
  * the scene buffer every frame (sceneBuffer.gi — one frame of latency, the
  * scene/props passes run before this pass in the pass list) with the
- * 0xFFFFFFFFu absent-sentinel for startup/resize/disable.  While GI runs,
- * the CACAO strength is attenuated through vulkanAOPassSetStrength() to
- * avoid double darkening.  Ships behind the "giDisabled" settings key
- * (on by default; Phase 4 validated); ENGINE_GI_ENABLED=1 forces it on
- * over the setting for A/B runs.
+ * 0xFFFFFFFFu absent-sentinel for startup/resize/disable.  CACAO runs at
+ * its own strength while GI is on: the old D5 attenuation override
+ * (ENGINE_GI_AO_SCALE, default 0.5) was measured a no-op on the final image
+ * at the parked vantage (plans/ssgi-halo.md: AO field and final image
+ * identical for 0.5 vs 1.0, ≤0.08/255, re-verified 2026-09-01), so it was
+ * removed.  Ships behind the
+ * "giDisabled" settings key (on by default; Phase 4 validated);
+ * ENGINE_GI_ENABLED=1 forces it on over the setting for A/B runs.
  *
  * Debug knobs (env vars): ENGINE_GI_DISABLED=1 (skips the dispatch entirely
  * — images are not even created), ENGINE_GI_TEMPORAL=0 (raw estimate),
  * ENGINE_GI_RAYS=<4-8>, ENGINE_GI_DIST_SCALE, ENGINE_GI_TWEIGHT/_TDEPTH/
  * _TCLAMP/_TFLOOR/_TDEV0/_TDEV1/_TLUMA (temporal filter tuning),
- * ENGINE_GI_INTENSITY, ENGINE_GI_AO_SCALE. */
+ * ENGINE_GI_INTENSITY.
+ *   ENGINE_GI_INTENSITY is a proven clean A/B knob: 0.0 reproduces the
+ *   exact GI-OFF image (wall boxes ≤0.12/255, measured 2026-09-01). */
 class VulkanGiPass : public System {
 public:
     VulkanGiPass();

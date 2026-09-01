@@ -420,12 +420,11 @@ void main() {
             // wall: her front normal points at the wall the rays came
             // from).  Thin-gap inter-surface bounces are the classic
             // SSGI failure mode and are what darken the wall beside
-            // her (the halo).  Rejection is full in the near field
-            // and floors at 50% beyond it: a resolved far hit between
-            // opposing surfaces is still only half-trustworthy
-            // (under-resolved gap), and the residual half is the
-            // physical 1/d^2 ambient shadow a character casts on the
-            // wall.  (4)
+            // her (the halo).  Hard-rejected below the threshold with
+            // no gap ramp: a soft ramp spread the dark leak over a band
+            // ~1.3 m wide (the 300-px halo), while the flat reject puts
+            // the ring within ~2 % of the far-wall value (plans/
+            // ssgi-halo.md Phase 1, verified 2026-09-01).  (4)
             // Thin silhouette: the hit texel's immediate neighbourhood
             // already shows sky or a different surface — the hit sits
             // on an edge with unknown radiance.
@@ -433,18 +432,21 @@ void main() {
             // Gated rays revert the estimate to the texel's OWN sky
             // irradiance skyIrradiance(N) — the exact IBL value
             // scene.frag mixes against — so an all-gated texel is
-            // identical to the GI-OFF state.  The per-ray estimate
-            // carries the full plausibility mix at full weight
-            // (mixing by w while also weighting the ray by w would
-            // over-weight the hit term by 1/hitW in the mean); the
-            // per-ray CONFIDENCE carries the gate, so the consumer-side
-            // mix reverts to the IBL ambient as gating increases.
+            // identical to the GI-OFF state.  The per-ray VALUE is
+            // mixed by the gates SQUARED (w below): a partially gated
+            // hit must revert to sky faster than its confidence falls,
+            // or its (typically darker) radiance leaks 5–20 % into the
+            // mean — the residual dip measured as the halo.  The
+            // per-ray CONFIDENCE carries the linear gate, so the
+            // consumer-side mix reverts to the IBL ambient as gating
+            // increases.
             float front  = dot(hitN, -dir);
             float hitW   = (front > 0.0) ? smoothstep(0.05, 0.40, front) : 0.0;
             {
-                float sandwich = 1.0 - smoothstep(-0.75, -0.55, dot(N, hitN));
-                float gapS     = 0.5 + 0.5 * (1.0 - smoothstep(0.45, 1.30, hitT));
-                hitW *= 1.0 - sandwich * gapS;
+                // Sandwich hard reject: a hit normal opposing the origin
+                // normal below -0.55 (≈122°) is a thin-gap bounce — full
+                // rejection, no gap ramp (plans/ssgi-halo.md Phase 1).
+                hitW *= step(-0.55, dot(N, hitN));
             }
             {
                 if (hitW > 0.0) {
@@ -494,7 +496,10 @@ void main() {
                 // Range fade: hits approaching maxDist blend toward the
                 // IBL fallback (continuous with a miss beyond maxDist).
                 float rangeFade = 1.0 / (1.0 + (hitT / maxDist) * (hitT / maxDist));
-                float w         = rangeFade * hitW;
+                // Squared value weight: the hit term fades toward sky as
+                // the square of the plausibility gates (see the block
+                // doc above) — the partial-gate leak fix.
+                float w         = rangeFade * hitW * hitW;
                 irradianceSum += mix(skyIrradiance(N), hitIrradiance, w);
 
                 // Depth-agreement confidence (SSR formula, scaled

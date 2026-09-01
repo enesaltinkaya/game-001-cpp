@@ -2,7 +2,6 @@
 #include "events/Events.h"
 #include "renderer/vulkan/Vulkan.h"
 #include "renderer/vulkan/command/VulkanCommand.h"
-#include "renderer/vulkan/pass/ao/VulkanAOPass.h"
 #include "renderer/vulkan/pipeline/VulkanPipe.h"
 #include "renderer/vulkan/pipeline/VulkanProfile.h"
 #include "renderer/vulkan/resources/VulkanFrameResources.h"
@@ -21,7 +20,6 @@ namespace engine {
     static char temporalEnsureAccumulators(u32 width, u32 height);
     static void temporalDispatch(VulkanCommand* cmd, VulkanImage* depth, VulkanImage* velocity);
     static void publishToSceneBuffer(void);
-    static void aoAttenuationUpdate(void);
 
     static double elapsedCPU;
     static double elapsedGPU;
@@ -62,13 +60,6 @@ namespace engine {
     static u32 giHistFrame;
     static VulkanImage* temporalOutput;
     static char giWasDisabled;
-
-    /* AO attenuation state (D5): while GI is enabled the CACAO strength is
-     * driven through the runtime override (ENGINE_GI_AO_SCALE, default 0.5)
-     * because the GI estimate already embeds diffuse occlusion.  The cached
-     * value keeps the setter call (which logs) from firing every frame. */
-    static char giAoAttenuating;
-    static float giAoScaleApplied = -1.0f;
 
     /* Env-parsed knobs with fallback ("" falls back to the default too);
      re-read every frame like the AO knobs so A/B runs only need a
@@ -412,34 +403,12 @@ namespace engine {
         vulkanResourceSetGiData(&gi);
     }
 
-    /* The GI estimate already embeds diffuse occlusion (its hit radiance is
-     * shadowless-direct + sky, gated by per-ray depth agreement), so
-     * leaving CACAO at full strength double-darkens crevices once GI is
-     * injected.  While GI is enabled, drive the AO strength down through
-     * the runtime override; when GI turns off again, release the override
-     * so ENGINE_AO_STRENGTH / the default wins.  This is the documented
-     * compromise knob (plans/ssgi.md D5 / notes lemma 7): CACAO multiplies
-     * the whole composite color while GI's occlusion applies only to the
-     * diffuse ambient, so the scale also halves AO's occlusion of direct
-     * light — A/B via ENGINE_GI_AO_SCALE=0.5 vs 1.0. */
-    static void aoAttenuationUpdate(void) {
-        if (giDisabled) {
-            if (giAoAttenuating) {
-                vulkanAOPassSetStrength(-1.0f);
-                giAoAttenuating  = 0;
-                giAoScaleApplied = -1.0f;
-            }
-            return;
-        }
-        float scale = giEnvFloat("ENGINE_GI_AO_SCALE", 0.5f);
-        if (scale < 0.0f) scale = 0.0f;
-        if (scale > 1.0f) scale = 1.0f;
-        if (scale != giAoScaleApplied) {
-            vulkanAOPassSetStrength(scale);
-            giAoScaleApplied = scale;
-        }
-        giAoAttenuating = 1;
-    }
+    /* AO: CACAO runs at its own strength (ENGINE_AO_STRENGTH / default) while
+     * GI is on — the GI pass installs no runtime override.  The old D5
+     * attenuation (ENGINE_GI_AO_SCALE, default 0.5) was measured a no-op on
+     * the final image at the parked vantage (plans/ssgi-halo.md: AO field and
+     * final image identical for 0.5 vs 1.0, ≤0.08/255, re-verified
+     * 2026-09-01), so there is nothing to release on disable either. */
 
     void VulkanGiPass::update() {
         elapsedCPU = utils::nanos();
@@ -463,7 +432,6 @@ namespace engine {
         giWasDisabled = giDisabled;
 
         publishToSceneBuffer();
-        aoAttenuationUpdate();
 
         /* While disabled nothing is dispatched and no image is created
          * (the buffers are created lazily below) — frame cost

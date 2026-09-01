@@ -260,9 +260,8 @@ namespace engine {
          * unpack (mul/add) cannot decode — reconstruct normals from depth. */
         settings.generateNormals = true;
         settings.radius           = aoEnvFloat("ENGINE_AO_RADIUS", 0.6f);
-        /* The GI-pass attenuation installs an override here (see
-         * vulkanAOPassSetStrength) — it must beat the env read because the
-         * read happens every frame. */
+        /* The runtime override (vulkanAOPassSetStrength) must beat the env
+         * read because the read happens every frame. */
         settings.shadowMultiplier = aoStrengthOverride >= 0.0f
                                         ? aoStrengthOverride
                                         : aoEnvFloat("ENGINE_AO_STRENGTH", 1.0f);

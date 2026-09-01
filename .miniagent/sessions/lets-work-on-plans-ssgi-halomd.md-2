@@ -1,0 +1,58 @@
+# Scaffold session
+
+- Task: lets work on plans/ssgi-halo.md
+- Date: Tue Sep  1 08:59:21 2026
+- Outcome: no clean sign-off
+- Last verifier verdict: PASS
+
+## Final report
+
+Scaffold finished without a clean sign-off (last verifier verdict PASS). Final worker report:
+
+## Task result
+
+partial — tasks 1–3 (baseline/arbitration, GI-gate cleanup, AO override removal) fully executed with fresh measurements and verified; tasks 4–5 (residual-band confirmation, eave/hue re-checks, full env-knob matrix, user orbit check) remain.
+
+## Files changed
+
+- `c-engine/data/pak_0_engine/shaders/pass/gi/gi_estimate.comp` — deleted the `E1:`/`E3:` experiment scaffolding; reworded the hit-gate block doc (hard sandwich reject at dot < −0.55, no gap ramp; squared value weight vs linear confidence, with the measured halo rationale). Code behaviour unchanged.
+- `c-engine/renderer/vulkan/pass/gi/VulkanGiPass.cpp` — removed `aoAttenuationUpdate()`, the `giAoAttenuating`/`giAoScaleApplied` state, the `ENGINE_GI_AO_SCALE` read, and the now-unused `VulkanAOPass.h` include; left a comment documenting the no-op measurement.
+- `c-engine/renderer/vulkan/pass/gi/VulkanGiPass.h` — doc block: CACAO runs at its own strength while GI is on; `ENGINE_GI_AO_SCALE` removed from the debug-knob list.
+- `c-engine/renderer/vulkan/pass/ao/VulkanAOPass.h` / `.cpp` — updated stale docs (override API is now for manual A/B only; GI no longer installs it).
+- `.miniagent/ledger/notes.md` — appended `## final` with the full numbers table and verdicts.
+
+## Findings
+
+- **M1 passes at the in-tree E1+E3 state**: ring lanes within 1.7 % of far-wall GI (plan baseline was ~20 % below); conf 0.976–0.995 in the ring; the above-head dip is resolved (−0.3 % vs far, conf 0.937). So the E1-only vs E1+E3 A/B was unnecessary — both gates kept, scaffolding cleaned.
+- **AO arbitration: the `ENGINE_GI_AO_SCALE` 0.5→1.0 flip is a no-op on the final image** (≤0.07/255; AO field itself identical to JPEG noise) — round-3's header claim is re-confirmed with fresh captures; the plan's round-2 +8…+15 table is stale. Phase 2 verdict: **delete, not gate** — so no `composite.comp` change was made and no descriptor-pool work was needed.
+- Post-edit final: M2 ringR 0.84/0.07/0.04, ringL 0.32/0.97/1.82 (pass); M3f ≤3.58/255 (only L0, dark-signed, same as pre-edit); RAYS=16 boxes ≤0.5/255; TEMPORAL=0 boxes ≤0.69/255 (slightly above the old 0.2 passthrough figure — partly inter-run TAA box noise; no artifact, flagged honestly); `play log 6000` clean; build green with no warnings.
+- Curiosity worth knowing: CACAO `shadowMultiplier` 0.5 vs 1.0 produced bit-identical AO output at this vantage — the multiplier is effectively inert here, which independently explains why the override was dead weight.
+- Full-frame max pixel diffs (~207) between runs are sparse scattered TAA jitter (~800/4.7M px, present even between two identical-setting runs); box means are the valid metric.
+- Parked player/camera untouched; no git used; all runs via `./scripts/run.sh play screenshot` with `ENGINE_HIDE_GUI=1`, 6 s settle, `SKIP_NAVMESH=1`.
+
+## Remaining steps
+
+1. Task 4: confirm the low-conf silhouette band width is acceptable (conf<0.95 spans ~47 px left / ~30 px right of the silhouette on wall rows — thin-gate footprint, visually M2-clean; a crop zoom would settle it) and re-run the old plan's eave-strip / mid-wall hue boxes.
+2. Task 5: remaining env-knob matrix (`ENGINE_GI_RAYS=4`, `ENGINE_GI_INTENSITY=0.5/2`) for the ring-flat check.
+3. User-driven: orbit the parked camera for the no-trail/no-flicker check; optionally decide if L0's −3.58/255 M3f residual (physical ambient shadow) is acceptable.
+[usage: ↑1534896 ↓27368 tokens]
+
+Verifier:
+
+## Verdict
+
+PASS
+
+## Commands run
+
+- `./scripts/build.sh` → exit code 0 (compiled from the `Verification:` line of `.miniagent/ledger/plan.md`, run verbatim)
+
+## First failure (if FAIL)
+
+None.
+
+## Notes
+
+- The build was a no-op compile (`ninja: no work to do`) with all asset-pipeline steps (engine/game shaders, Blender exports, navmesh, data zips) reporting "up to date" — the tree was already in a built, consistent state, so this confirms integrity but doesn't exercise recompilation of the `gi_estimate.comp` / `VulkanGiPass.cpp` changes.
+- Runtime sign-off tasks (M1–M4 screenshot protocol, `./scripts/run.sh log` clean run) are still `pending` in `tasks.json`; the fixed verification line only covers the build, which is green.
+[usage: ↑22195 ↓630 tokens]
