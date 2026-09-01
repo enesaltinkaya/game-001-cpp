@@ -21,10 +21,103 @@ survey, the deviation is called out in "Survey corrections & fact checks".
 
 ## Status
 
-- [ ] Phase 1 — GI estimate + debug visibility
-- [ ] Phase 2 — Temporal filter (ping-pong history)
-- [ ] Phase 3 — Ambient injection (`scene.frag` / `azgaar_props.frag`) + AO attenuation
-- [ ] Phase 4 — Vegetation/props coverage + FSR reactive-mask validation
+- [x] Phase 1 — GI estimate + debug visibility (P1a skeleton + P1b full ray
+      march landed; measured actuals below)
+- [x] Phase 2 — Temporal filter (ping-pong history) — landed; actuals below
+- [x] Phase 3 — Ambient injection (`scene.frag` / `azgaar_props.frag`) + AO
+      attenuation — landed (GiData block in the scene buffer, one-frame-latency
+      publish, `vulkanAOPassSetStrength` override, `giDisabled` settings key +
+      GUI toggle, `ENGINE_GI_INTENSITY` / `ENGINE_GI_AO_SCALE` knobs live)
+- [x] Phase 4 — Vegetation/props coverage + FSR reactive-mask validation —
+      landed; settings default flipped to **GI on** (actuals below)
+
+Phase 3 actuals (parked vantage, 15 s settle, JPEG diffs vs the
+ENGINE_GI_DISABLED=1 baseline): 51% of pixels change by >2/255, 12% by
+
+> 10, signed mean +2.5/255 (bounce light brightens more than the 0.5× AO
+> attenuation darkens at this vantage; effect strongest in the top third —
+> structures/canopies). AO attenuation A/B (ENGINE_GI_AO_SCALE 1.0 vs 0.5):
+> 15.6% of pixels darker by >5/255 at full CACAO strength, median 0 — the
+> crevice-localized double-darkening the attenuation removes. Zero
+> validation errors over all runs. The open-sky energy identity remains
+> algebraic-only (the parked vantage has no sky texels — see Phase 2 note).
+
+Phase 4 actuals (same GPU/vantage; static parked camera — the orbiting
+variants of the checks remain user-driven, all motion-sensitive machinery
+mirrors the validated AO implementation):
+
+- **Vegetation coverage** — green-dominant-albedo classification (raw
+  albedo dump) marks 54% of the frame as vegetation; those pixels receive
+  the same systematic GI shift as everything else (signed +1.88/255 vs a
+  zero-mean −0.03/255 same-config control; the high |diff| noise floor of
+  cross-run A/Bs is wind-sway animation, so the signed mean is the
+  discriminator). The `azgaar_props.frag` GI sample demonstrably ships to
+  grass/foliage pixels.
+- **Reactive mask** (FSR Native AA 2880×1627, `reactive`/`reactiveRaw` dump
+  tokens added alongside a `material` token): GI on _reduces_ the mean mask
+  0.110→0.094 (the GI-driven CACAO attenuation shrinks the opaque-vs-
+  composite gap term 3 measures) but reshuffles term-3 knee crossings
+  (0.5% of pixels newly >0.1). Final-frame boiling under FSR is unchanged
+  within noise (8-shot inter-frame mean|diff| 1.96 vs 1.91 /255, p99
+  identical) → no FSR destabilization, no `ENGINE_GI_TLUMA` mitigation
+  needed. Side findings: `reactive.comp`'s `isAlphaCut` reads material.b,
+  which terrain overloads as ao=1 (all terrain reads as alpha-cut; harmless
+  today since alphaCutReactive is intentionally 0); the mask is dominated
+  by the terrain-grazing term (≤0.4) regardless of GI.
+- **OIT transparents** — no OIT objects at the parked vantage (reveal dump
+  is uniform), so the "don't darken" check is vacuous here;
+  `oit_accumulate.frag` is untouched by the GI injection and keeps pure IBL
+  ambient by construction.
+- **RADV flicker** — none: flicker-pixel rate (>60/255 inter-frame) 0.020%
+  with GI on vs 0.049% off, zero validation errors across all runs
+  (compute-written R16F/RGBA16F buffers as predicted — no DCC trigger
+  class).
+- **Budget re-baseline + ray-count call** (600-frame `ENGINE_LOG_PASS_GPU`
+  averages, TAA config): gi pass **1.14 ms** @6 rays (est+temporal, under
+  the 1.5 ms fail line) or 0.82 ms @4 rays; consumer fetch costs
+  `azgaar_props` +0.42 ms (18%) and `scene_render` +0.01 ms; frame total
+  7.71 → 9.92 ms (the extra ~0.6 ms over the attributable sum is cross-run
+  DVFS variance on depth/shadow, which GI does not touch). **Call: keep 6
+  rays** — 1.14 ms sits 24% under the fail line, the frame keeps 6.6 ms of
+  60 fps headroom, and dropping to 4 rays saves only 0.32 ms while raising
+  MC noise ~22% (boiling residual would go 0.019 → ~0.023); the 0.5 ms
+  hard target stays documented-missed (scattered-fetch bound,
+  ~0.152 ms/ray, P1 analysis) with HiZ/probe-tier redesign as the future
+  optimization, `ENGINE_GI_RAYS` as the user-facing relief valve.
+- **Default flipped**: `giDisabled` template default is now 0 (GI on); the
+  stale pre-migration `giEnabled`/`giResolution`/`giDiffuseFactor`/
+  `giSpecularFactor`/`giDisabled` keys were purged from the local
+  `build/c-game/data/settings.json` (the template seeds the correct default
+  when the key is absent). Verified: a no-env run boots with the GI images
+  created and gi = 1.12 ms in the pass table.
+
+Phase 1 actuals (RADV/radeon, 2880×1627 internal, 600-frame
+`ENGINE_LOG_PASS_GPU=1` averages): `gi` estimate **0.94 ms** at the default
+6 rays — **over the ≤0.2 ms budget**. Ray scaling is linear as designed:
+0.21 / 0.65 / 0.94 / 2.49 ms at 1 / 4 / 6 / 16 rays (~0.152 ms/ray + ~0.06 ms
+fixed origin/IBL cost). Even an ideal 1-fetch-per-ray march cannot reach
+0.2 ms at 6 rays on this GPU/resolution (the fixed floor alone is
+~0.06–0.08 ms); options are 4 rays (0.65 ms), a HiZ cell march (est.
+~0.6 ms), or the probe tier. Reference: `ao` 0.56 ms, `ssr` 0.04 ms, total
+frame 8.65 ms (was 7.73 without GI). Decision deferred to P2/P4 budget
+tables.
+
+Phase 2 actuals (same GPU/vantage/600-frame window): `gi_temporal` ≈ 0.19
+ms (gi pass total 1.13 ms = 0.94 estimate + 0.19 temporal; `ao` 0.55,
+frame 8.83 ms) — temporal is under its 0.3 ms budget, the pass total under
+the 1.5 ms fail line. Boiling (parked camera, 15 s settle, 8 consecutive
+frames): history inter-frame mean|diff| 0.019 (stable 0.0191–0.0199) vs
+0.13 for the raw estimate (6.8× reduction; spatial 3×3 std 0.040 vs 0.128).
+The 0.5/255 (~0.002) AO-temporal reference is not reachable at 6-ray MC
+noise amplitude with blend 0.92 — the residual is the equilibrium of the
+noise amplitude and the blend weight (`ENGINE_GI_TWEIGHT` up, or more rays,
+lower it); final call in P4 with GI visible in the composite. History
+channel layout deviation: the D2/D4 table lists five values (rgb, inv-depth,
+confidence) for four channels — resolved as rgb + `.a` = confidence (the
+pinned consumer contract) with the inverse view depth in a separate
+`R16_SFLOAT` ping-pong pair (`giDepthA/B`, contact-shadow-history pattern);
+ghost-trail check under real camera motion still needs a user-driven
+vantage (parked camera is static).
 
 ## Background
 
@@ -43,8 +136,8 @@ survey, the deviation is called out in "Survey corrections & fact checks".
   (survey §2.2, verified against `VulkanFrameResources.cpp`).
 - Prior prototypes exist as **orphan compiled debug SPIR-V only** (no sources,
   no C++ passes; the next pak rebuild drops them): `ssgi/{ssgi,
-  ssgi_temporal}.comp.spv.debug` and `gi/{gi_estimate, gi_initial, gi_gather,
-  gi_blur, gi_temporal}.comp.spv.debug` under
+ssgi_temporal}.comp.spv.debug` and `gi/{gi_estimate, gi_initial, gi_gather,
+gi_blur, gi_temporal}.comp.spv.debug` under
   `c-engine/data/pak_0_engine/shaders/pass/`. Treat them as a reference
   design (hemisphere rays, depth ray trace, IBL-sky miss fallback, depth-edge
   fade, jittered reprojection), not something to decompile (survey §5).
@@ -103,7 +196,7 @@ residual checks the survey left implicit.
    swapchain creation) or while disabled. Consumers convert NULL to the
    absent-sentinel push-constant index: composite does
    `vulkanAOPassIsDisabled() ? 0xFFFFFFFFu : (vulkanAOPassGetOutput() ?
-   (u32)output->sampledPoolIndex : 0xFFFFFFFFu)`
+(u32)output->sampledPoolIndex : 0xFFFFFFFFu)`
    (`VulkanCompositePass.cpp:99-103`) and the shader skips its work on
    `index == 0xFFFFFFFFu` (`composite.comp:21,115`). `VulkanGiPass` adopts
    the identical getter + sentinel contract.
@@ -122,7 +215,7 @@ residual checks the survey left implicit.
    between opaque scene color and composite color, `smoothstep(0.10, 0.30)`
    × 0.25), (5) terrain grazing. This is what P4 must validate: GI changing
    ambient changes the opaque/composite colors, which can trip term 3 —
-   see P4 and Risks. FSR's *internal* luma-instability handling (SDK) is
+   see P4 and Risks. FSR's _internal_ luma-instability handling (SDK) is
    the second, undocumentable layer; it is validated empirically.
 
 ## Design decisions
@@ -144,10 +237,10 @@ exists for later passes. No CMake/pipeline-script edits needed (fact check 3).
 All keyed off `window.renderWidth/Height` (FSR-scaled internal), never
 `window.width/Height` (survey §2.4).
 
-| Buffer | Owner | Format | Size | Content |
-| --- | --- | --- | --- | --- |
-| `giCurrent` | pass-owned static image (AO-output pattern, not a per-frame `VulkanFrameResources` entry) | `R16G16B16A16_SFLOAT` | **half** internal (W/2 × H/2) | RGB = radiance estimate, A = confidence (edge/depth-delta fades). Single slot, overwritten per frame. |
-| `giHistoryA` / `giHistoryB` | pass-owned static, ping-pong (TAA/AO pattern: recreated on `swapchainCreated`, cleared on creation) | `R16G16B16A16_SFLOAT` | full internal | RGB = filtered irradiance, G = inverse view depth (disocclusion test), A = confidence. Cleared 0 = "no history". |
+| Buffer                      | Owner                                                                                               | Format                | Size                          | Content                                                                                                          |
+| --------------------------- | --------------------------------------------------------------------------------------------------- | --------------------- | ----------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `giCurrent`                 | pass-owned static image (AO-output pattern, not a per-frame `VulkanFrameResources` entry)           | `R16G16B16A16_SFLOAT` | **half** internal (W/2 × H/2) | RGB = radiance estimate, A = confidence (edge/depth-delta fades). Single slot, overwritten per frame.            |
+| `giHistoryA` / `giHistoryB` | pass-owned static, ping-pong (TAA/AO pattern: recreated on `swapchainCreated`, cleared on creation) | `R16G16B16A16_SFLOAT` | full internal                 | RGB = filtered irradiance, G = inverse view depth (disocclusion test), A = confidence. Cleared 0 = "no history". |
 
 VRAM at 2560×1440 internal: estimate (1280×720×8 B) ≈ 7.3 MB, each
 full-res history slot (2560×1440×8 B) ≈ 29.5 MB, two slots ≈ 59 MB —
@@ -173,7 +266,7 @@ after the original `ao.comp` was removed in the CACAO migration
 1. Dispatch over the half-res grid. Origin pixel = 2×2 block of the G-buffer;
    reconstruct world position via the unjittered-UV convention
    (`uv + jitterOffset` → NDC → `invViewProjectionNoJitter`), `N =
-   OctDecode(Normals.rg)`, view direction `V` as in `ssr.comp`.
+OctDecode(Normals.rg)`, view direction `V` as in `ssr.comp`.
 2. `depth == 0` → sky: write `giCurrent` = IBL-sky irradiance for N
    (same chain `scene.frag` uses), confidence 1.0.
 3. **Hemisphere rays** (`RAY_COUNT = 4–8`, default 6): per-ray direction
@@ -195,8 +288,8 @@ after the original `ao.comp` was removed in the CACAO migration
    from that same removed pass, not from CACAO — with
    `1/(1+(t/maxDist)²)` range fade.
 4. **Hit**: `L = hitAlbedo × (kD_sun × shadowlessDirect + IBLsky(hitN))` —
-   i.e. albedo × the local *unoccluded* radiance (direct sun + sky); the
-   CACAO AO of the hit pixel is *not* sampled (AO already encodes the
+   i.e. albedo × the local _unoccluded_ radiance (direct sun + sky); the
+   CACAO AO of the hit pixel is _not_ sampled (AO already encodes the
    occlusion the GI term replaces; see D5). **Miss**: IBL-sky for the ray
    direction. Accumulate over rays, normalize.
 5. **Confidence** (`.a`): product of (a) depth-edge fade of the origin
@@ -217,11 +310,11 @@ family per fact check 4):
   `depthThreshold` (TAA's `depthToInv` convention).
 - **Upsample** `giCurrent` with a 3×3 bilinear tap set (half → full).
 - **3×3 clamp — direction matters** (the AO implementation note: clamping
-  the *current* sample against a cleared history deadlocks): build the box
+  the _current_ sample against a cleared history deadlocks): build the box
   from the current estimate's neighborhood at the reprojected position and
   clamp the **reprojected history** into it (`clampSlack` / `clampFloor`).
 - Confidence-weighted, deviation-damped blend: `w =
-  blendWeight × confidence × damp(deviation, devStart, devEnd)`;
+blendWeight × confidence × damp(deviation, devStart, devEnd)`;
   `out = mix(clampedPrev, current, 1 − w)`. Write `RGB = out`,
   `G = depthToInv(depth)` (0 for sky), `A = confidence`.
 - **Luminance-change clamp** (FSR protection): after the blend, clamp the
@@ -229,7 +322,7 @@ family per fact check 4):
   `maxLumaDelta` (env `ENGINE_GI_TLUMA`, default e.g. 0.15) — bounds the
   per-frame signal change FSR's luma-instability layer sees. This is the
   SSGI++ "stable signal before the upscaler" step; the AO precedent has no
-  equivalent and it is specific to GI because the signal enters the *color*
+  equivalent and it is specific to GI because the signal enters the _color_
   path before FSR.
 
 ### D5 — Consumer-side contract (sentinel + one-frame latency)
@@ -237,7 +330,7 @@ family per fact check 4):
 - `vulkanGiPassGetOutput()` returns the **previous frame's** temporal
   `giHistory` output (see D6) — NULL-sentinel contract identical to
   `vulkanAOPassGetOutput()` (fact check 5). Plus `vulkanGiPassSetDisabled/
-  IsDisabled` and an `ENGINE_GI_DISABLED=1` env (AO pattern, read in
+IsDisabled` and an `ENGINE_GI_DISABLED=1` env (AO pattern, read in
   `added()`).
 - `scene.frag` (ambient block, lines 195–227) and `azgaar_props.frag`
   (lines 171–180) sample the GI texture from the scene buffer with the
@@ -253,10 +346,11 @@ family per fact check 4):
 
   `giIntensity` global master (env `ENGINE_GI_INTENSITY`, default 1.0).
   IBL specular, `shadowDarkFactor`, and `Lo` are untouched.
+
 - **AO attenuation:** GI output already contains diffuse occlusion; leaving
   CACAO at full strength double-darkens. Add
   `vulkanAOPassSetStrength(float)` to `VulkanAOPass` (runtime override of
-  `settings.shadowMultiplier`, which today is *reassigned from*
+  `settings.shadowMultiplier`, which today is _reassigned from_
   `ENGINE_AO_STRENGTH` every frame in `cacaoUpdate()`
   (`VulkanAOPass.cpp:258`) — the setter therefore needs an override member
   that takes precedence over the per-frame env read, not a one-shot
@@ -266,13 +360,13 @@ family per fact check 4):
   uniform in `composite.comp` (the survey's original idea).
 - `Renderer.cpp` settings wiring: `utils::settingsGetBool("giDisabled")`
   → `vulkanGiPassSetDisabled` (mirror the `aoDisabled` line), settings GUI
-  toggle in `SettingsGraphicsGui.cpp` (AO-toggle pattern). GI ships
-  **off-by-default** in settings until P4 validation passes, then flips.
+  toggle in `SettingsGraphicsGui.cpp` (AO-toggle pattern). GI shipped
+  off-by-default through Phase 3; Phase 4 flipped the default to on.
 
 ### D6 — One-frame latency wiring
 
 `scene.frag` (pass index 10, 0-based in the `vulkanInit()` list) runs
-*before* `VulkanGiPass` (index 18 once inserted between `vulkanSsrPass`
+_before_ `VulkanGiPass` (index 18 once inserted between `vulkanSsrPass`
 and `vulkanAOPass`), so a frame's ambient uses **last frame's** filtered
 history — the same cadence as TAA/AO histories; the temporal filter hides
 the one-frame lag. Mechanism:
@@ -282,14 +376,14 @@ the one-frame lag. Mechanism:
   (`shaders/includes/globalset.shader`) indexing the existing
   `textures[]` pool — see Open questions for the exact touch points.
 - `VulkanGiPass` holds a `lastOutput` pointer (the `giHistory` image from
-  the *previous* completed frame); the scene pass binds
+  the _previous_ completed frame); the scene pass binds
   `lastOutput ? sampledPoolIndex : 0xFFFFFFFFu` each frame — first frame
   after startup/resize/disabling renders with IBL ambient (sentinel), from
   frame 2 on it switches. History is only ever sampled in
   `SHADER_READ_ONLY_OPTIMAL` (the temporal dispatch already transitions its
   output there at the end of `temporalDispatch`, `VulkanAOPass.cpp:444` —
   copy the transition order so no extra barrier pass is needed; the ping-
-  pong write goes to the *other* slot, so the bound slot is never written
+  pong write goes to the _other_ slot, so the bound slot is never written
   while bound).
 - Disable→enable edge: reset history (`temporalDestroyAccumulators`
   equivalent) exactly like `VulkanAOPass::update()` does on re-enable
@@ -325,6 +419,7 @@ Goal: the estimate exists, is measurable, and is visible as a dump — no
 consumer wired yet.
 
 Deliverables:
+
 - `pass/gi/VulkanGiPass.{h,cpp}`: skeleton System, `giEstimate` pipe,
   `giCurrent` image (half-res, D2), registration in `vulkanInit()`
   (D1), disabled/env handling, getter stubs, profile timing.
@@ -334,6 +429,7 @@ Deliverables:
 - No scene/composite changes; the image is produced but unconsumed.
 
 Verification:
+
 - `./scripts/build.sh` compiles the new `.comp` (check
   `shaders/pass/gi/spv/gi_estimate.comp.spv.debug` appears and the pak
   rebuilt).
@@ -350,6 +446,7 @@ Verification:
 Goal: the boiling estimate becomes a stable history.
 
 Deliverables:
+
 - `gi_temporal.comp` (D4) + `giTemporal` pipe in `VulkanGiPass`;
   ping-pong `giHistoryA/B` (full-res, cleared 0, `swapchainCreated`
   recreation, re-enable reset per D6).
@@ -358,6 +455,7 @@ Deliverables:
 - Push-constant struct + `ENGINE_GI_T*` env knobs (D7).
 
 Verification:
+
 - `ENGINE_DEBUG_DUMP_IMAGES=gi` multi-shot:
   `ENGINE_SCREENSHOT_COUNT=8 ENGINE_SCREENSHOT_DELAY_MS=15000`
   (`docs/screenshot.md`) — inter-frame mean diff of the `gi` dump must
@@ -373,15 +471,17 @@ Verification:
 Goal: GI is visible in the final image.
 
 Deliverables:
+
 - `sceneBuffer` GI texture slot + jittered-UV fetch in `scene.frag`
   (ambient block 195–227) and `azgaar_props.frag` (171–180) per D5, with
   the `0xFFFFFFFF` sentinel.
 - One-frame-latency binding (`lastOutput`) + transition order (D6).
 - `vulkanAOPassSetStrength()` + GI-driven attenuation (D5).
 - Settings: `giDisabled` in `Renderer.cpp` + `SettingsGraphicsGui.cpp`
-  toggle (off by default); `ENGINE_GI_INTENSITY` master.
+  toggle (default flipped on in Phase 4); `ENGINE_GI_INTENSITY` master.
 
 Verification:
+
 - `ENGINE_HIDE_GUI=1 ./scripts/run.sh play screenshot /tmp/gi_on.jpg` vs
   `ENGINE_GI_DISABLED=1 ... /tmp/gi_off.jpg` (parked player) — ambient
   response: canyon/cave interiors darker and tinted by local albedo,
@@ -399,6 +499,7 @@ Verification:
 Goal: ship-level validation, then flip the setting default to on.
 
 Deliverables:
+
 - Confirm `azgaar_props.frag` GI sample works for grass/leaf cards
   (discard-gated: depth/normals exist only for surviving pixels, so the
   estimate sees exactly the visible silhouette — same property the AO disk
@@ -410,6 +511,7 @@ Deliverables:
   implemented).
 
 Verification:
+
 - **Reactive mask** (fact check 6): with FSR on, dump
   `vulkanFsrPassGetReactiveMaskImage()` (add a `reactive` token to
   `vulkanDebugDumpFrameImages`) with GI on vs off, camera orbiting —
@@ -427,24 +529,24 @@ Verification:
 - RADV run (Vulkan 1.3): no DCC-style flicker in GI-modified regions
   (compute-written buffers shouldn't trigger it, but confirm).
 - AMD DCC / OIT spot-check on transparent objects (accepted: they get no
-  GI — verify they at least don't *darken* against GI-lit neighbors).
+  GI — verify they at least don't _darken_ against GI-lit neighbors).
 - Flip settings default to on; A/B the main menu → world transition.
 
 ## Cost budget (GTX 1080 Ti class)
 
 Reference (historical): `ao = 0.98 ms` (ray + temporal, full internal) on
-a 16.6 ms 60 fps frame at 2880×1627 — measured with the *removed* XeGTAO
+a 16.6 ms 60 fps frame at 2880×1627 — measured with the _removed_ XeGTAO
 implementation (the "32 rays × ≤16 HiZ steps" descriptor belongs to that
 `ao.comp`, not the current CACAO pass). Re-baseline the current `ao` cost
 with `ENGINE_LOG_PASS_GPU=1` in P1 and use that number for the
 comparisons below.
 
-| Item | Estimate basis | Budget |
-| --- | --- | --- |
-| `gi_estimate` (half-res, 6 rays × ≤16 HiZ steps) | CACAO full-res ray dispatch ≈ 0.7 ms (historical AO total minus temporal); ×0.25 pixels (half-res) × ray-count ratio (6 vs CACAO's quality taps) ≈ 1/7 | **≤ 0.2 ms** |
-| `gi_temporal` (full-res, 3×3 taps + 3×3 clamp) | `ao_temporal` portion of the 0.98 ms ≈ 0.3 ms | **≤ 0.3 ms** |
-| **Total** | | **≤ 0.5 ms** hard target, **1.5 ms** fail line (revisit ray count / probe fallback per survey §3) |
-| VRAM | half-res estimate 7.3 MB + 2× full-res history 29.5 MB (at 2560×1440 internal) | ~66 MB |
+| Item                                             | Estimate basis                                                                                                                                         | Budget                                                                                            |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------- |
+| `gi_estimate` (half-res, 6 rays × ≤16 HiZ steps) | CACAO full-res ray dispatch ≈ 0.7 ms (historical AO total minus temporal); ×0.25 pixels (half-res) × ray-count ratio (6 vs CACAO's quality taps) ≈ 1/7 | **≤ 0.2 ms**                                                                                      |
+| `gi_temporal` (full-res, 3×3 taps + 3×3 clamp)   | `ao_temporal` portion of the 0.98 ms ≈ 0.3 ms                                                                                                          | **≤ 0.3 ms**                                                                                      |
+| **Total**                                        |                                                                                                                                                        | **≤ 0.5 ms** hard target, **1.5 ms** fail line (revisit ray count / probe fallback per survey §3) |
+| VRAM                                             | half-res estimate 7.3 MB + 2× full-res history 29.5 MB (at 2560×1440 internal)                                                                         | ~66 MB                                                                                            |
 
 Measured with `ENGINE_LOG_PASS_GPU=1`; record actuals in the Status section
 of this file at each phase landing (AO plan convention). If the estimate

@@ -50,6 +50,9 @@ void settingsInit(void) {
     templates.push_back((Template{"shadowQuality", "int", 2.}));
     templates.push_back((Template{"ssrDisabled", "boolean", 0.}));
     templates.push_back((Template{"aoDisabled", "boolean", 0.}));
+    /* Screen-space GI (plans/ssgi.md, phases 1-4 validated): on by
+     * default; the GUI toggle persists "giDisabled". */
+    templates.push_back((Template{"giDisabled", "boolean", 0.}));
     templates.push_back((Template{"bloomDisabled", "boolean", 0.}));
     templates.push_back((Template{"contactShadowDisabled", "boolean", 0.}));
     templates.push_back((Template{"fogMode", "double", 1.}));

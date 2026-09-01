@@ -163,7 +163,11 @@ static void recreate(void) {
     frameResources.material =
         vulkanCreateImage(.name   = "Material",
                           .format = VK_FORMAT_R8G8B8A8_UNORM,
-                          .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                          /* TRANSFER_SRC: the debug frame-image dump
+                           * (ENGINE_DEBUG_DUMP_IMAGES) blits it through a
+                           * TRANSFER_SRC transition. */
+                          .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
+                                  VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
                           .width = window.renderWidth,
                           .height = window.renderHeight);
 

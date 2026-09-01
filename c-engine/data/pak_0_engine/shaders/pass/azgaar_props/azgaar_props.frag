@@ -178,6 +178,26 @@ void main() {
         else
             irradiance = sampleEnvironment(N, sceneBuffer.ibl.environmentMapMaxLod);
         ambientDiffuse = irradiance * albedo / PI * sceneBuffer.ibl.intensity;
+
+        /* Screen-space GI (plans/ssgi.md D5), mirrored from scene.frag
+         * minus the specular energy split (props are matte, no kD_ibl —
+         * the IBL term above carries no specular either).  gi.rgb is
+         * cosine-weighted irradiance (an all-miss texel equals
+         * `irradiance` above — same fallback chain), gi.a the estimate
+         * confidence gating the mix; no shadowDarkFactor here (applied
+         * once below).  0xFFFFFFFFu = absent sentinel keeps plain IBL.
+         * Same jittered G-buffer UV as the contact-shadow fetch. */
+        if (sceneBuffer.gi.giImageIndex != 0xFFFFFFFFu) {
+            vec2 giUv = gl_FragCoord.xy / sceneBuffer.cameras[0].viewport;
+            vec4 gi   = texture(
+                sampler2D(textures[nonuniformEXT(sceneBuffer.gi.giImageIndex)],
+                          samplers[SAMPLER_LINEAR]),
+                giUv);
+            ambientDiffuse =
+                mix(ambientDiffuse,
+                    gi.rgb * albedo / PI * sceneBuffer.ibl.intensity,
+                    clamp(gi.a * sceneBuffer.gi.giIntensity, 0.0, 1.0));
+        }
     }
 
     // Shadow darkening: reduce IBL in cascade-shadowed areas.  Use only the

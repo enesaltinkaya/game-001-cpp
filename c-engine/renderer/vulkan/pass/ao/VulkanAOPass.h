@@ -31,6 +31,15 @@ extern VulkanAOPass vulkanAOPass;
 
 void  vulkanAOPassSetDisabled(char disabled);
 char  vulkanAOPassIsDisabled(void);
+/// Runtime override of CACAO's strength (settings.shadowMultiplier).
+/// Takes precedence over the per-frame ENGINE_AO_STRENGTH env read in
+/// cacaoUpdate() — a one-shot assignment there would be clobbered within
+/// one frame, so the override lives in a member the env read defers to.
+/// Pass a negative value to clear the override (env/default wins again).
+/// Used by the GI pass to attenuate AO while GI is enabled (the GI estimate
+/// already embeds diffuse occlusion — full-strength CACAO would
+/// double-darken crevices); see plans/ssgi.md D5.
+void  vulkanAOPassSetStrength(float strength);
 /// Current-frame temporally-accumulated AO (R16G16B16A16_SFLOAT, .r =
 /// occlusion, 1 = unoccluded).  Sampled by the composite pass; NULL before
 /// the first swapchain exists or while disabled.

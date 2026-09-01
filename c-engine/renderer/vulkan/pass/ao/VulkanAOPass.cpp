@@ -42,6 +42,11 @@ namespace engine {
     static double elapsedGPU;
     static char aoDisabled;
 
+    /* Runtime strength override (vulkanAOPassSetStrength): while >= 0 it
+     * beats the per-frame ENGINE_AO_STRENGTH env read in cacaoUpdate().
+     * Negative = no override (env/default wins). */
+    static float aoStrengthOverride = -1.0f;
+
     /* Env-parsed float with fallback ("" falls back to the default too). */
     static float aoEnvFloat(const char* name, float def) {
         const char* env = getenv(name);
@@ -255,7 +260,12 @@ namespace engine {
          * unpack (mul/add) cannot decode — reconstruct normals from depth. */
         settings.generateNormals = true;
         settings.radius           = aoEnvFloat("ENGINE_AO_RADIUS", 0.6f);
-        settings.shadowMultiplier = aoEnvFloat("ENGINE_AO_STRENGTH", 1.0f);
+        /* The GI-pass attenuation installs an override here (see
+         * vulkanAOPassSetStrength) — it must beat the env read because the
+         * read happens every frame. */
+        settings.shadowMultiplier = aoStrengthOverride >= 0.0f
+                                        ? aoStrengthOverride
+                                        : aoEnvFloat("ENGINE_AO_STRENGTH", 1.0f);
         settings.shadowPower      = aoEnvFloat("ENGINE_AO_POWER", 1.0f);
         settings.shadowClamp      = aoEnvFloat("ENGINE_AO_CLAMP", 0.75f);
         /* Debug knobs: ENGINE_AO_ANGLE_OFF / ENGINE_AO_DETAIL / ENGINE_AO_QUALITY
@@ -528,6 +538,14 @@ namespace engine {
 
     char vulkanAOPassIsDisabled(void) {
         return aoDisabled;
+    }
+
+    void vulkanAOPassSetStrength(float strength) {
+        aoStrengthOverride = strength;
+        utils::info("AO: strength override %f (%s)",
+                    strength,
+                    strength < 0.0f ? "cleared - ENGINE_AO_STRENGTH wins"
+                                    : "beats ENGINE_AO_STRENGTH");
     }
 
     VulkanImage* vulkanAOPassGetOutput(void) {

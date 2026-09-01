@@ -121,6 +121,7 @@ struct VulkanSceneBuffer {
     VulkanWaterData water;
     VulkanAzgaarPropsData props;
     VulkanWeatherData weather;
+    VulkanGiData gi;
 };
 
 struct VulkanAddressBuffer {
@@ -1512,6 +1513,25 @@ void vulkanResourceSetWeather(const VulkanWeatherData* data) {
 
 VulkanWeatherData vulkanResourceGetWeatherData(void) {
     return weatherData;
+}
+
+// ── Screen-space GI consumer data ──────────────────────────────────
+
+void vulkanResourceSetGiData(const VulkanGiData* gi) {
+    if (!gi) return;
+    /* Patch only the CURRENT frame's buffer (the vulkanResourceUploadShadow
+     * direct-patch pattern): the GI image index is per-frame data (the
+     * previous frame's history slot), so in-flight frames must keep the
+     * value written at their own recording time instead of being clobbered
+     * by the next frame's ping-pong slot.  The scene/props passes read it
+     * from this buffer at GPU-execution time, which is always after this
+     * frame finished recording - so the published (previous-frame) value is
+     * exactly what they sample. */
+    VulkanSceneBuffer* buf = static_cast<VulkanSceneBuffer*>(
+        sceneBuffer[renderer.flightIndex].vmaInfo.pMappedData);
+    if (buf) {
+        buf->gi = *gi;
+    }
 }
 
 void vulkanResourceSetCameraOccluders(const u32* entities, const float* alphas, u32 count) {

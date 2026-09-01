@@ -237,8 +237,11 @@ static char ensureContext(u32 renderWidth, u32 renderHeight, u32 displayWidth, u
     reactiveMaskImage =
         vulkanCreateImage(.name   = "FsrReactiveMask",
                           .format = VK_FORMAT_R32_SFLOAT,
+                          /* TRANSFER_SRC: the debug frame-image dump
+                           * (ENGINE_DEBUG_DUMP_IMAGES=reactive) blits it
+                           * through a TRANSFER_SRC transition. */
                           .usage  = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
-                                    VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                                    VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
                           .width  = (int)renderWidth,
                           .height = (int)renderHeight);
     tcMaskImage =

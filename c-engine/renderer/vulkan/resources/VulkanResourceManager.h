@@ -214,6 +214,18 @@ struct VulkanWeatherData {
 void vulkanResourceSetWeather(const VulkanWeatherData* data);
 VulkanWeatherData vulkanResourceGetWeatherData(void);
 
+/* Must match GiData in globalset.shader (std430 layout).  Written per
+ * frame by the GI pass (VulkanGiPass) BEFORE the scene/props passes' GPU
+ * work runs: giImageIndex points at the PREVIOUS frame's temporal GI
+ * history (the GI pass runs after them in the pass list), 0xFFFFFFFFu =
+ * absent sentinel; giIntensity is the ENGINE_GI_INTENSITY master knob. */
+struct VulkanGiData {
+    u32   giImageIndex = 0xFFFFFFFFu;
+    float giIntensity  = 1.0f;
+    u32   giPad[2]     = {0, 0};
+};
+void vulkanResourceSetGiData(const VulkanGiData* gi);
+
 #define VULKAN_MAX_CAMERA_OCCLUDERS 16
 void vulkanResourceSetCameraOccluders(const u32* entities, const float* alphas, u32 count);
 

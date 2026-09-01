@@ -1,0 +1,198 @@
+#version 460
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_nonuniform_qualifier : require
+#extension GL_ARB_shading_language_include : enable
+
+// Temporal accumulation for the SSGI estimate (plans/ssgi.md D4, Phase 2).
+//
+// The half-res 6-ray estimate is per-frame MC noise around the true diffuse
+// irradiance (per-texel/per-frame ray hashing — no blue-noise LUT yet); the
+// color TAA pass cannot average it (its clamp tracks the current frame's
+// mode), so the GI gets its own reprojection history exactly like the AO
+// pass (ao_temporal.comp is the structural template).
+//
+// Channel layout (see the C++ pass for the rationale — the plan's D2/D4
+// table lists five values for four channels):
+//   history rgba16f : rgb = filtered irradiance, a = confidence
+//                     (the consumer-side contract; gi.a gates the ambient
+//                     mix, so confidence must survive this pass)
+//   depth  r16f     : r = inverse view-space depth S of the frame that
+//                     wrote the history texel (0 = sky / no data), carried
+//                     for the next frame's disocclusion test
+//
+// Clamp direction (the AO lesson): the AABB is built from the CURRENT
+// estimate's 3x3 half-res neighborhood and the REPROJECTED HISTORY is
+// clamped into it — never the reverse (a cleared history would deadlock
+// the box).  Per-channel RGB box; deviation damping runs on luminance.
+
+#include "../../includes/utils.shader"
+#include "../../includes/globalset.shader"
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(push_constant) uniform PushConstants {
+    uint giIndex;        // current half-res estimate (sampled, rgba16f)
+    uint velocityIndex;  // motion vectors (sampled, R16G16_SFLOAT, pixels)
+    uint depthIndex;     // full-res depth buffer (sampled, reversed-Z)
+    uint prevIndex;      // previous history (sampled)
+    uint prevDepthIndex; // previous depth history (sampled, R16_SFLOAT)
+    uint outIndex;       // current history (storage)
+    uint outDepthIndex;  // current depth history (storage)
+    uint width;          // full internal resolution
+    uint height;
+    float blendWeight;    // max temporal blend (ENGINE_GI_TWEIGHT)
+    float depthThreshold; // relative S-space rejection threshold (_TDEPTH)
+    float clampSlack;     // AABB expansion, fraction of the local range (_TCLAMP)
+    float clampFloor;     // AABB expansion, absolute floor (_TFLOOR)
+    float devStart;       // luminance deviation damping start (_TDEV0)
+    float devEnd;         // luminance deviation damping end (_TDEV1)
+    float lumaClamp;      // per-frame relative luma delta cap (_TLUMA)
+};
+
+/* Inverse view-space depth S — affine in the raw reversed-Z value, same
+ * derivation/convention as taa.comp and ao_temporal.comp. */
+float depthToInv(float rawDepth) {
+    if (rawDepth <= 0.0) return 0.0; /* empty (sky) — "no data" */
+    float N = sceneBuffer.cameras[0].zNear;
+    float F = sceneBuffer.cameras[0].zFar;
+    return (N + (F - N) * rawDepth) / (N * F);
+}
+
+float giLuma(vec3 c) {
+    return dot(c, vec3(0.2126, 0.7152, 0.0722));
+}
+
+void main() {
+    ivec2 coord = ivec2(gl_GlobalInvocationID.xy);
+    if (coord.x >= int(width) || coord.y >= int(height)) {
+        return;
+    }
+
+    vec2 res = vec2(width, height);
+    vec2 uv  = (vec2(coord) + 0.5) / res;
+
+    /* ── Current estimate, upsampled half -> full ──────────────────────
+     *
+     * The estimate covers the same normalized extent, so bilinear
+     * filtering at uv is the upsample.  The clamp box below uses the 3x3
+     * half-res neighborhood around the containing texel, which always
+     * covers the bilinear footprint. */
+    vec4 curr4 = texture(
+        sampler2D(textures[nonuniformEXT(giIndex)], samplers[SAMPLER_LINEAR]),
+        uv);
+    vec3  curr = curr4.rgb;
+    float conf = curr4.a;
+
+    ivec2 halfSize = ivec2((int(width) + 1) / 2, (int(height) + 1) / 2);
+    ivec2 hc       = ivec2((vec2(coord) + 0.5) * 0.5); /* containing half texel */
+
+    vec3 nMin = curr;
+    vec3 nMax = curr;
+    for (int dy = -1; dy <= 1; dy++) {
+        for (int dx = -1; dx <= 1; dx++) {
+            if (dx == 0 && dy == 0) continue;
+            ivec2 c = clamp(hc + ivec2(dx, dy), ivec2(0), halfSize - ivec2(1));
+            vec3 e = texelFetch(
+                sampler2D(textures[nonuniformEXT(giIndex)],
+                          samplers[SAMPLER_NEAREST]),
+                c, 0).rgb;
+            nMin = min(nMin, e);
+            nMax = max(nMax, e);
+        }
+    }
+
+    /* Per-channel AABB with range-proportional slack and an absolute floor
+     * (AO's block-pop lesson: a purely range-proportional box collapses on
+     * locally flat noise and stops averaging). */
+    vec3 range = nMax - nMin;
+    vec3 pad   = max(range * clampSlack, vec3(clampFloor));
+    vec3 lo    = nMin - pad;
+    vec3 hi    = nMax + pad;
+
+    /* ── Reprojection via the unjittered motion vectors (AO convention) ── */
+    vec2 mv = texture(
+        sampler2D(textures[nonuniformEXT(velocityIndex)],
+                  samplers[SAMPLER_NEAREST]),
+        uv).xy;
+    vec2 prevUv = uv - mv / res;
+
+    bool prevValid = prevUv.x >= 0.0 && prevUv.x <= 1.0 &&
+                     prevUv.y >= 0.0 && prevUv.y <= 1.0;
+
+    vec4  prevData = texture(
+        sampler2D(textures[nonuniformEXT(prevIndex)],
+                  samplers[SAMPLER_CLAMP_LINEAR]),
+        prevUv);
+    vec3  prev   = max(prevData.rgb, vec3(0.0));
+    float prevS  = max(texture(
+        sampler2D(textures[nonuniformEXT(prevDepthIndex)],
+                  samplers[SAMPLER_CLAMP_LINEAR]),
+        prevUv).r, 0.0); /* 0 = no history (cleared) or sky */
+
+    float currS = depthToInv(
+        texelFetch(sampler2D(textures[nonuniformEXT(depthIndex)],
+                             samplers[SAMPLER_NEAREST]),
+                   coord, 0).r);
+
+    /* Disocclusion rejection — same relative S-space test as AO/TAA; it
+     * only DAMPS the weight (soft 0.75) instead of killing it: blade-edge
+     * pixels flip surface every frame and a soft scalar field is best
+     * served by averaging the two modes (AO behaviour; azgaar_props
+     * writes no velocity, so canopy sway relies on this test alone). */
+    float sMax      = max(currS, prevS);
+    float depthDiff = (sMax > 1e-5) ? abs(currS - prevS) / sMax : 0.0;
+    float reject    = smoothstep(depthThreshold * 0.5, depthThreshold, depthDiff);
+    if (!prevValid) {
+        reject = 1.0;
+    }
+
+    /* Dampen the history for fast-moving content so the low-frequency GI
+     * signal does not smear along large per-frame motion. */
+    float motion  = length(mv);
+    float velDamp = 1.0 - smoothstep(4.0, 16.0, motion);
+
+    /* Clamp the REPROJECTED HISTORY into the current estimate's box. */
+    vec3 prevClamped = clamp(prev, lo, hi);
+
+    /* Deviation-adaptive convergence on LUMINANCE (AO runs it on the AO
+     * scalar; GI is per-channel so luminance is the scalar summary): a
+     * SUSTAINED deviation (occluder left ground it lit — depth unchanged,
+     * invisible to the disocclusion test) must converge within a frame or
+     * two, while per-frame MC noise stays below the window and keeps the
+     * full de-flicker blend. */
+    float dev     = abs(giLuma(curr) - giLuma(prevClamped));
+    float devDamp = 1.0 - smoothstep(devStart, devEnd, dev);
+
+    /* Confidence-weighted blend (D4): the estimate's confidence gates how
+     * much history this texel may accumulate — unreliable texels (silhouette
+     * fades, screen-edge rays) stay near their per-frame estimate instead
+     * of locking noise into history; the consumer damps those by the same
+     * factor when mixing ambient, so neither term is trusted there. */
+    float weight = blendWeight * velDamp * (1.0 - reject * 0.75) * devDamp * conf;
+    vec3  outC   = mix(curr, prevClamped, weight);
+
+    /* Luminance-change clamp (FSR protection — the GI signal enters the
+     * color path one frame BEFORE the upscaler): bound the per-frame
+     * output luma delta vs the reprojected history to a relative cap so
+     * the SDK's luma-instability layer never sees a step change.  Chroma
+     * is preserved (uniform scale); a small absolute floor keeps near-black
+     * texels from freezing.  The deviation damping above decides WHETHER
+     * to converge; this sets the speed limit. */
+    float prevL = giLuma(prevClamped);
+    float outL  = giLuma(outC);
+    float dl    = outL - prevL;
+    float cap   = max(lumaClamp * prevL, 0.01);
+    if (abs(dl) > cap && outL > 1e-4) {
+        outC *= (prevL + sign(dl) * cap) / outL;
+    }
+
+    if (any(isnan(outC)) || any(isinf(outC))) {
+        outC = curr;
+    }
+
+    imageStore(storageImages[nonuniformEXT(outIndex)],
+               coord, vec4(outC, conf));
+    imageStore(storageImages[nonuniformEXT(outDepthIndex)],
+               coord, vec4(currS));
+}

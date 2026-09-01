@@ -16,6 +16,7 @@
 #include "renderer/vulkan/pass/bloom/VulkanBloomPass.h"
 #include "renderer/vulkan/pass/contact_shadow/VulkanContactShadowPass.h"
 #include "renderer/vulkan/pass/fsr/VulkanFsrUtils.h"
+#include "renderer/vulkan/pass/gi/VulkanGiPass.h"
 #include "renderer/vulkan/pass/shadow/VulkanShadowPass.h"
 #include "renderer/vulkan/pass/ssr/VulkanSsrPass.h"
 #include "renderer/vulkan/pass/volumetric/VulkanVolumetricPass.h"
@@ -83,6 +84,14 @@ void RenderSystem::added() {
 
     if (utils::settingsGetBool("ssrDisabled")) vulkanSsrPassSetDisabled(1);
     if (utils::settingsGetBool("aoDisabled")) vulkanAOPassSetDisabled(1);
+    /* GI ships on by default (Phase 4 validated, plans/ssgi.md).
+     * ENGINE_GI_ENABLED=1 still forces it on over a stored "giDisabled"
+     * setting so A/B verification runs don't have to persist a change. */
+    const char* giForceOn = getenv("ENGINE_GI_ENABLED");
+    if (utils::settingsGetBool("giDisabled") &&
+        !(giForceOn && *giForceOn && atoi(giForceOn))) {
+        vulkanGiPassSetDisabled(1);
+    }
     if (utils::settingsGetBool("bloomDisabled")) vulkanBloomPassSetDisabled(1);
     if (utils::settingsGetBool("contactShadowDisabled")) vulkanContactShadowPassSetDisabled(1);
 

@@ -160,6 +160,7 @@ void VulkanDepthPass::preUpdate() {
     VulkanImage* sceneColorImage = vulkanFrameResourcesGetSceneColor();
     VulkanImage* normalsImage    = vulkanFrameResourcesGetNormals();
     VulkanImage* materialImage   = vulkanFrameResourcesGetMaterial();
+    VulkanImage* albedoImage     = vulkanFrameResourcesGetAlbedo();
 
     if (depthImage)     vulkanTransition(vulkan.currentCmd, depthImage,     VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, 0, 1);
     if (velocityImage)  vulkanTransition(vulkan.currentCmd, velocityImage,  VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, 0, 1);
@@ -167,6 +168,9 @@ void VulkanDepthPass::preUpdate() {
     if (sceneColorImage) vulkanTransition(vulkan.currentCmd, sceneColorImage, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, 0, 1);
     if (normalsImage)   vulkanTransition(vulkan.currentCmd, normalsImage,   VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, 0, 1);
     if (materialImage)  vulkanTransition(vulkan.currentCmd, materialImage,  VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, 0, 1);
+    /* Sampled by the GI pass after SSR (gi_estimate reads base albedo) —
+     * restore the attachment layout like the other G-buffer slots. */
+    if (albedoImage)    vulkanTransition(vulkan.currentCmd, albedoImage,    VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, 0, 1);
 
     vulkanResetProfile(vulkan.currentCmd, &depthPipe.profile, 0);
 }

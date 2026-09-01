@@ -457,6 +457,52 @@ jitter and the full dispatch pipeline.
 | `FFX_FSR3UPSCALER_ENABLE_DYNAMIC_RESOLUTION`                 | Render resolution changes per-frame                   |
 | `FFX_FSR3UPSCALER_ENABLE_DEBUG_CHECKING`                     | Enable runtime API validation                         |
 
+### Reactive Mask (engine-side, `reactive.comp`)
+
+The SDK's `ffx_fsr3upscaler_autogen_reactive_pass` /
+`_luma_instability_pass` are compiled (see shader list above) but the engine
+feeds the upscaler its **own** per-pixel reactive + T&C masks instead:
+`shaders/pass/fsr/reactive.comp` (pipe `fsr_reactive`, dispatched from
+`VulkanFsrPass.cpp` just before the FSR dispatch whenever the upscaler is
+active). It writes two render-res `R32F` images:
+
+- `FsrReactiveMask`, exposed via `vulkanFsrPassGetReactiveMaskImage()` and
+  dumpable with `ENGINE_DEBUG_DUMP_IMAGES=reactive` (jpg + `reactiveRaw`);
+- `FsrTCMask` (transparency & composition), no dump token.
+
+Mask terms (max-combined, sky pixels write 0):
+
+1. **Planar-reflection reactivity** — smooth surfaces near the water plane
+   (`planeDist < 0.40`), weight ≤ 0.015.
+2. **Specular / view-dependent** — roughness band 0.20–0.40 with a grazing
+   boost, metallic bonus, weight ≤ 0.08.
+3. **Composite-difference fallback** — for `roughness ≥ 0.25`, relative
+   luminance difference between opaque scene color and composite color,
+   `smoothstep(0.10, 0.30) × 0.25`. Catches effects that only exist in the
+   composite (SSR, AO). Also feeds the T&C mask at `× 0.3`.
+4. Alpha-cutout edge detection — intentionally disabled (comment in the
+   shader; FSR's internal shading-change tracking handles these edges
+   better).
+5. **Terrain at grazing angles** — up-facing, non-metal, rough ≥ 0.25,
+   weight ≤ 0.4. Dominates vegetated/terrain-heavy frames.
+
+The DOF pass max-blends its CoC mask into `FsrReactiveMask` after the
+dispatch (`vulkanDofPassApplyReactiveMask`), and
+`vulkanFsrPassSetReactiveMask(0|1)` toggles the whole mechanism
+(`reactiveMaskEnabled`, default 1 — no env/settings wiring exists today).
+
+**GI interaction** (plans/ssgi.md Phase 4): screen-space GI changes the
+opaque/composite ambient that term 3 measures. Validated empirically
+(parked vantage, FSR Native AA, GI on vs off): GI *reduces* the mean mask
+(0.094 vs 0.110 — the GI-driven CACAO attenuation shrinks the
+opaque-vs-composite gap) but reshuffles term-3 knee crossings (0.5% of
+pixels newly >0.1). Final-frame boiling under FSR is unchanged within
+noise (inter-frame mean|diff| 1.96 vs 1.91 /255), i.e. the GI temporal
+filter + `ENGINE_GI_TLUMA` luminance clamp keep the signal stable enough
+that the mask reshuffling does not destabilize the upscaler. If a future
+change trips term 3 visibly, lower `ENGINE_GI_TLUMA` before touching
+`reactive.comp`.
+
 ## Build Script
 
 `build.sh` — run from the `fsr3.1/` directory. Sources `../exports.sh` for

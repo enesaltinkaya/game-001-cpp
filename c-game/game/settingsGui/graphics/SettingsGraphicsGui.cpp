@@ -7,6 +7,7 @@
 #include "renderer/vulkan/pass/ao/VulkanAOPass.h"
 #include "renderer/vulkan/pass/bloom/VulkanBloomPass.h"
 #include "renderer/vulkan/pass/dof/VulkanDofPass.h"
+#include "renderer/vulkan/pass/gi/VulkanGiPass.h"
 #include "renderer/vulkan/pass/lens/VulkanLensPass.h"
 #include "renderer/vulkan/pass/shadow/VulkanShadowPass.h"
 #include "renderer/vulkan/pass/ssr/VulkanSsrPass.h"
@@ -76,6 +77,7 @@ static char* upscalePolicyLabel;
 static char* shadowsLabel;
 static char* ssrLabel;
 static char* aoLabel;
+static char* giLabel;
 static char* bloomLabel;
 static char* lensLabel;
 static char* dofLabel;
@@ -89,6 +91,7 @@ static char upscalePolicyLabelText[192];
 static char shadowsLabelText[16];
 static char ssrLabelText[16];
 static char aoLabelText[16];
+static char giLabelText[16];
 static char bloomLabelText[16];
 static char lensLabelText[16];
 static char dofLabelText[16];
@@ -107,6 +110,7 @@ static int graphicsClose(void* _);
 static int toggleShadows(void* _);
 static int toggleSsr(void* _);
 static int toggleAo(void* _);
+static int toggleGi(void* _);
 static int toggleBloom(void* _);
 static int toggleContactShadow(void* _);
 static int toggleFog(void* _);
@@ -121,6 +125,7 @@ void SettingsGraphicsGui::added() {
     engine::luaRegisterFunction("toggleShadows", toggleShadows);
     engine::luaRegisterFunction("toggleSsr", toggleSsr);
     engine::luaRegisterFunction("toggleAo", toggleAo);
+    engine::luaRegisterFunction("toggleGi", toggleGi);
     engine::luaRegisterFunction("toggleBloom", toggleBloom);
     engine::luaRegisterFunction("toggleLens", toggleLens);
     engine::luaRegisterFunction("lensParamChange", lensParamChange);
@@ -162,6 +167,7 @@ void SettingsGraphicsGui::added() {
     rmlBind(model, "shadowsLabel", &shadowsLabel);
     rmlBind(model, "ssrLabel", &ssrLabel);
     rmlBind(model, "aoLabel", &aoLabel);
+    rmlBind(model, "giLabel", &giLabel);
     rmlBind(model, "bloomLabel", &bloomLabel);
     rmlBind(model, "lensLabel", &lensLabel);
     rmlBind(model, "dofLabel", &dofLabel);
@@ -222,6 +228,8 @@ static void syncAAUi(void) {
     bloomLabel = bloomLabelText;
     snprintf(contactShadowLabelText, sizeof(contactShadowLabelText), "%s", engine::vulkanContactShadowPassIsDisabled() ? "Off" : "On");
     contactShadowLabel = contactShadowLabelText;
+    snprintf(giLabelText, sizeof(giLabelText), "%s", engine::vulkanGiPassIsDisabled() ? "Off" : "On");
+    giLabel = giLabelText;
     snprintf(lensLabelText, sizeof(lensLabelText), "%s", engine::vulkanLensPassIsDisabled() ? "Off" : "On");
     lensLabel = lensLabelText;
     snprintf(dofLabelText, sizeof(dofLabelText), "%s", engine::vulkanDofPassIsDisabled() ? "Off" : "On");
@@ -409,6 +417,8 @@ static void syncEffectLabels(void) {
     ssrLabel = ssrLabelText;
     snprintf(aoLabelText, sizeof(aoLabelText), "%s", engine::vulkanAOPassIsDisabled() ? "Off" : "On");
     aoLabel = aoLabelText;
+    snprintf(giLabelText, sizeof(giLabelText), "%s", engine::vulkanGiPassIsDisabled() ? "Off" : "On");
+    giLabel = giLabelText;
     snprintf(bloomLabelText, sizeof(bloomLabelText), "%s", engine::vulkanBloomPassIsDisabled() ? "Off" : "On");
     bloomLabel = bloomLabelText;
     snprintf(contactShadowLabelText, sizeof(contactShadowLabelText), "%s", engine::vulkanContactShadowPassIsDisabled() ? "Off" : "On");
@@ -425,6 +435,7 @@ static void persistEffectSettings(void) {
                            engine::vulkanShadowPassGetQuality() == engine::SHADOW_QUALITY_OFF);
     utils::settingsSetBool("ssrDisabled", engine::vulkanSsrPassIsDisabled());
     utils::settingsSetBool("aoDisabled", engine::vulkanAOPassIsDisabled());
+    utils::settingsSetBool("giDisabled", engine::vulkanGiPassIsDisabled());
     utils::settingsSetBool("bloomDisabled", engine::vulkanBloomPassIsDisabled());
     utils::settingsSetBool("contactShadowDisabled", engine::vulkanContactShadowPassIsDisabled());
     utils::settingsSetDouble("fogMode", static_cast<double>(fogMode));
@@ -466,6 +477,14 @@ int toggleSsr(void* _) {
 
 int toggleAo(void* _) {
     engine::vulkanAOPassSetDisabled(!engine::vulkanAOPassIsDisabled());
+    syncEffectLabels();
+    rmlUpdateDirtyAll(model);
+    persistEffectSettings();
+    return 0;
+}
+
+int toggleGi(void* _) {
+    engine::vulkanGiPassSetDisabled(!engine::vulkanGiPassIsDisabled());
     syncEffectLabels();
     rmlUpdateDirtyAll(model);
     persistEffectSettings();

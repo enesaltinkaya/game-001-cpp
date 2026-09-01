@@ -28,6 +28,7 @@
 #include "renderer/vulkan/pass/decal/VulkanDecalPass.h"
 #include "renderer/vulkan/pass/contact_shadow/VulkanContactShadowPass.h"
 #include "renderer/vulkan/pass/ssr/VulkanSsrPass.h"
+#include "renderer/vulkan/pass/gi/VulkanGiPass.h"
 #include "renderer/vulkan/pass/volumetric/VulkanVolumetricPass.h"
 #include "timer/Timer.h"
 #include "renderer/vulkan/pass/composite/VulkanCompositePass.h"
@@ -208,6 +209,18 @@ static void vulkanDebugDumpFrameImages(const char* shotPath) {
             img = vulkanTaaPassGetOutput();
         } else if (!strcmp(tok, "ao")) {
             img = vulkanAOPassGetOutput();
+        } else if (!strcmp(tok, "gi")) {
+            /* gi = the temporal output once Phase 2 lands; the raw estimate
+             * until then (the getter falls back while it is absent). */
+            img = vulkanGiPassGetOutput();
+        } else if (!strcmp(tok, "giEstimate")) {
+            img = vulkanGiPassGetEstimate();
+        } else if (!strcmp(tok, "reactive")) {
+            /* FSR reactive mask (render-res R32F) — only non-NULL while the
+             * upscaler context exists (fsr pass creates it when enabled). */
+            img = vulkanFsrPassGetReactiveMaskImage();
+        } else if (!strcmp(tok, "material")) {
+            img = vulkanFrameResourcesGetMaterial();
         } else if (!strcmp(tok, "scene")) {
             img = vulkanFrameResourcesGetSceneColor();
         } else if (!strcmp(tok, "oitReveal")) {
@@ -246,6 +259,14 @@ static void vulkanDebugDumpFrameImages(const char* shotPath) {
                 rawImg = vulkanTaaPassGetOutput();
             } else if (!strcmp(sub, "ao")) {
                 rawImg = vulkanAOPassGetOutput();
+            } else if (!strcmp(sub, "gi")) {
+                rawImg = vulkanGiPassGetOutput();
+            } else if (!strcmp(sub, "giEstimate")) {
+                rawImg = vulkanGiPassGetEstimate();
+            } else if (!strcmp(sub, "reactive")) {
+                rawImg = vulkanFsrPassGetReactiveMaskImage();
+            } else if (!strcmp(sub, "material")) {
+                rawImg = vulkanFrameResourcesGetMaterial();
             } else if (!strcmp(sub, "scene")) {
                 rawImg = vulkanFrameResourcesGetSceneColor();
             } else if (!strcmp(sub, "lensIn")) {
@@ -308,6 +329,7 @@ void vulkanInit(void) {
     addPass(&vulkanOitAccumulatePass);
     addPass(&vulkanOitCompositePass);
     addPass(&vulkanSsrPass);
+    addPass(&vulkanGiPass);
     addPass(&vulkanAOPass);
     addPass(&vulkanVolumetricPass);
     addPass(&vulkanDecalPass);

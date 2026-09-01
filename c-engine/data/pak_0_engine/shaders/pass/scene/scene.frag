@@ -220,6 +220,36 @@ void main() {
             else
                 irradiance = sampleEnvironment(N, sceneBuffer.ibl.environmentMapMaxLod);
             ambientDiffuse = kD_ibl * irradiance * baseColor.rgb / PI * iblIntensity;
+
+            /* Screen-space GI (plans/ssgi.md D5): mix the temporal GI
+             * estimate over the IBL diffuse term.  gi.rgb is cosine-
+             * weighted irradiance of the surrounding surfaces, so an
+             * all-miss texel equals `irradiance` above by construction
+             * (the estimate uses the identical IBL fallback chain) and
+             * open-sky areas stay unchanged; gi.a is the estimate
+             * confidence and gates the mix.  Units: same receiver-side
+             * scaling as the IBL term (kD_ibl * baseColor / PI), so the
+             * mix is energy-consistent in both branches.  NO
+             * shadowDarkFactor here — the composite below applies it to
+             * the whole ambient once.
+             *
+             * The index is the PREVIOUS frame's history (this pass runs
+             * before the GI pass); 0xFFFFFFFFu = absent (disabled /
+             * startup / resize) keeps the plain IBL ambient.  The history
+             * is a temporally filtered field, sampled bilinearly at the
+             * jittered G-buffer position (same UV as the contact-shadow
+             * fetch). */
+            if (sceneBuffer.gi.giImageIndex != 0xFFFFFFFFu) {
+                vec2 giUv = gl_FragCoord.xy / sceneBuffer.cameras[0].viewport;
+                vec4 gi   = texture(
+                    sampler2D(textures[nonuniformEXT(sceneBuffer.gi.giImageIndex)],
+                              samplers[SAMPLER_LINEAR]),
+                    giUv);
+                ambientDiffuse =
+                    mix(ambientDiffuse,
+                        kD_ibl * gi.rgb * baseColor.rgb / PI * iblIntensity,
+                        clamp(gi.a * sceneBuffer.gi.giIntensity, 0.0, 1.0));
+            }
         }
     }
 

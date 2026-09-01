@@ -1,9 +1,11 @@
 # Global Illumination — survey & recommendation
 
-Status: survey (no code implemented). All engine facts below were verified against the
-current tree (re-checked pass order, G-buffer formats, Forward+ config, scene.frag ambient
-block, AO/volumetric temporal passes and orphan shader locations); pass order, G-buffer
-formats and Forward+ configuration cite the source files they were read from.
+Status: **implemented** — screen-space GI (SSGI/SSGI++) landed per
+`plans/ssgi.md` (all four phases; see that file's Status section for measured
+actuals). This document is kept as the original method survey and engine
+inventory; facts below were verified against the tree at survey time (pre-GI),
+so the pass order and ambient-block snippets describe the pre-GI renderer
+except where noted.
 
 Scope question: which GI methods are suitable for this renderer, and what would integrating
 one look like?
@@ -55,7 +57,8 @@ From `vulkanInit()` in `c-engine/renderer/vulkan/Vulkan.cpp`:
 ```
 culling → depth → occlusion → hiz → shadow → contact_shadow → light_culling →
 heightmap_terrain → azgaar_props → debug_navmesh → scene → skybox → azgaar_river →
-azgaar_water → azgaar_weather → oit_accumulate → oit_composite → ssr → ao →
+azgaar_water → azgaar_weather → oit_accumulate → oit_composite → ssr → gi (added by the
+SSGI landing, between ssr and ao) → ao →
 volumetric → decal → composite → taa → dof → fsr → bloom → final → lpm → lens →
 debug_physics → rmlui
 ```

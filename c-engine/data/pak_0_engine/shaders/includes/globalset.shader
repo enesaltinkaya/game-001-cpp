@@ -219,6 +219,22 @@ struct WeatherData {
     vec4 tint;    // rgb = particle tint (dust = biome colour), a unused
 };
 
+// Screen-space GI consumer data (plans/ssgi.md D5).  The GI pass runs
+// AFTER the scene/props passes, so the image indexed here is the previous
+// frame's temporal history (one frame of latency, same cadence as the
+// TAA/AO histories).
+//   giImageIndex: bindless sampled-pool index of the temporal GI history
+//     (rgb = filtered cosine-weighted irradiance, a = confidence; full
+//     internal resolution).  0xFFFFFFFFu = absent (GI disabled / first
+//     frame after startup or resize) - consumers keep the plain IBL
+//     ambient term.
+//   giIntensity: master scale of the ambient mix factor (ENGINE_GI_INTENSITY).
+struct GiData {
+    uint giImageIndex;
+    float giIntensity;
+    uint giPad[2];
+};
+
 struct IblData {
     uint environmentMapIndex;
     uint irradianceMapIndex;
@@ -261,6 +277,7 @@ layout(buffer_reference, std430) buffer SceneBuffer {
     WaterData water;
     AzgaarPropsData props;
     WeatherData weather;
+    GiData gi;
 };
 
 #define MAT_HAS_TEXTURE_COLOR 0
