@@ -20,7 +20,14 @@
 // and accumulated in *irradiance* units (x PI per ray, cosine-weighted MC:
 // E = PI * mean(L_i)), so a fully-missed texel equals skyIrradiance(N) and
 // the consumer-side mix against the IBL ambient is an identity on open sky
-// (units contract, ledger notes lemma 1).  rgb = irradiance estimate,
+// (units contract, ledger notes lemma 1).  Hit rays are additionally gated
+// for plausibility (backface/self-hit, grazing, opposing-parallel
+// "sandwich" surfaces, thin-silhouette hit neighbourhood) — gated rays
+// revert to the texel's own IBL sky irradiance skyIrradiance(N) (NOT the
+// ray-direction value: the mean over a gated ray-direction subset is
+// Jensen-biased against E(N), the same second-order hue error the cyan
+// cast exhibits) and shed confidence (ssgi-artifacts Phase 1).
+// rgb = irradiance estimate,
 // a = confidence (origin depth-edge fade x per-ray depth-agreement mean).
 //
 // Per-ray miss (and rays that leave the screen) fall back to the IBL sky
@@ -395,27 +402,116 @@ void main() {
                 continue;
             }
 
-            vec3 hitN     = fetchNormal(hitCoord);
-            vec3 hitAlbedo = fetchAlbedo(hitCoord);
-            float hitMetallic = fetchMaterial(hitCoord).g;
+            vec3 hitN = fetchNormal(hitCoord);
 
-            float NdotL  = max(dot(hitN, sunDir), 0.0);
-            vec3 hitIrradiance = hitAlbedo * (1.0 - hitMetallic)
-                                 * (sunColor * NdotL + skyIrradiance(hitN));
+            // ── Hit reliability gates (ssgi-artifacts Phase 1) ──────────
+            // A hit only counts as a bounce surface if it is plausible as
+            // one; gated rays fall back to the miss (sky) radiance and
+            // contribute proportionally less confidence, so the consumer
+            // mix reverts to the IBL ambient there.
+            //
+            // (1) Backface / self-hit: the ray re-entered a closed surface
+            // (or hit the far side of one) — a march artifact with no
+            // trustworthy radiance.  (2) Grazing: near the hemisphere
+            // rim the hit position is poorly resolved and the radiance
+            // lookup unreliable — down-weight by frontness.  (3)
+            // Opposing-parallel "sandwich": the hit surface faces back
+            // at the origin surface (a character standing against the
+            // wall: her front normal points at the wall the rays came
+            // from).  Thin-gap inter-surface bounces are the classic
+            // SSGI failure mode and are what darken the wall beside
+            // her (the halo).  Rejection is full in the near field
+            // and floors at 50% beyond it: a resolved far hit between
+            // opposing surfaces is still only half-trustworthy
+            // (under-resolved gap), and the residual half is the
+            // physical 1/d^2 ambient shadow a character casts on the
+            // wall.  (4)
+            // Thin silhouette: the hit texel's immediate neighbourhood
+            // already shows sky or a different surface — the hit sits
+            // on an edge with unknown radiance.
+            //
+            // Gated rays revert the estimate to the texel's OWN sky
+            // irradiance skyIrradiance(N) — the exact IBL value
+            // scene.frag mixes against — so an all-gated texel is
+            // identical to the GI-OFF state.  The per-ray estimate
+            // carries the full plausibility mix at full weight
+            // (mixing by w while also weighting the ray by w would
+            // over-weight the hit term by 1/hitW in the mean); the
+            // per-ray CONFIDENCE carries the gate, so the consumer-side
+            // mix reverts to the IBL ambient as gating increases.
+            float front  = dot(hitN, -dir);
+            float hitW   = (front > 0.0) ? smoothstep(0.05, 0.40, front) : 0.0;
+            {
+                float sandwich = 1.0 - smoothstep(-0.75, -0.55, dot(N, hitN));
+                float gapS     = 0.5 + 0.5 * (1.0 - smoothstep(0.45, 1.30, hitT));
+                hitW *= 1.0 - sandwich * gapS;
+            }
+            {
+                if (hitW > 0.0) {
+                    float neighMax = 0.0;
+                    int   neighSky = 0;
+                    for (int dy = -2; dy <= 2; dy++) {
+                        for (int dx = -2; dx <= 2; dx++) {
+                            if ((dx == 0 && dy == 0) ||
+                                (abs(dx) + abs(dy) > 2))
+                                continue;
+                            float d = fetchDepth(hitCoord + ivec2(dx, dy));
+                            if (d == 0.0) {
+                                neighSky++;
+                            } else {
+                                neighMax = max(neighMax, abs(d - hitDepth));
+                            }
+                        }
+                    }
+                    // Wider cross catches hits a few px from a silhouette of
+                    // foreshortened (oblique) thin geometry — the R-band of
+                    // the halo is exactly that (her side, seen at an angle).
+                    const ivec2 wide[4] = { ivec2(-3, 0), ivec2(3, 0),
+                                            ivec2(0, -3), ivec2(0, 3) };
+                    for (int i = 0; i < 4; i++) {
+                        float d = fetchDepth(hitCoord + wide[i]);
+                        if (d == 0.0) {
+                            neighSky++;
+                        } else {
+                            neighMax = max(neighMax, abs(d - hitDepth));
+                        }
+                    }
+                    float thinThresh = mix(0.0003, 0.003,
+                                           clamp(hitT / maxDist, 0.0, 1.0));
+                    float thin = max(float(neighSky > 0 ? 1 : 0), neighMax);
+                    hitW *= 1.0 - smoothstep(thinThresh * 0.5, thinThresh, thin);
+                }
+            }
 
-            // Range fade: hits approaching maxDist blend toward the miss
-            // fallback (continuous with the miss beyond maxDist).  Near
-            // hits (fade ~ 1) skip the miss fetch entirely.
-            float rangeFade = 1.0 / (1.0 + (hitT / maxDist) * (hitT / maxDist));
-            irradianceSum += (rangeFade > 0.95)
-                                 ? hitIrradiance
-                                 : mix(skyIrradiance(dir), hitIrradiance, rangeFade);
+            if (hitW > 0.004) {
+                vec3 hitAlbedo = fetchAlbedo(hitCoord);
+                float hitMetallic = fetchMaterial(hitCoord).g;
 
-            // Depth-agreement confidence (SSR formula, scaled threshold).
-            vec3 refinedScreen = projectToScreen(startPos + dir * hitT);
-            float depthDelta   = abs(hitDepth - refinedScreen.z);
-            float depthThresh  = mix(0.0100, 0.0500, clamp(hitT / maxDist, 0.0, 1.0));
-            confidenceSum += 1.0 - smoothstep(depthThresh * 0.5, depthThresh, depthDelta);
+                float NdotL  = max(dot(hitN, sunDir), 0.0);
+                vec3 hitIrradiance = hitAlbedo * (1.0 - hitMetallic)
+                                     * (sunColor * NdotL + skyIrradiance(hitN));
+
+                // Range fade: hits approaching maxDist blend toward the
+                // IBL fallback (continuous with a miss beyond maxDist).
+                float rangeFade = 1.0 / (1.0 + (hitT / maxDist) * (hitT / maxDist));
+                float w         = rangeFade * hitW;
+                irradianceSum += mix(skyIrradiance(N), hitIrradiance, w);
+
+                // Depth-agreement confidence (SSR formula, scaled
+                // threshold), scaled by the hit-reliability gates.
+                vec3 refinedScreen = projectToScreen(startPos + dir * hitT);
+                float depthDelta   = abs(hitDepth - refinedScreen.z);
+                float depthThresh  = mix(0.0100, 0.0500,
+                                         clamp(hitT / maxDist, 0.0, 1.0));
+                confidenceSum += hitW * (1.0 - smoothstep(depthThresh * 0.5,
+                                                          depthThresh,
+                                                          depthDelta));
+            } else {
+                // Fully gated (backface / near-field sandwich / thin):
+                // no scene information — the texel's own IBL sky (the
+                // GI-OFF state) and no confidence.
+                irradianceSum += skyIrradiance(N);
+            }
         } else if (kind == 0) {
             // Miss: IBL sky for the ray direction, full confidence.
             irradianceSum += skyIrradiance(dir);
@@ -428,12 +524,11 @@ void main() {
         }
     }
 
-    vec3 estimate = irradianceSum / float(rayCount);
+    vec3 estimate   = irradianceSum / float(rayCount);
     float confidence = originEdgeFade(origin) * (confidenceSum / float(rayCount));
 
     if (any(isnan(estimate)) || any(isinf(estimate))) estimate = vec3(0.0);
     estimate = clamp(estimate, vec3(0.0), vec3(65504.0));
-
     imageStore(storageImages[nonuniformEXT(outputIndex)], coord,
                vec4(estimate, confidence));
 }

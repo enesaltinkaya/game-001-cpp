@@ -1,28 +1,7 @@
-# Plan
+# plan
 
-Task: produce a detailed SSGI / SSGI++ implementation plan document and save it in `plans/`, grounded in the existing survey at `docs/global-illumination.md`.
+Ordering (per brainstorm, 2026-09-0x): attribution before fixes. Task 1 is a three-way A/B (OFF / ON / ON+ENGINE_GI_AO_SCALE=1.0 — the exact OFF CACAO state) plus ENGINE_DEBUG_DUMP_IMAGES=gi,giEstimate,ao, yielding an artifact -> {AO-coupling / GI-march / temporal / intended} table; task 2 splits march vs temporal via ENGINE_GI_TEMPORAL=0; only then do fixes (tasks 3-5), routed per the attribution table (AO-derived artifacts get AO_SCALE/attenuation treatment, not sky-fallback marching changes). Fixes stay minimal (hit-texel depth-continuity gate, horizon-weighted sky fallback, IBL-class scaling). Strategy otherwise:
 
-Strategy: the deliverable is a planning document, not code, so the work is research-then-write.
-First read the full survey (`docs/global-illumination.md`) and pull out every verified engine
-fact it already establishes (pass order, G-buffer slots/formats, Forward+ config, the AO
-temporal-pass pattern, FSR 3.1 history interaction, GTX 1080 Ti budget) since the plan must
-build on those instead of re-deriving them. Then work through the SSGI++ algorithm's stages
-(hemisphere ray tracing, visibility-weighted irradiance, temporal filter with edge/depth
-continuity, spatial blur, ambient-term injection in `scene.frag`) and map each stage to a
-concrete engine change: new pass name + insertion point after `oit_composite`/before `ao`,
-new RTs and their formats at FSR-scaled internal resolution, ping-pong history, and the
-one-frame-latency cadence the survey already proposes. Write the document to `plans/ssgi.md`
-following the structure of existing plans (status header, scope, phased breakdown, risks),
-with phases ordered so each phase is independently shippable and verifiable (e.g. P1
-single-bounce hemisphere estimate visible in a debug pass, P2 temporal, P3 spatial +
-injection into ambient, P4 integration with vegetation props and FSR reactive-mask
-validation). Finally cross-check every file path, pass name, and G-buffer slot the plan
-cites against the actual tree so the plan contains no stale facts.
+Strategy: work through `plans/ssgi-artifacts.md` in its phase order — player halo → eave band → cyan cast → minor roof-apex/contact-line items — since each phase already ships ranked hypotheses, fix directions, and a numeric acceptance bar. Approach: first re-establish the A/B baseline (ON vs `ENGINE_GI_DISABLED=1` screenshots at the parked vantage + the 6×6 diff grid and per-channel box means) to confirm the artifacts are still present as measured; then per phase, use the diagnostic knobs (`ENGINE_GI_TEMPORAL=0`, `ENGINE_GI_RAYS`, `ENGINE_GI_AO_SCALE`) to separate march bugs from temporal smearing before touching `gi_estimate.comp`, `gi_temporal.comp`, or the `scene.frag` mix; keep fixes minimal (hit-texel depth-continuity gate, horizon-weighted sky fallback, IBL-class scaling) and re-run the screenshot A/B after each change, verifying the bounce light survives against `ENGINE_GI_INTENSITY=0`, not just against disabled. Constraints honored throughout: never move the parked player/camera (`build/c-game/data/db/db.db`), keep the screen-space determinism contract, rebuild with `./scripts/build.sh` (shaders are paked), and launch only via `./scripts/run.sh` (TERM=xterm set, since run.sh fails with `set -e` when TERM is unset). Final phase is regression: raw-estimate mode, ray-count/intensity extremes, one clean `run.sh log` run, and user-driven moving-camera sign-off.
 
-Approach: worker reads `docs/global-illumination.md` end to end plus the files it cites
-(pass list in `c-engine/renderer/vulkan/Vulkan.cpp`, G-buffer in
-`resources/VulkanFrameResources.cpp`, `scene.frag` ambient block, AO pass for the temporal
-pattern), writes `plans/ssgi.md`, then a verifier pass validates citations and document
-quality against the conventions of neighboring plan files.
-
-Verification: test -s plans/ssgi.md && wc -l plans/ssgi.md
+Verification: ./scripts/build.sh && TERM=xterm ENGINE_HIDE_GUI=1 ENGINE_SCREENSHOT_DELAY_MS=6000 ./scripts/run.sh play screenshot /tmp/ssgi_on.jpg
